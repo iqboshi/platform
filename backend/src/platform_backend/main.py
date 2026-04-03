@@ -6,11 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from platform_backend.api.router import api_router
 from platform_backend.core.logging import configure_logging
 from platform_backend.core.settings import get_settings
+from platform_backend.services.bootstrap import init_platform
 from platform_backend.tiler.routes import router as tiles_router
 
 
 def create_app() -> FastAPI:
     configure_logging()
+    init_platform()
     settings = get_settings()
 
     app = FastAPI(
@@ -21,6 +23,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

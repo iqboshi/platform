@@ -6,9 +6,11 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from platform_backend.domain_enums import (
+    ApprovalStatus,
     DatasetKind,
     DatasetStatus,
     JobStatus,
+    LocaleCode,
     RoleKey,
     WorkflowRunStatus,
 )
@@ -21,6 +23,7 @@ class ApiMessage(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    user: "UserProfile"
 
 
 class UserProfile(BaseModel):
@@ -28,6 +31,9 @@ class UserProfile(BaseModel):
     email: str
     display_name: str
     role: RoleKey
+    approval_status: ApprovalStatus
+    preferred_locale: LocaleCode
+    permissions: list[str] = Field(default_factory=list)
 
 
 class WorkspaceSummary(BaseModel):
@@ -152,3 +158,6 @@ class WorkflowRunSummary(BaseModel):
     submitted_by: str
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+TokenResponse.model_rebuild()

@@ -1,8 +1,63 @@
 export type RoleKey = 'ADMIN' | 'ML_ENGINEER' | 'MEMBER';
+export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type LocaleCode = 'zh-CN' | 'en-US';
+export type PermissionKey =
+  | 'workspace.view'
+  | 'workspace.manage'
+  | 'dataset.view'
+  | 'dataset.manage'
+  | 'workflow.view'
+  | 'workflow.manage'
+  | 'workflow.run'
+  | 'model.view'
+  | 'model.manage'
+  | 'job.view'
+  | 'result.view'
+  | 'user.approve'
+  | 'system.configure';
 
 export type DatasetKind = 'raster' | 'vector' | 'table' | 'artifact';
 export type DatasetStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
 export type WorkflowRunStatus = 'draft' | 'queued' | 'running' | 'succeeded' | 'failed';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: RoleKey;
+  approvalStatus: ApprovalStatus;
+  preferredLocale: LocaleCode;
+  permissions: PermissionKey[];
+}
+
+export interface AuthTokenResponse {
+  accessToken: string;
+  tokenType: string;
+  user: AuthUser;
+}
+
+export interface RegisterPayload {
+  email: string;
+  displayName: string;
+  password: string;
+  preferredLocale: LocaleCode;
+}
+
+export interface RegisterResponse {
+  userId: string;
+  approvalStatus: ApprovalStatus;
+  message: string;
+}
+
+export interface PendingUserSummary {
+  id: string;
+  email: string;
+  displayName: string;
+  role: RoleKey;
+  approvalStatus: ApprovalStatus;
+  preferredLocale: LocaleCode;
+  createdAt: string;
+}
 
 export interface WorkspaceSummary {
   id: string;

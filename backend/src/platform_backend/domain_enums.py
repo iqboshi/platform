@@ -7,6 +7,17 @@ class RoleKey(StrEnum):
     MEMBER = "MEMBER"
 
 
+class ApprovalStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class LocaleCode(StrEnum):
+    ZH_CN = "zh-CN"
+    EN_US = "en-US"
+
+
 class DatasetKind(StrEnum):
     RASTER = "raster"
     VECTOR = "vector"

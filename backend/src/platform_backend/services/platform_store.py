@@ -1,0 +1,578 @@
+from __future__ import annotations
+
+import json
+import mimetypes
+import re
+import shutil
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import BinaryIO
+from uuid import uuid4
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from platform_backend.core.settings import get_settings
+from platform_backend.domain_enums import DatasetKind, DatasetStatus, JobStatus, WorkflowRunStatus
+from platform_backend.models.entities import (
+    Dataset,
+    DatasetVersion,
+    JobLog,
+    Model,
+    ModelVersion,
+    SplitJob,
+    User,
+    Workflow,
+    WorkflowRun,
+    WorkflowVersion,
+    Workspace,
+    WorkspaceMembership,
+)
+from platform_backend.schemas.platform import (
+    DatasetSummary,
+    DatasetUploadConfirmRequest,
+    DatasetVersionSummary,
+    JobSummary,
+    ModelSummary,
+    ModelVersionSummary,
+    SplitJobRequest,
+    SplitJobSummary,
+    TilePreviewResponse,
+    UploadSessionResponse,
+    WorkflowRunSummary,
+    WorkspaceSummary,
+)
+from platform_backend.schemas.workflow import (
+    WorkflowCatalogItem,
+    WorkflowGraph,
+    WorkflowRunAccepted,
+    WorkflowRunRequest,
+    WorkflowSummary,
+    WorkflowVersionSummary,
+)
+from platform_backend.services.state_machine import ensure_workflow_run_transition
+from platform_backend.workflows.catalog import BUILTIN_NODE_CATALOG
+
+
+def _storage_root() -> Path:
+    root = Path(get_settings().storage_root)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _slugify(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip())
+    return normalized.strip("-").lower() or "file"
+
+
+def _dataset_summary(row: Dataset) -> DatasetSummary:
+    return DatasetSummary(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        name=row.name,
+        kind=row.kind,
+        status=row.status,
+        projection=row.projection,
+        footprint=row.footprint,
+        updated_at=row.updated_at,
+    )
+
+
+def _dataset_version_summary(row: DatasetVersion) -> DatasetVersionSummary:
+    return DatasetVersionSummary(
+        id=row.id,
+        dataset_id=row.dataset_id,
+        version=row.version,
+        status=row.status,
+        asset_path=row.asset_path,
+        preview_url=row.preview_url,
+        bbox=row.bbox,
+        metadata=row.metadata_json,
+        created_at=row.created_at,
+    )
+
+
+def _workflow_run_summary(row: WorkflowRun, submitted_by: str) -> WorkflowRunSummary:
+    return WorkflowRunSummary(
+        id=row.id,
+        workflow_version_id=row.workflow_version_id,
+        status=row.status,
+        submitted_by=submitted_by,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+    )
+
+
+def _workflow_version_summary(row: WorkflowVersion) -> WorkflowVersionSummary:
+    return WorkflowVersionSummary(
+        id=row.id,
+        workflow_id=row.workflow_id,
+        version=row.version,
+        graph=WorkflowGraph.model_validate(row.graph_json),
+        created_at=row.created_at,
+    )
+
+
+def _workspace_summary(db: Session, row: Workspace) -> WorkspaceSummary:
+    member_count = db.scalar(
+        select(func.count())
+        .select_from(WorkspaceMembership)
+        .where(WorkspaceMembership.workspace_id == row.id)
+    )
+    return WorkspaceSummary(
+        id=row.id,
+        name=row.name,
+        slug=row.slug,
+        description=row.description,
+        member_count=member_count or 0,
+    )
+
+
+def list_workspaces(db: Session) -> list[WorkspaceSummary]:
+    rows = db.scalars(select(Workspace).order_by(Workspace.created_at.asc())).all()
+    return [_workspace_summary(db, row) for row in rows]
+
+
+def list_datasets(db: Session) -> list[DatasetSummary]:
+    rows = db.scalars(select(Dataset).order_by(Dataset.updated_at.desc())).all()
+    return [_dataset_summary(row) for row in rows]
+
+
+def get_dataset(db: Session, dataset_id: str) -> DatasetSummary | None:
+    row = db.get(Dataset, dataset_id)
+    return _dataset_summary(row) if row else None
+
+
+def list_dataset_versions(
+    db: Session,
+    dataset_id: str | None = None,
+) -> list[DatasetVersionSummary]:
+    query = select(DatasetVersion)
+    if dataset_id is not None:
+        query = query.where(DatasetVersion.dataset_id == dataset_id)
+    rows = db.scalars(query.order_by(DatasetVersion.created_at.desc())).all()
+    return [_dataset_version_summary(row) for row in rows]
+
+
+def get_dataset_version(db: Session, dataset_version_id: str) -> DatasetVersionSummary | None:
+    row = db.get(DatasetVersion, dataset_version_id)
+    return _dataset_version_summary(row) if row else None
+
+
+def get_dataset_version_file(db: Session, dataset_version_id: str) -> tuple[Path, str, str] | None:
+    row = db.get(DatasetVersion, dataset_version_id)
+    if row is None:
+        return None
+    file_path = Path(row.asset_path)
+    if not file_path.is_absolute():
+        file_path = Path.cwd() / file_path
+    return file_path, row.original_file_name, row.content_type
+
+
+def create_upload_session(
+    *,
+    workspace_id: str,
+    dataset_name: str,
+    file_name: str,
+    content_type: str,
+) -> UploadSessionResponse:
+    safe_name = _slugify(file_name)
+    object_key = f"uploads/{workspace_id}/{_slugify(dataset_name)}/{uuid4()}-{safe_name}"
+    upload_url = f"{get_settings().api_v1_prefix}/datasets/upload"
+    return UploadSessionResponse(
+        object_key=object_key,
+        upload_url=upload_url,
+        headers={"X-Upload-Object-Key": object_key, "X-Upload-Content-Type": content_type},
+    )
+
+
+def _next_dataset_version_number(db: Session, dataset_id: str) -> int:
+    current = db.scalar(
+        select(func.max(DatasetVersion.version)).where(DatasetVersion.dataset_id == dataset_id)
+    )
+    return (current or 0) + 1
+
+
+def create_dataset_upload(
+    db: Session,
+    *,
+    workspace_id: str,
+    dataset_name: str,
+    kind: DatasetKind,
+    upload_file: BinaryIO,
+    original_file_name: str,
+    content_type: str,
+    size_bytes: int,
+) -> DatasetVersionSummary:
+    dataset = db.scalar(
+        select(Dataset).where(
+            Dataset.workspace_id == workspace_id,
+            Dataset.name == dataset_name,
+            Dataset.kind == kind,
+        )
+    )
+    if dataset is None:
+        dataset = Dataset(
+            workspace_id=workspace_id,
+            name=dataset_name,
+            kind=kind,
+            status=DatasetStatus.READY,
+            description="Uploaded from web client.",
+        )
+        db.add(dataset)
+        db.flush()
+    else:
+        dataset.status = DatasetStatus.READY
+
+    version_number = _next_dataset_version_number(db, dataset.id)
+    target_dir = (
+        _storage_root()
+        / "workspaces"
+        / workspace_id
+        / "datasets"
+        / dataset.id
+        / f"v{version_number}"
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid4()}-{_slugify(original_file_name)}"
+    target_path = target_dir / stored_name
+
+    with target_path.open("wb") as output:
+        shutil.copyfileobj(upload_file, output)
+
+    version = DatasetVersion(
+        dataset_id=dataset.id,
+        version=version_number,
+        status=DatasetStatus.READY,
+        asset_path=str(target_path.resolve()),
+        preview_url=None,
+        original_file_name=original_file_name,
+        content_type=content_type or "application/octet-stream",
+        size_bytes=size_bytes,
+        metadata_json={
+            "content_type": content_type or "application/octet-stream",
+            "size_bytes": size_bytes,
+            "original_file_name": original_file_name,
+        },
+    )
+    db.add(version)
+    db.flush()
+    version.preview_url = f"{get_settings().api_v1_prefix}/dataset-versions/{version.id}/download"
+
+    db.add(
+        JobLog(
+            job_type="dataset_upload",
+            reference_id=version.id,
+            status=JobStatus.SUCCEEDED,
+            message=f"Uploaded {original_file_name} ({size_bytes} bytes).",
+        )
+    )
+    db.commit()
+    db.refresh(dataset)
+    db.refresh(version)
+    return _dataset_version_summary(version)
+
+
+def confirm_upload(db: Session, request: DatasetUploadConfirmRequest) -> DatasetVersionSummary:
+    path = Path(request.object_key)
+    size_bytes = path.stat().st_size if path.exists() else 0
+    with path.open("rb") as uploaded_file:
+        return create_dataset_upload(
+            db,
+            workspace_id=request.workspace_id,
+            dataset_name=request.dataset_name,
+            kind=request.kind,
+            upload_file=uploaded_file,
+            original_file_name=path.name,
+            content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+            size_bytes=size_bytes,
+        )
+
+
+def list_workflow_catalog() -> list[WorkflowCatalogItem]:
+    return BUILTIN_NODE_CATALOG
+
+
+def list_workflows(db: Session) -> list[WorkflowSummary]:
+    rows = db.scalars(select(Workflow).order_by(Workflow.created_at.asc())).all()
+    return [
+        WorkflowSummary(
+            id=row.id,
+            workspace_id=row.workspace_id,
+            name=row.name,
+            description=row.description,
+        )
+        for row in rows
+    ]
+
+
+def get_current_workflow_version(db: Session) -> WorkflowVersionSummary:
+    row = db.scalar(
+        select(WorkflowVersion).order_by(
+            WorkflowVersion.version.desc(),
+            WorkflowVersion.created_at.desc(),
+        )
+    )
+    if row is None:
+        raise LookupError("Workflow version not found.")
+    return _workflow_version_summary(row)
+
+
+def save_current_workflow_version(db: Session, graph: WorkflowGraph) -> WorkflowVersionSummary:
+    latest = db.scalar(
+        select(WorkflowVersion).order_by(
+            WorkflowVersion.version.desc(),
+            WorkflowVersion.created_at.desc(),
+        )
+    )
+    workflow = db.scalar(select(Workflow).order_by(Workflow.created_at.asc()))
+    if latest is None or workflow is None:
+        raise LookupError("Workflow definition is not initialized.")
+
+    saved = WorkflowVersion(
+        workflow_id=workflow.id,
+        version=latest.version + 1,
+        graph_json=graph.model_dump(mode="json"),
+    )
+    db.add(saved)
+    db.flush()
+    db.add(
+        JobLog(
+            job_type="workflow_save",
+            reference_id=saved.id,
+            status=JobStatus.SUCCEEDED,
+            message=f"Saved workflow version {saved.version}.",
+        )
+    )
+    db.commit()
+    db.refresh(saved)
+    return _workflow_version_summary(saved)
+
+
+def list_workflow_runs(db: Session) -> list[WorkflowRunSummary]:
+    rows = db.scalars(select(WorkflowRun).order_by(WorkflowRun.created_at.desc())).all()
+    user_ids = {row.submitted_by for row in rows}
+    users = {
+        row.id: row.display_name
+        for row in db.scalars(select(User).where(User.id.in_(user_ids))).all()
+    }
+    return [
+        _workflow_run_summary(row, users.get(row.submitted_by, row.submitted_by))
+        for row in rows
+    ]
+
+
+def _write_run_artifact(run_id: str, payload: dict[str, object]) -> Path:
+    target_dir = _storage_root() / "workflow-runs" / run_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / "result-summary.json"
+    target_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return target_path
+
+
+def create_workflow_run(
+    db: Session,
+    request: WorkflowRunRequest,
+    current_user: User,
+) -> WorkflowRunAccepted:
+    workflow_version = db.get(WorkflowVersion, request.workflow_version_id)
+    dataset_version = db.get(DatasetVersion, request.input_dataset_version_id)
+    model_version = db.get(ModelVersion, request.model_version_id)
+    if workflow_version is None or dataset_version is None or model_version is None:
+        raise LookupError("Workflow, dataset version, or model version was not found.")
+
+    started_at = datetime.now(UTC)
+    run = WorkflowRun(
+        workflow_version_id=workflow_version.id,
+        input_dataset_version_id=dataset_version.id,
+        model_version_id=model_version.id,
+        status=WorkflowRunStatus.QUEUED,
+        submitted_by=current_user.id,
+        started_at=started_at,
+        metrics_json={"priority": request.priority},
+    )
+    db.add(run)
+    db.flush()
+
+    ensure_workflow_run_transition(run.status, WorkflowRunStatus.RUNNING)
+    run.status = WorkflowRunStatus.RUNNING
+
+    artifact_path = _write_run_artifact(
+        run.id,
+        {
+            "run_id": run.id,
+            "workflow_version_id": workflow_version.id,
+            "input_dataset_version_id": dataset_version.id,
+            "model_version_id": model_version.id,
+            "submitted_by": current_user.display_name,
+            "generated_at": datetime.now(UTC).isoformat(),
+        },
+    )
+
+    result_dataset = Dataset(
+        workspace_id=request.workspace_id,
+        name=f"Workflow Result {run.id[:8]}",
+        kind=DatasetKind.ARTIFACT,
+        status=DatasetStatus.READY,
+        description="Generated artifact for a persisted workflow run.",
+    )
+    db.add(result_dataset)
+    db.flush()
+
+    result_version = DatasetVersion(
+        dataset_id=result_dataset.id,
+        version=1,
+        status=DatasetStatus.READY,
+        asset_path=str(artifact_path.resolve()),
+        preview_url=f"{get_settings().api_v1_prefix}/dataset-versions/{{pending}}/download",
+        original_file_name=artifact_path.name,
+        content_type="application/json",
+        size_bytes=artifact_path.stat().st_size,
+        metadata_json={
+            "source_run_id": run.id,
+            "input_dataset_version_id": dataset_version.id,
+            "model_version_id": model_version.id,
+        },
+    )
+    db.add(result_version)
+    db.flush()
+    result_version.preview_url = (
+        f"{get_settings().api_v1_prefix}/dataset-versions/{result_version.id}/download"
+    )
+
+    ensure_workflow_run_transition(run.status, WorkflowRunStatus.SUCCEEDED)
+    run.status = WorkflowRunStatus.SUCCEEDED
+    run.finished_at = datetime.now(UTC)
+    run.result_dataset_version_id = result_version.id
+
+    db.add(
+        JobLog(
+            job_type="workflow_run",
+            reference_id=run.id,
+            status=JobStatus.SUCCEEDED,
+            message=(
+                f"Workflow run {run.id} completed and produced dataset version "
+                f"{result_version.id}."
+            ),
+        )
+    )
+    db.commit()
+
+    return WorkflowRunAccepted(
+        id=run.id,
+        workflow_version_id=run.workflow_version_id,
+        status=WorkflowRunStatus.SUCCEEDED,
+        submitted_by=current_user.display_name,
+    )
+
+
+def list_models(db: Session) -> list[ModelSummary]:
+    rows = db.scalars(select(Model).order_by(Model.created_at.asc())).all()
+    return [
+        ModelSummary(
+            id=row.id,
+            workspace_id=row.workspace_id,
+            name=row.name,
+            task_type=row.task_type,
+            description=row.description,
+        )
+        for row in rows
+    ]
+
+
+def list_model_versions(db: Session) -> list[ModelVersionSummary]:
+    rows = db.scalars(select(ModelVersion).order_by(ModelVersion.created_at.asc())).all()
+    return [
+        ModelVersionSummary(
+            id=row.id,
+            model_id=row.model_id,
+            version=row.version,
+            framework=row.framework,
+            task_type=row.task_type,
+            weights_path=row.weights_path,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+def list_jobs(db: Session) -> list[JobSummary]:
+    rows = db.scalars(select(JobLog).order_by(JobLog.created_at.desc())).all()
+    return [
+        JobSummary(
+            id=row.id,
+            job_type=row.job_type,
+            reference_id=row.reference_id,
+            status=row.status,
+            message=row.message,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+def list_splits(db: Session) -> list[SplitJobSummary]:
+    rows = db.scalars(select(SplitJob).order_by(SplitJob.created_at.desc())).all()
+    return [
+        SplitJobSummary(
+            id=row.id,
+            workspace_id=row.workspace_id,
+            dataset_version_id=row.dataset_version_id,
+            status=row.status,
+            tile_size=int(row.params_json.get("tile_size", 512)),
+            overlap=int(row.params_json.get("overlap", 64)),
+            split_strategy=str(row.params_json.get("split_strategy", "train-val-test")),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+def create_split(db: Session, request: SplitJobRequest) -> SplitJobSummary:
+    source_version = db.get(DatasetVersion, request.dataset_version_id)
+    if source_version is None:
+        raise LookupError("Dataset version not found.")
+
+    split_job = SplitJob(
+        workspace_id=request.workspace_id,
+        dataset_version_id=request.dataset_version_id,
+        status=JobStatus.SUCCEEDED,
+        params_json={
+            "tile_size": request.tile_size,
+            "overlap": request.overlap,
+            "split_strategy": request.split_strategy,
+        },
+    )
+    db.add(split_job)
+    db.add(
+        JobLog(
+            job_type="split_job",
+            reference_id=source_version.id,
+            status=JobStatus.SUCCEEDED,
+            message=(
+                f"Recorded split request with tile size {request.tile_size} "
+                f"and overlap {request.overlap}."
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(split_job)
+    return SplitJobSummary(
+        id=split_job.id,
+        workspace_id=split_job.workspace_id,
+        dataset_version_id=split_job.dataset_version_id,
+        status=split_job.status,
+        tile_size=request.tile_size,
+        overlap=request.overlap,
+        split_strategy=request.split_strategy,
+        created_at=split_job.created_at,
+    )
+
+
+def tile_preview(db: Session, dataset_version_id: str) -> TilePreviewResponse:
+    version = db.get(DatasetVersion, dataset_version_id)
+    return TilePreviewResponse(
+        dataset_version_id=dataset_version_id,
+        tilejson_url=f"{get_settings().tile_base_url}/datasets/{dataset_version_id}/tilejson.json",
+        bounds=version.bbox if version else None,
+    )

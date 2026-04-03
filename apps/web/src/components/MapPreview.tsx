@@ -13,6 +13,8 @@ import { Fill, Stroke, Style } from 'ol/style';
 import { useEffect, useRef } from 'react';
 import { fromExtent } from 'ol/geom/Polygon';
 
+import { useI18n } from '@/i18n/useI18n';
+
 const { Paragraph, Text } = Typography;
 
 export function MapPreview({
@@ -26,6 +28,7 @@ export function MapPreview({
   extent?: [number, number, number, number];
   previewUrl?: string;
 }) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -71,13 +74,17 @@ export function MapPreview({
   }, [extent]);
 
   return (
-    <Card className="map-card" bordered={false}>
+    <Card className="map-card" variant="borderless">
       <div className="map-card-header">
         <div>
-          <Text className="panel-kicker">Map Preview</Text>
+          <Text className="panel-kicker">{t('map.preview')}</Text>
           <Paragraph className="map-card-title">{title}</Paragraph>
         </div>
-        {previewUrl ? <Text className="map-card-badge">TileJSON: {previewUrl}</Text> : null}
+        {previewUrl ? (
+          <Text className="map-card-badge">
+            {t('map.tilejson')}: {previewUrl}
+          </Text>
+        ) : null}
       </div>
       <Paragraph className="map-card-subtitle">{subtitle}</Paragraph>
       <div ref={containerRef} className="map-surface" />

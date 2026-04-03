@@ -12,7 +12,7 @@ export function StatCard({
   detail: string;
 }) {
   return (
-    <Card className="stat-card" bordered={false}>
+    <Card className="stat-card" variant="borderless">
       <Text className="stat-label">{label}</Text>
       <Title level={2} className="stat-value">
         {value}
