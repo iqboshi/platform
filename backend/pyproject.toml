@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-backend"
+version = "0.1.0"
+description = "Remote sensing data and workflow backend scaffold."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14,<2",
+  "celery>=5.4,<6",
+  "fastapi>=0.115,<1",
+  "orjson>=3.10,<4",
+  "pydantic-settings>=2.6,<3",
+  "python-multipart>=0.0.18,<1",
+  "redis>=5,<6",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.32,<1"
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.3,<9",
+  "ruff>=0.11,<1"
+]
+geo = [
+  "boto3>=1.35,<2",
+  "geopandas>=1.0,<2",
+  "rasterio>=1.4,<2",
+  "rio-tiler>=7.0,<8",
+  "shapely>=2.0,<3",
+  "titiler.core>=0.21,<0.22"
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]

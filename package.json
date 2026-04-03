@@ -1,0 +1,17 @@
+{
+  "name": "platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @platform/web",
+    "build": "npm run build --workspace @platform/web",
+    "lint": "npm run lint --workspace @platform/web",
+    "test:web": "npm run test --workspace @platform/web",
+    "openapi:export": "python scripts/export_openapi.py",
+    "bootstrap": "npm install --workspaces"
+  }
+}

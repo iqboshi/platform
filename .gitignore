@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+backend/pytest-cache-files-*/
+
+# Node
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+apps/web/vite.config.js
+apps/web/vite.config.d.ts
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build and temp
+.cache/
+tmp/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and runtime artifacts
+*.sqlite3
+*.db
+uploads/
+artifacts/
