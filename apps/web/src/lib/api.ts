@@ -14,6 +14,8 @@ import type {
   RoleKey,
   WorkspaceSummary,
   WorkflowNodeCatalogItem,
+  WorkflowNodePreviewValue,
+  WorkflowNodeTestResult,
   WorkflowParamDefinition,
   WorkflowParamOption,
   WorkflowPortDefinition,
@@ -41,6 +43,7 @@ export interface AssetOverview {
   datasetVersions: DatasetVersionSummary[];
   workflowVersions: WorkflowVersionSummary[];
   workflowRuns: WorkflowRunSummary[];
+  modelVersions: ModelVersionSummary[];
 }
 
 export class ApiError extends Error {
@@ -189,6 +192,7 @@ function normalizeDatasetSummary(input: ApiRecord): DatasetSummary {
     id: getString(input, 'id'),
     workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
     name: getString(input, 'name'),
+    description: getOptionalString(input, 'description'),
     kind: getString(input, 'kind') as DatasetSummary['kind'],
     status: getString(input, 'status') as DatasetSummary['status'],
     isPrivate: getOptionalBoolean(input, 'isPrivate') ?? getOptionalBoolean(input, 'is_private'),
@@ -434,6 +438,56 @@ function normalizeWorkflowRun(input: ApiRecord): WorkflowRunSummary {
   };
 }
 
+function normalizeWorkflowNodePreviewValue(input: unknown): WorkflowNodePreviewValue {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {
+      kind: 'value',
+      value: input,
+    };
+  }
+
+  const record = input as ApiRecord;
+  return {
+    ...(record as Record<string, unknown>),
+    kind: (getString(record, 'kind') || 'value') as WorkflowNodePreviewValue['kind'],
+    title: getOptionalString(record, 'title'),
+    summary: getOptionalString(record, 'summary'),
+  };
+}
+
+function normalizeWorkflowNodeTestResult(input: ApiRecord): WorkflowNodeTestResult {
+  const rawInputPreview = input.inputPreview ?? input.input_preview;
+  const rawOutputPreview = input.outputPreview ?? input.output_preview;
+  const inputPreview =
+    rawInputPreview && typeof rawInputPreview === 'object' && !Array.isArray(rawInputPreview)
+      ? Object.fromEntries(
+          Object.entries(rawInputPreview as Record<string, unknown>).map(([key, value]) => [
+            key,
+            normalizeWorkflowNodePreviewValue(value),
+          ]),
+        )
+      : {};
+  const outputPreview =
+    rawOutputPreview && typeof rawOutputPreview === 'object' && !Array.isArray(rawOutputPreview)
+      ? Object.fromEntries(
+          Object.entries(rawOutputPreview as Record<string, unknown>).map(([key, value]) => [
+            key,
+            normalizeWorkflowNodePreviewValue(value),
+          ]),
+        )
+      : {};
+
+  return {
+    status: getString(input, 'status') as WorkflowNodeTestResult['status'],
+    nodeId: getString(input, 'nodeId') || getString(input, 'node_id'),
+    durationMs:
+      getOptionalNumber(input, 'durationMs') ?? getOptionalNumber(input, 'duration_ms') ?? 0,
+    inputPreview,
+    outputPreview,
+    errors: getStringArray<string>(input, 'errors'),
+  };
+}
+
 function normalizeModelVersion(input: ApiRecord): ModelVersionSummary {
   return {
     id: getString(input, 'id'),
@@ -454,6 +508,18 @@ function normalizeModelVersion(input: ApiRecord): ModelVersionSummary {
       {},
     artifactFormat:
       getOptionalString(input, 'artifactFormat') ?? getOptionalString(input, 'artifact_format'),
+    sourceType: (getOptionalString(input, 'sourceType') ?? getOptionalString(input, 'source_type')) as ModelVersionSummary['sourceType'],
+    executionMode:
+      (getOptionalString(input, 'executionMode') ??
+        getOptionalString(input, 'execution_mode')) as ModelVersionSummary['executionMode'],
+    visibility:
+      (getOptionalString(input, 'visibility') as ModelVersionSummary['visibility'] | undefined) ??
+      undefined,
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
     metadata: (input.metadata as Record<string, unknown> | undefined) ?? {},
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
   };
@@ -634,6 +700,7 @@ export async function uploadDataset(
   payload: {
     workspaceId: string;
     datasetName: string;
+    description?: string;
     kind: DatasetKind;
     file: File;
   },
@@ -641,6 +708,7 @@ export async function uploadDataset(
   const formData = new FormData();
   formData.append('workspace_id', payload.workspaceId);
   formData.append('dataset_name', payload.datasetName);
+  formData.append('description', payload.description ?? '');
   formData.append('kind', payload.kind);
   formData.append('file', payload.file);
 
@@ -657,13 +725,28 @@ export async function updateDataset(
   datasetId: string,
   payload: {
     name?: string;
+    description?: string;
+    originalFileName?: string;
+    contentType?: string;
+    rowCount?: number;
+    columns?: string[];
+    sampleRecord?: Record<string, unknown>;
     visibility?: 'public' | 'private';
   },
 ): Promise<DatasetSummary> {
   const response = await requestJson<ApiRecord>(`/datasets/${datasetId}`, {
     method: 'PATCH',
     token,
-    body: payload,
+    body: {
+      name: payload.name,
+      description: payload.description,
+      original_file_name: payload.originalFileName,
+      content_type: payload.contentType,
+      row_count: payload.rowCount,
+      columns: payload.columns,
+      sample_record: payload.sampleRecord,
+      visibility: payload.visibility,
+    },
   });
   return normalizeDatasetSummary(response);
 }
@@ -709,6 +792,90 @@ export async function uploadModelPackage(
     body: formData,
   });
   return normalizeModelVersion(response);
+}
+
+export async function createCustomApiModel(
+  token: string,
+  payload: {
+    workspaceId: string;
+    modelName: string;
+    version: string;
+    taskType: string;
+    description?: string;
+    endpointUrl: string;
+    timeoutSeconds: number;
+    authType: 'none' | 'bearer' | 'header';
+    authToken?: string;
+    authHeaderName?: string;
+    responseMode: 'prediction_values' | 'table_rows';
+    defaultPredictionColumn: string;
+    defaultParameters?: Record<string, unknown>;
+  },
+): Promise<ModelVersionSummary> {
+  const response = await requestJson<ApiRecord>('/models/custom', {
+    method: 'POST',
+    token,
+    body: {
+      workspace_id: payload.workspaceId,
+      model_name: payload.modelName,
+      version: payload.version,
+      task_type: payload.taskType,
+      description: payload.description ?? '',
+      endpoint_url: payload.endpointUrl,
+      timeout_seconds: payload.timeoutSeconds,
+      auth_type: payload.authType,
+      auth_token: payload.authToken ?? '',
+      auth_header_name: payload.authHeaderName ?? '',
+      response_mode: payload.responseMode,
+      default_prediction_column: payload.defaultPredictionColumn,
+      default_parameters: payload.defaultParameters ?? {},
+    },
+  });
+  return normalizeModelVersion(response);
+}
+
+export async function listModelVersions(
+  token: string,
+  scope: AssetScope = 'visible',
+): Promise<ModelVersionSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/models/versions', { scope }),
+    { token },
+  );
+  return payload.map(normalizeModelVersion);
+}
+
+export async function downloadModelVersion(
+  token: string,
+  modelVersionId: string,
+  fallbackFileName = `model-${modelVersionId}`,
+): Promise<void> {
+  const path = `/models/versions/${modelVersionId}/download`;
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response, path);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = extractDownloadFileName(response, fallbackFileName);
+  anchor.click();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+export async function deleteModelVersion(token: string, modelVersionId: string): Promise<void> {
+  await requestJson<ApiRecord>(`/models/versions/${modelVersionId}`, {
+    method: 'DELETE',
+    token,
+  });
 }
 
 export async function saveWorkflowVersion(
@@ -850,6 +1017,22 @@ export async function validateWorkflow(
   };
 }
 
+export async function testWorkflowNode(
+  token: string,
+  workflowVersion: WorkflowVersionDetail,
+  nodeId: string,
+): Promise<WorkflowNodeTestResult> {
+  const payload = await requestJson<ApiRecord>('/workflows/test-node', {
+    method: 'POST',
+    token,
+    body: {
+      graph: toWorkflowValidationPayload(workflowVersion),
+      node_id: nodeId,
+    },
+  });
+  return normalizeWorkflowNodeTestResult(payload);
+}
+
 export async function createWorkflowRun(
   token: string,
   workflowVersion: WorkflowVersionDetail,
@@ -871,11 +1054,12 @@ export async function loadAssetOverview(
   token: string,
   scope: AssetScope = 'mine',
 ): Promise<AssetOverview> {
-  const [datasets, datasetVersions, workflowVersions, workflowRuns] = await Promise.all([
+  const [datasets, datasetVersions, workflowVersions, workflowRuns, modelVersions] = await Promise.all([
     requestJson<ApiRecord[]>(withQuery('/datasets', { scope }), { token }),
     requestJson<ApiRecord[]>(withQuery('/dataset-versions', { scope }), { token }),
     requestJson<ApiRecord[]>(withQuery('/workflows/versions', { scope }), { token }),
     requestJson<ApiRecord[]>(withQuery('/workflow-runs', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/models/versions', { scope }), { token }),
   ]);
 
   return {
@@ -884,6 +1068,7 @@ export async function loadAssetOverview(
     datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
     workflowVersions: workflowVersions.map(normalizeWorkflowVersionSummary),
     workflowRuns: workflowRuns.map(normalizeWorkflowRun),
+    modelVersions: modelVersions.map(normalizeModelVersion),
   };
 }
 

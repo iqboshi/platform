@@ -616,16 +616,22 @@ body::after {
   display: grid;
   gap: 20px;
   grid-template-columns: 300px minmax(0, 1fr) 340px;
+  align-items: start;
 }
 
 .workflow-palette .ant-card-body,
 .workflow-canvas-card .ant-card-body,
 .workflow-inspector .ant-card-body {
   height: 100%;
+  min-height: 0;
 }
 
 .workflow-palette {
-  min-height: 680px;
+  position: sticky;
+  top: 12px;
+  height: calc(100vh - 24px);
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
 }
 
 .workflow-palette .ant-card-body {
@@ -668,11 +674,13 @@ body::after {
 
 .workflow-library-scroll {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 18px;
   overflow-y: auto;
   padding-right: 6px;
+  scrollbar-gutter: stable;
 }
 
 .workflow-library-group {
@@ -720,12 +728,26 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workflow-template-panel {
+  height: clamp(320px, 42vh, 520px);
+  overflow: hidden;
 }
 
 .workflow-template-grid {
   display: grid;
+  flex: 1;
+  min-height: 0;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  overflow-y: auto;
+  padding-right: 6px;
+  align-content: start;
+  scrollbar-gutter: stable;
 }
 
 .workflow-template-actions {
@@ -815,7 +837,7 @@ body::after {
 
 .workflow-node-card {
   width: 272px;
-  min-height: 322px;
+  min-height: 288px;
   padding: 14px 16px 16px;
   border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.24);
@@ -918,22 +940,35 @@ body::after {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+  margin-bottom: 12px;
 }
 
-.workflow-node-card-kicker {
+.workflow-node-card-title-block {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workflow-node-card-title {
+  display: block;
+  line-height: 1.3;
+}
+
+.workflow-node-card-type {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 11px;
   color: var(--muted);
-  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.workflow-node-card-copy,
-.workflow-node-card-copy.ant-typography {
-  min-height: 36px;
-  margin: 10px 0 12px !important;
-  color: var(--muted);
-  font-size: 13px;
+.workflow-node-card-head .ant-tag {
+  flex-shrink: 0;
+  margin-inline-end: 0;
 }
 
 .workflow-node-parameter-preview {
@@ -1028,7 +1063,19 @@ body::after {
 }
 
 .workflow-inspector {
-  min-height: 680px;
+  position: sticky;
+  top: 12px;
+  height: calc(100vh - 24px);
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+}
+
+.workflow-inspector .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .workflow-inspector-title,
@@ -1046,6 +1093,11 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
 }
 
 .workflow-inspector-head {
@@ -1113,6 +1165,73 @@ body::after {
   gap: 4px;
 }
 
+.workflow-node-test-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-node-test-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.workflow-node-test-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.workflow-node-test-column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workflow-node-test-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.workflow-node-test-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.workflow-node-test-json {
+  margin-top: 0;
+}
+
+.workflow-node-test-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workflow-node-test-modal .ant-modal-body {
+  padding-top: 4px;
+}
+
+.workflow-node-test-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 72vh;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
 .flow-node {
   display: flex;
   flex-direction: column;
@@ -1135,6 +1254,12 @@ body::after {
   border: 1px solid rgba(255, 255, 255, 0.16);
   overflow-x: auto;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 1200px) {
+  .workflow-node-test-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .model-card-head {
@@ -1371,6 +1496,103 @@ body::after {
   background: rgba(255, 255, 255, 0.18) !important;
 }
 
+.public-dataset-table .ant-table-tbody > tr.public-dataset-row > td {
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.public-dataset-table .ant-table-tbody > tr.public-dataset-row:hover > td {
+  background: rgba(255, 255, 255, 0.26) !important;
+}
+
+.public-dataset-table .ant-table-tbody > tr.public-dataset-row-selected > td {
+  background: rgba(10, 132, 255, 0.12) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.public-dataset-status-cell {
+  align-items: center;
+}
+
+.public-dataset-detail-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.public-dataset-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.public-dataset-detail-copy {
+  min-width: 0;
+}
+
+.public-dataset-title,
+.public-dataset-title.ant-typography {
+  margin: 8px 0 10px !important;
+}
+
+.public-dataset-description,
+.public-dataset-description.ant-typography,
+.public-dataset-description-block,
+.public-dataset-description-block.ant-typography {
+  color: var(--muted);
+  margin-bottom: 0 !important;
+}
+
+.public-dataset-field-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.asset-editor-modal .ant-modal-body {
+  padding-top: 10px;
+}
+
+.asset-editor-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.asset-editor-section {
+  padding: 18px;
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.46), rgba(244, 246, 251, 0.18)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.28), transparent 40%);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.34),
+    0 16px 32px rgba(28, 41, 61, 0.05);
+}
+
+.asset-editor-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--brand-deep);
+}
+
+.asset-editor-section-copy,
+.asset-editor-section-copy.ant-typography {
+  margin: 8px 0 18px !important;
+  color: var(--muted);
+}
+
+.asset-editor-section .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+
 .ant-empty,
 .ant-result,
 .ant-spin-container,
@@ -1384,8 +1606,29 @@ body::after {
     grid-template-columns: 1fr;
   }
 
+  .workflow-palette,
+  .workflow-inspector {
+    position: static;
+    max-height: none;
+  }
+
+  .workflow-library-scroll,
+  .workflow-inspector-body {
+    overflow: visible;
+    padding-right: 0;
+  }
+
   .workflow-canvas {
     height: 560px;
+  }
+
+  .workflow-template-panel {
+    height: auto;
+  }
+
+  .workflow-template-grid {
+    overflow: visible;
+    padding-right: 0;
   }
 
   .auth-page {
@@ -1396,6 +1639,14 @@ body::after {
 @media (max-width: 768px) {
   .app-content {
     padding: 18px;
+  }
+
+  .public-dataset-detail-head {
+    flex-direction: column;
+  }
+
+  .asset-editor-layout {
+    grid-template-columns: 1fr;
   }
 
   .hero-panel {

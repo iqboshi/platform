@@ -39,6 +39,8 @@ ROLE_PERMISSIONS: dict[RoleKey, set[PermissionKey]] = {
         "workflow.view",
         "workflow.manage",
         "workflow.run",
+        "model.view",
+        "model.manage",
         "job.view",
         "result.view",
     },

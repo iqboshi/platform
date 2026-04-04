@@ -160,3 +160,20 @@ class WorkflowRunAccepted(BaseModel):
     workflow_version_id: str
     status: WorkflowRunStatus = WorkflowRunStatus.QUEUED
     submitted_by: str
+
+
+WorkflowNodeTestStatus = Literal["succeeded", "failed", "not_supported"]
+
+
+class WorkflowNodeTestRequest(BaseModel):
+    graph: WorkflowGraph
+    node_id: str = Field(validation_alias=AliasChoices("node_id", "nodeId"))
+
+
+class WorkflowNodeTestResponse(BaseModel):
+    status: WorkflowNodeTestStatus
+    node_id: str
+    duration_ms: int = 0
+    input_preview: dict[str, Any] = Field(default_factory=dict)
+    output_preview: dict[str, Any] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)

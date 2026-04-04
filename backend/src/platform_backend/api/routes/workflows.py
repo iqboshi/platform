@@ -9,6 +9,8 @@ from platform_backend.schemas.platform import ApiMessage, UserProfile
 from platform_backend.schemas.workflow import (
     WorkflowCatalogItem,
     WorkflowGraph,
+    WorkflowNodeTestRequest,
+    WorkflowNodeTestResponse,
     WorkflowSummary,
     WorkflowTemplateDefinition,
     WorkflowValidationResult,
@@ -24,6 +26,7 @@ from platform_backend.services.platform_store import (
     list_workflow_versions,
     list_workflows,
     save_current_workflow_version,
+    test_workflow_node,
 )
 from platform_backend.workflows.validation import validate_workflow_graph
 
@@ -31,6 +34,7 @@ router = APIRouter()
 DatabaseDep = Annotated[Session, Depends(get_db)]
 WorkflowViewUserDep = Annotated[UserProfile, Depends(require_permission("workflow.view"))]
 WorkflowManageUserDep = Annotated[UserProfile, Depends(require_permission("workflow.manage"))]
+WorkflowRunUserDep = Annotated[UserProfile, Depends(require_permission("workflow.run"))]
 
 
 @router.get(
@@ -164,3 +168,15 @@ def delete_workflow_version_route(
 )
 def validate_workflow(request: WorkflowGraph) -> WorkflowValidationResult:
     return validate_workflow_graph(request)
+
+
+@router.post(
+    "/test-node",
+    response_model=WorkflowNodeTestResponse,
+)
+def test_workflow_node_route(
+    request: WorkflowNodeTestRequest,
+    db: DatabaseDep,
+    _: WorkflowRunUserDep,
+) -> WorkflowNodeTestResponse:
+    return test_workflow_node(db, request.graph, request.node_id)

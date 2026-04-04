@@ -4,12 +4,21 @@ import csv
 import json
 import math
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+from uuid import uuid4
 
 from platform_backend.domain_enums import DatasetKind
-from platform_backend.models.entities import DatasetVersion, ModelVersion, WorkflowVersion
+from platform_backend.models.entities import (
+    Dataset,
+    DatasetVersion,
+    Model,
+    ModelVersion,
+    WorkflowVersion,
+)
 
 TABULAR_MODEL_KIND = "tabular_model"
 
@@ -23,18 +32,29 @@ TABULAR_NODE_ALGORITHMS: dict[str, str] = {
     "tabular.random_forest_regression_predict": ALGORITHM_RANDOM_FOREST_REGRESSION,
 }
 
+TABULAR_TRAIN_NODE_ALGORITHMS: dict[str, str] = {
+    "tabular.linear_regression_train": ALGORITHM_LINEAR_REGRESSION,
+    "tabular.svm_regression_train": ALGORITHM_SVM_REGRESSION,
+    "tabular.random_forest_regression_train": ALGORITHM_RANDOM_FOREST_REGRESSION,
+}
+
 TABULAR_EXECUTABLE_NODE_TYPES = {
     "source.dataset_version",
     "source.model_version",
     "table.load_csv",
+    "table.train_test_split",
     "metrics.validate_regression",
     "export.table",
     "export.metrics",
+    "model.save_trained_model",
+    "custom.api_predict",
     "tabular.predict",
     *TABULAR_NODE_ALGORITHMS.keys(),
+    *TABULAR_TRAIN_NODE_ALGORITHMS.keys(),
 }
 
 CreatePrivateDatasetVersionFn = Callable[..., Any]
+CreatePrivateModelVersionFn = Callable[..., Any]
 
 
 @dataclass(slots=True)
@@ -58,6 +78,30 @@ class TabularModelSpec:
     feature_names: list[str]
     default_parameters: dict[str, Any]
     package: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class TrainedModelArtifact:
+    algorithm_key: str
+    estimator: Any
+    feature_names: list[str]
+    target_column: str
+    default_parameters: dict[str, Any]
+    training_hyperparameters: dict[str, Any]
+    metrics: dict[str, float]
+    row_count: int
+    framework: str = "scikit-learn"
+
+
+@dataclass(slots=True)
+class TabularExecutionState:
+    resolved_outputs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    saved_dataset_version_ids: list[str] = field(default_factory=list)
+    saved_model_version_ids: list[str] = field(default_factory=list)
+    result_dataset_version_id: str | None = None
+    result_model_version_id: str | None = None
+    artifact_path: str | None = None
+    latest_metrics: dict[str, float] = field(default_factory=dict)
 
 
 def parse_json_value(text: str, *, field_name: str) -> Any:
@@ -327,16 +371,34 @@ def is_supported_tabular_graph(graph_json: dict[str, Any]) -> bool:
         for node in nodes
         if isinstance(node, dict)
     }
-    if not node_types.intersection(
-        {"metrics.validate_regression", "export.table", "export.metrics", *TABULAR_NODE_ALGORITHMS}
-    ) and "tabular.predict" not in node_types:
+    executable_entry_types = {
+        "metrics.validate_regression",
+        "export.table",
+        "export.metrics",
+        "table.train_test_split",
+        "model.save_trained_model",
+        "custom.api_predict",
+        "tabular.predict",
+        *TABULAR_NODE_ALGORITHMS,
+        *TABULAR_TRAIN_NODE_ALGORITHMS,
+    }
+    if not node_types.intersection(executable_entry_types):
         return False
 
     return node_types.issubset(TABULAR_EXECUTABLE_NODE_TYPES)
 
 
-def _topological_node_order(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    nodes_by_id = {str(node.get("id", "")): node for node in nodes if isinstance(node, dict)}
+def _topological_node_order(
+    nodes: list[dict[str, Any]],
+    *,
+    include_node_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    nodes_by_id = {
+        str(node.get("id", "")): node
+        for node in nodes
+        if isinstance(node, dict)
+        and (include_node_ids is None or str(node.get("id", "")) in include_node_ids)
+    }
     indegree = {node_id: 0 for node_id in nodes_by_id}
     adjacency = {node_id: [] for node_id in nodes_by_id}
 
@@ -367,6 +429,33 @@ def _topological_node_order(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]
     return ordered
 
 
+def _collect_required_node_ids(
+    nodes: list[dict[str, Any]],
+    target_node_id: str,
+) -> set[str]:
+    nodes_by_id = {str(node.get("id", "")): node for node in nodes if isinstance(node, dict)}
+    if target_node_id not in nodes_by_id:
+        raise LookupError(f"Workflow node was not found: {target_node_id}")
+
+    required_node_ids: set[str] = set()
+    queue = deque([target_node_id])
+    while queue:
+        node_id = queue.popleft()
+        if node_id in required_node_ids:
+            continue
+        required_node_ids.add(node_id)
+        bindings = nodes_by_id[node_id].get("input_bindings", {})
+        if not isinstance(bindings, dict):
+            raise ValueError(f"Node {node_id} has invalid input bindings.")
+        for binding in bindings.values():
+            if not isinstance(binding, str):
+                continue
+            source_node_id, _, _ = binding.partition(":")
+            if source_node_id and source_node_id in nodes_by_id:
+                queue.append(source_node_id)
+    return required_node_ids
+
+
 def _resolve_input_value(
     resolved_outputs: dict[str, dict[str, Any]],
     bindings: dict[str, str],
@@ -376,7 +465,14 @@ def _resolve_input_value(
     if not binding:
         raise ValueError(f"Missing required input binding: {key}")
     source_node_id, _, source_handle = binding.partition(":")
-    return resolved_outputs[source_node_id][source_handle]
+    source_outputs = resolved_outputs.get(source_node_id)
+    if source_outputs is None:
+        raise ValueError(f"Input binding for {key} references unknown node: {source_node_id}")
+    if source_handle not in source_outputs:
+        raise ValueError(
+            f"Input binding for {key} references unknown output '{source_handle}'."
+        )
+    return source_outputs[source_handle]
 
 
 def _load_table(db, dataset_version_id: str) -> TableArtifact:
@@ -496,6 +592,191 @@ def _extract_feature_matrix(table: TableArtifact, feature_names: list[str]) -> l
                 ) from exc
         matrix.append(matrix_row)
     return matrix
+
+
+def _parse_feature_names_param(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return []
+
+
+def _extract_target_values(table: TableArtifact, target_column: str) -> list[float]:
+    if not target_column.strip():
+        raise ValueError("targetColumn is required.")
+    values: list[float] = []
+    for row_index, row in enumerate(table.rows, start=1):
+        if target_column not in row:
+            raise ValueError(f"Target column '{target_column}' is missing on row {row_index}.")
+        values.append(_coerce_float(row[target_column], field_name=target_column))
+    return values
+
+
+def _clone_table_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{**row} for row in rows]
+
+
+def _split_table(
+    table: TableArtifact,
+    *,
+    test_size: float,
+    shuffle: bool,
+    random_state: int | None,
+) -> tuple[TableArtifact, TableArtifact]:
+    if not 0 < test_size < 1:
+        raise ValueError("testSize must be between 0 and 1.")
+    if len(table.rows) < 2:
+        raise ValueError("At least two rows are required for train/test split.")
+
+    try:
+        from sklearn.model_selection import train_test_split
+    except ImportError as exc:
+        raise RuntimeError("scikit-learn is required for table.train_test_split.") from exc
+
+    row_indices = list(range(len(table.rows)))
+    train_indices, test_indices = train_test_split(
+        row_indices,
+        test_size=test_size,
+        shuffle=shuffle,
+        random_state=random_state if shuffle else None,
+    )
+    train_rows = [_clone_table_rows([table.rows[index]])[0] for index in train_indices]
+    test_rows = [_clone_table_rows([table.rows[index]])[0] for index in test_indices]
+    return (
+        TableArtifact(columns=list(table.columns), rows=train_rows),
+        TableArtifact(columns=list(table.columns), rows=test_rows),
+    )
+
+
+def _fit_estimator(
+    algorithm_key: str,
+    *,
+    feature_matrix: list[list[float]],
+    target_values: list[float],
+    params: dict[str, Any],
+) -> Any:
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.linear_model import LinearRegression
+        from sklearn.svm import SVR
+    except ImportError as exc:
+        raise RuntimeError("scikit-learn is required for tabular training nodes.") from exc
+
+    if algorithm_key == ALGORITHM_LINEAR_REGRESSION:
+        estimator = LinearRegression(
+            fit_intercept=bool(params.get("fitIntercept", True)),
+            positive=bool(params.get("positive", False)),
+        )
+    elif algorithm_key == ALGORITHM_SVM_REGRESSION:
+        estimator = SVR(
+            kernel=str(params.get("kernel", "rbf")).strip() or "rbf",
+            C=_coerce_float(params.get("c", 1.0), field_name="c"),
+            epsilon=_coerce_float(params.get("epsilon", 0.1), field_name="epsilon"),
+            gamma=str(params.get("gamma", "scale")).strip() or "scale",
+            cache_size=_coerce_float(params.get("cacheSize", 200), field_name="cacheSize"),
+        )
+    else:
+        max_depth_raw = params.get("maxDepth")
+        estimator = RandomForestRegressor(
+            n_estimators=int(
+                _coerce_float(
+                    params.get("nEstimators", 100),
+                    field_name="nEstimators",
+                )
+            ),
+            max_depth=int(_coerce_float(max_depth_raw, field_name="maxDepth"))
+            if max_depth_raw not in {None, ""}
+            else None,
+            min_samples_split=int(
+                _coerce_float(params.get("minSamplesSplit", 2), field_name="minSamplesSplit")
+            ),
+            min_samples_leaf=int(
+                _coerce_float(params.get("minSamplesLeaf", 1), field_name="minSamplesLeaf")
+            ),
+            random_state=int(
+                _coerce_float(
+                    params.get("randomState", 42),
+                    field_name="randomState",
+                )
+            ),
+            n_jobs=int(_coerce_float(params.get("nJobs", 1), field_name="nJobs")),
+        )
+
+    estimator.fit(feature_matrix, target_values)
+    return estimator
+
+
+def _predict_with_estimator(
+    estimator: Any,
+    table: TableArtifact,
+    feature_names: list[str],
+    prediction_column: str = "prediction",
+) -> TableArtifact:
+    predictions = [
+        float(item)
+        for item in estimator.predict(_extract_feature_matrix(table, feature_names))
+    ]
+    columns = list(table.columns)
+    if prediction_column not in columns:
+        columns.append(prediction_column)
+    rows = [
+        {**row, prediction_column: prediction}
+        for row, prediction in zip(table.rows, predictions, strict=True)
+    ]
+    return TableArtifact(columns=columns, rows=rows)
+
+
+def _train_model_node(
+    *,
+    node_type: str,
+    params: dict[str, Any],
+    train_table: TableArtifact,
+    evaluation_table: TableArtifact | None,
+) -> tuple[TrainedModelArtifact, MetricsArtifact]:
+    algorithm_key = TABULAR_TRAIN_NODE_ALGORITHMS[node_type]
+    feature_names = _parse_feature_names_param(params.get("featureColumns"))
+    if not feature_names:
+        raise ValueError(f"{node_type} requires featureColumns.")
+    target_column = str(params.get("targetColumn", "")).strip()
+    if not target_column:
+        raise ValueError(f"{node_type} requires targetColumn.")
+
+    train_matrix = _extract_feature_matrix(train_table, feature_names)
+    train_targets = _extract_target_values(train_table, target_column)
+    estimator = _fit_estimator(
+        algorithm_key,
+        feature_matrix=train_matrix,
+        target_values=train_targets,
+        params=params,
+    )
+    evaluation_source = evaluation_table or train_table
+    prediction_table = _predict_with_estimator(
+        estimator,
+        evaluation_source,
+        feature_names,
+        "prediction",
+    )
+    report = _compute_regression_metrics(
+        prediction_table,
+        evaluation_source,
+        "prediction",
+        target_column,
+        ["r2", "mae", "rmse"],
+    )
+    return (
+        TrainedModelArtifact(
+            algorithm_key=algorithm_key,
+            estimator=estimator,
+            feature_names=feature_names,
+            target_column=target_column,
+            default_parameters=_default_runtime_parameters(algorithm_key),
+            training_hyperparameters=_extract_training_hyperparameters(estimator, algorithm_key),
+            metrics=dict(report.metrics),
+            row_count=len(train_table.rows),
+        ),
+        report,
+    )
 
 
 def _predict_with_linear_package(
@@ -624,6 +905,136 @@ def _execute_prediction_node(
     )
 
 
+def _load_custom_api_config(model_version: ModelVersion) -> dict[str, Any]:
+    metadata = model_version.metadata_json if isinstance(model_version.metadata_json, dict) else {}
+    if str(metadata.get("source_type", "")).strip() != "custom_api":
+        raise ValueError(f"Model version {model_version.id} is not a custom API model.")
+    api_config = metadata.get("api_config")
+    if not isinstance(api_config, dict):
+        raise ValueError(f"Model version {model_version.id} is missing api_config.")
+    return api_config
+
+
+def _predict_with_custom_api_model(
+    *,
+    db,
+    params: dict[str, Any],
+    table: TableArtifact,
+) -> TableArtifact:
+    model_version_id = str(params.get("modelVersionId", "")).strip()
+    if not model_version_id:
+        raise ValueError("custom.api_predict requires modelVersionId.")
+
+    model_version = db.get(ModelVersion, model_version_id)
+    if model_version is None:
+        raise LookupError(f"Model version not found: {model_version_id}")
+
+    api_config = _load_custom_api_config(model_version)
+    default_parameters = (
+        api_config.get("default_parameters")
+        if isinstance(api_config.get("default_parameters"), dict)
+        else {}
+    )
+    node_runtime_parameters = params.get("callParametersJson")
+    runtime_parameters = dict(default_parameters)
+    if isinstance(node_runtime_parameters, str) and node_runtime_parameters.strip():
+        runtime_parameters.update(
+            parse_json_object(node_runtime_parameters, field_name="callParametersJson")
+        )
+
+    request_payload = {
+        "columns": list(table.columns),
+        "rows": table.rows,
+        "parameters": runtime_parameters,
+    }
+    body = json.dumps(request_payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    auth_type = str(api_config.get("auth_type", "none")).strip()
+    auth_token = str(api_config.get("auth_token", "")).strip()
+    if auth_type == "bearer" and auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    elif auth_type == "header" and auth_token:
+        header_name = str(api_config.get("auth_header_name", "")).strip()
+        if not header_name:
+            raise ValueError("Custom API model is missing auth_header_name.")
+        headers[header_name] = auth_token
+
+    timeout_seconds = int(api_config.get("timeout_seconds", 30))
+    endpoint_url = str(api_config.get("endpoint_url", "")).strip()
+    if not endpoint_url:
+        raise ValueError("Custom API model is missing endpoint_url.")
+
+    request_obj = urllib_request.Request(
+        endpoint_url,
+        data=body,
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request_obj, timeout=timeout_seconds) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(
+            f"Custom API request failed with HTTP {exc.code}: {payload or exc.reason}"
+        ) from exc
+    except urllib_error.URLError as exc:
+        raise RuntimeError(f"Custom API request failed: {exc.reason}") from exc
+
+    response_mode = str(api_config.get("response_mode", "prediction_values")).strip()
+    prediction_column = (
+        str(params.get("predictionColumn", "")).strip()
+        or str(api_config.get("default_prediction_column", "")).strip()
+        or "prediction"
+    )
+
+    if response_mode == "prediction_values":
+        predictions = response_payload.get("predictions")
+        if not isinstance(predictions, list):
+            raise ValueError("Custom API response must include a 'predictions' array.")
+        if len(predictions) != len(table.rows):
+            raise ValueError("Custom API predictions length must match the input row count.")
+
+        columns = list(table.columns)
+        if prediction_column not in columns:
+            columns.append(prediction_column)
+        rows = [
+            {**row, prediction_column: prediction}
+            for row, prediction in zip(table.rows, predictions, strict=True)
+        ]
+        return TableArtifact(columns=columns, rows=rows)
+
+    rows_payload = response_payload.get("rows")
+    if not isinstance(rows_payload, list):
+        raise ValueError("Custom API response must include a 'rows' array.")
+    if len(rows_payload) != len(table.rows):
+        raise ValueError("Custom API response row count must match the input row count.")
+
+    merged_rows: list[dict[str, Any]] = []
+    merged_columns = list(table.columns)
+    for row, extra in zip(table.rows, rows_payload, strict=True):
+        if not isinstance(extra, dict):
+            raise ValueError("Each custom API response row must be an object.")
+        merged_rows.append({**row, **extra})
+        for key in extra:
+            if key not in merged_columns:
+                merged_columns.append(key)
+    return TableArtifact(columns=merged_columns, rows=merged_rows)
+
+
+def _write_trained_model_artifact(
+    storage_root: Path,
+    run_id: str,
+    node_id: str,
+    artifact: TrainedModelArtifact,
+) -> Path:
+    target_dir = storage_root / "workflow-runs" / run_id / "model-artifacts"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"{node_id}.joblib"
+    _load_joblib().dump(artifact.estimator, target_path)
+    return target_path
+
+
 def _compute_regression_metrics(
     prediction_table: TableArtifact,
     ground_truth_table: TableArtifact,
@@ -747,6 +1158,457 @@ def _write_metrics_artifact(
     return target_path
 
 
+def _dataset_version_preview(db, dataset_version_id: str) -> dict[str, Any]:
+    dataset_version = db.get(DatasetVersion, dataset_version_id)
+    if dataset_version is None:
+        return {
+            "kind": "dataset_version",
+            "dataset_version_id": dataset_version_id,
+        }
+
+    dataset = db.get(Dataset, dataset_version.dataset_id)
+    return {
+        "kind": "dataset_version",
+        "dataset_version_id": dataset_version.id,
+        "dataset_id": dataset_version.dataset_id,
+        "dataset_name": dataset.name if dataset is not None else None,
+        "version": dataset_version.version,
+        "asset_path": dataset_version.asset_path,
+        "status": dataset_version.status.value,
+    }
+
+
+def _model_version_preview(db, model_version_id: str) -> dict[str, Any]:
+    model_version = db.get(ModelVersion, model_version_id)
+    if model_version is None:
+        return {
+            "kind": "model_version",
+            "model_version_id": model_version_id,
+        }
+
+    model = db.get(Model, model_version.model_id)
+    return {
+        "kind": "model_version",
+        "model_version_id": model_version.id,
+        "model_id": model_version.model_id,
+        "model_name": model.name if model is not None else None,
+        "version": model_version.version,
+        "framework": model_version.framework,
+        "task_type": model_version.task_type,
+        "source_type": (
+            str(model_version.metadata_json.get("source_type", "")).strip()
+            if isinstance(model_version.metadata_json, dict)
+            else None
+        ),
+    }
+
+
+def _table_preview(table: TableArtifact) -> dict[str, Any]:
+    return {
+        "kind": "table",
+        "columns": list(table.columns),
+        "row_count": len(table.rows),
+        "sample_rows": table.rows[:5],
+    }
+
+
+def _metrics_preview(artifact: MetricsArtifact) -> dict[str, Any]:
+    return {
+        "kind": "metrics_report",
+        "metrics": dict(artifact.metrics),
+        "prediction_column": artifact.prediction_column,
+        "ground_truth_column": artifact.ground_truth_column,
+        "row_count": artifact.row_count,
+    }
+
+
+def _trained_model_preview(artifact: TrainedModelArtifact) -> dict[str, Any]:
+    return {
+        "kind": "model_ref",
+        "algorithm_key": artifact.algorithm_key,
+        "feature_names": list(artifact.feature_names),
+        "target_column": artifact.target_column,
+        "default_parameters": dict(artifact.default_parameters),
+        "training_hyperparameters": dict(artifact.training_hyperparameters),
+        "metrics": dict(artifact.metrics),
+        "row_count": artifact.row_count,
+        "framework": artifact.framework,
+    }
+
+
+def _artifact_file_preview(path_value: str) -> dict[str, Any]:
+    path = Path(path_value)
+    size_bytes: int | None = None
+    try:
+        if path.exists():
+            size_bytes = path.stat().st_size
+    except OSError:
+        size_bytes = None
+
+    return {
+        "kind": "artifact_file",
+        "path": path_value,
+        "name": path.name,
+        "size_bytes": size_bytes,
+    }
+
+
+def _value_preview(value: Any) -> dict[str, Any]:
+    return {
+        "kind": "value",
+        "value": value,
+    }
+
+
+def _serialize_preview_value(db, value: Any) -> dict[str, Any]:
+    if isinstance(value, TableArtifact):
+        return _table_preview(value)
+    if isinstance(value, MetricsArtifact):
+        return _metrics_preview(value)
+    if isinstance(value, TrainedModelArtifact):
+        return _trained_model_preview(value)
+    if isinstance(value, str):
+        if db.get(DatasetVersion, value) is not None:
+            return _dataset_version_preview(db, value)
+        if db.get(ModelVersion, value) is not None:
+            return _model_version_preview(db, value)
+        try:
+            if Path(value).exists():
+                return _artifact_file_preview(value)
+        except OSError:
+            pass
+    return _value_preview(value)
+
+
+def _preview_bindings(
+    db,
+    resolved_outputs: dict[str, dict[str, Any]],
+    bindings: dict[str, str],
+) -> dict[str, Any]:
+    preview: dict[str, Any] = {}
+    for key in bindings:
+        preview[key] = _serialize_preview_value(
+            db,
+            _resolve_input_value(resolved_outputs, bindings, key),
+        )
+    return preview
+
+
+def _execute_tabular_node(
+    *,
+    db,
+    node: dict[str, Any],
+    state: TabularExecutionState,
+    storage_root: Path,
+    run_id: str,
+    persist_outputs: bool,
+    workspace_id: str | None = None,
+    current_user: Any | None = None,
+    create_private_dataset_version: CreatePrivateDatasetVersionFn | None = None,
+    create_private_model_version: CreatePrivateModelVersionFn | None = None,
+) -> dict[str, Any]:
+    node_id = str(node.get("id", "")).strip()
+    node_type = str(node.get("type", "")).strip()
+    params = node.get("params", {})
+    bindings = node.get("input_bindings", {})
+    if not isinstance(params, dict) or not isinstance(bindings, dict):
+        raise ValueError(f"Node {node_id} has invalid params or input bindings.")
+
+    if node_type == "source.dataset_version":
+        dataset_version_id = str(params.get("datasetVersionId", "")).strip()
+        if not dataset_version_id:
+            raise ValueError(f"Node {node_id} is missing datasetVersionId.")
+        return {"dataset": dataset_version_id}
+
+    if node_type == "source.model_version":
+        model_version_id = str(params.get("modelVersionId", "")).strip()
+        if not model_version_id:
+            raise ValueError(f"Node {node_id} is missing modelVersionId.")
+        return {"model": model_version_id}
+
+    if node_type == "table.load_csv":
+        dataset_version_id = _resolve_input_value(state.resolved_outputs, bindings, "dataset")
+        return {"table": _load_table(db, str(dataset_version_id))}
+
+    if node_type == "table.train_test_split":
+        input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
+        train_table, test_table = _split_table(
+            input_table,
+            test_size=_coerce_float(params.get("testSize", 0.2), field_name="testSize"),
+            shuffle=bool(params.get("shuffle", True)),
+            random_state=(
+                int(_coerce_float(params.get("randomState", 42), field_name="randomState"))
+                if params.get("randomState", "") not in {None, ""}
+                else None
+            ),
+        )
+        return {"trainTable": train_table, "testTable": test_table}
+
+    if node_type in TABULAR_NODE_ALGORITHMS or node_type == "tabular.predict":
+        input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
+        return {
+            "table": _execute_prediction_node(
+                db=db,
+                node_type=node_type,
+                params=params,
+                table=input_table,
+            )
+        }
+
+    if node_type == "custom.api_predict":
+        input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
+        return {"table": _predict_with_custom_api_model(db=db, params=params, table=input_table)}
+
+    if node_type in TABULAR_TRAIN_NODE_ALGORITHMS:
+        train_table = _resolve_input_value(state.resolved_outputs, bindings, "trainTable")
+        evaluation_table = None
+        if str(bindings.get("testTable", "")).strip():
+            evaluation_table = _resolve_input_value(state.resolved_outputs, bindings, "testTable")
+        model_artifact, report = _train_model_node(
+            node_type=node_type,
+            params=params,
+            train_table=train_table,
+            evaluation_table=evaluation_table,
+        )
+        state.latest_metrics = dict(report.metrics)
+        return {"model": model_artifact, "report": report}
+
+    if node_type == "metrics.validate_regression":
+        prediction_table = _resolve_input_value(
+            state.resolved_outputs,
+            bindings,
+            "predictionTable",
+        )
+        ground_truth_table = _resolve_input_value(
+            state.resolved_outputs,
+            bindings,
+            "groundTruthTable",
+        )
+        metric_keys = params.get("metrics", ["r2", "mae", "rmse"])
+        if not isinstance(metric_keys, list):
+            raise ValueError("metrics.validate_regression requires a metrics array.")
+        report = _compute_regression_metrics(
+            prediction_table,
+            ground_truth_table,
+            str(params.get("predictionColumn", "")).strip() or "prediction",
+            str(params.get("groundTruthColumn", "")).strip() or "target",
+            [str(item) for item in metric_keys],
+        )
+        state.latest_metrics = dict(report.metrics)
+        return {"report": report}
+
+    if node_type == "model.save_trained_model":
+        model_artifact = _resolve_input_value(state.resolved_outputs, bindings, "model")
+        if not isinstance(model_artifact, TrainedModelArtifact):
+            raise ValueError("model.save_trained_model requires a trained model artifact input.")
+        target_path = _write_trained_model_artifact(storage_root, run_id, node_id, model_artifact)
+        state.artifact_path = str(target_path.resolve())
+        node_outputs: dict[str, Any] = {
+            "artifact": state.artifact_path,
+            "model": model_artifact,
+        }
+        save_to_platform = persist_outputs and bool(params.get("saveToPlatform", True))
+        if save_to_platform:
+            if (
+                create_private_model_version is None
+                or current_user is None
+                or not workspace_id
+            ):
+                raise RuntimeError("Model persistence is not configured for this execution.")
+            model_name = str(params.get("outputModelName", "")).strip() or "Trained Model"
+            version = str(params.get("outputModelVersion", "")).strip() or "1.0.0"
+            model_summary = create_private_model_version(
+                db=db,
+                workspace_id=workspace_id,
+                current_user=current_user,
+                model_name=model_name,
+                version=version,
+                algorithm_key=model_artifact.algorithm_key,
+                task_type="regression",
+                framework=model_artifact.framework,
+                source_path=target_path,
+                metadata={
+                    "kind": TABULAR_MODEL_KIND,
+                    "artifact_format": "joblib",
+                    "feature_names": model_artifact.feature_names,
+                    "default_parameters": model_artifact.default_parameters,
+                    "training_hyperparameters": model_artifact.training_hyperparameters,
+                    "training_metrics": model_artifact.metrics,
+                    "target_column": model_artifact.target_column,
+                    "trained_row_count": model_artifact.row_count,
+                    "source_node_id": node_id,
+                },
+            )
+            state.saved_model_version_ids.append(model_summary.id)
+            state.result_model_version_id = model_summary.id
+            node_outputs["modelVersionId"] = model_summary.id
+        return node_outputs
+
+    if node_type == "export.table":
+        table = _resolve_input_value(state.resolved_outputs, bindings, "input")
+        target_path = _write_table_csv(storage_root, run_id, node_id, table)
+        state.artifact_path = str(target_path.resolve())
+        node_outputs: dict[str, Any] = {"artifact": state.artifact_path}
+        save_to_platform = persist_outputs and bool(params.get("saveToPlatform", True))
+        if save_to_platform:
+            if (
+                create_private_dataset_version is None
+                or current_user is None
+                or not workspace_id
+            ):
+                raise RuntimeError("Dataset persistence is not configured for this execution.")
+            dataset_name = str(params.get("outputDatasetName", "")).strip() or "Prediction Output"
+            version_summary = create_private_dataset_version(
+                db=db,
+                workspace_id=workspace_id,
+                current_user=current_user,
+                run_id=run_id,
+                dataset_name=dataset_name,
+                kind=DatasetKind.TABLE,
+                source_path=target_path,
+                content_type="text/csv",
+                metadata={"source_node_id": node_id, "output_kind": "prediction_table"},
+            )
+            state.saved_dataset_version_ids.append(version_summary.id)
+            state.result_dataset_version_id = version_summary.id
+            node_outputs["datasetVersionId"] = version_summary.id
+        return node_outputs
+
+    if node_type == "export.metrics":
+        report = _resolve_input_value(state.resolved_outputs, bindings, "input")
+        target_path = _write_metrics_artifact(
+            storage_root,
+            run_id,
+            node_id,
+            report,
+            str(params.get("format", "json")),
+        )
+        state.artifact_path = str(target_path.resolve())
+        node_outputs = {"artifact": state.artifact_path}
+        save_to_platform = persist_outputs and bool(params.get("saveToPlatform", True))
+        if save_to_platform:
+            if (
+                create_private_dataset_version is None
+                or current_user is None
+                or not workspace_id
+            ):
+                raise RuntimeError("Dataset persistence is not configured for this execution.")
+            dataset_name = str(params.get("outputDatasetName", "")).strip() or "Validation Metrics"
+            content_type = (
+                "text/csv" if target_path.suffix.lower() == ".csv" else "application/json"
+            )
+            version_summary = create_private_dataset_version(
+                db=db,
+                workspace_id=workspace_id,
+                current_user=current_user,
+                run_id=run_id,
+                dataset_name=dataset_name,
+                kind=DatasetKind.ARTIFACT,
+                source_path=target_path,
+                content_type=content_type,
+                metadata={"source_node_id": node_id, "output_kind": "metrics_report"},
+            )
+            state.saved_dataset_version_ids.append(version_summary.id)
+            state.result_dataset_version_id = version_summary.id
+            node_outputs["datasetVersionId"] = version_summary.id
+        return node_outputs
+
+    raise ValueError(f"Unsupported tabular node type: {node_type}")
+
+
+def _execute_tabular_nodes(
+    *,
+    db,
+    ordered_nodes: list[dict[str, Any]],
+    storage_root: Path,
+    run_id: str,
+    persist_outputs: bool,
+    workspace_id: str | None = None,
+    current_user: Any | None = None,
+    create_private_dataset_version: CreatePrivateDatasetVersionFn | None = None,
+    create_private_model_version: CreatePrivateModelVersionFn | None = None,
+) -> TabularExecutionState:
+    state = TabularExecutionState()
+    for node in ordered_nodes:
+        node_id = str(node.get("id", "")).strip()
+        state.resolved_outputs[node_id] = _execute_tabular_node(
+            db=db,
+            node=node,
+            state=state,
+            storage_root=storage_root,
+            run_id=run_id,
+            persist_outputs=persist_outputs,
+            workspace_id=workspace_id,
+            current_user=current_user,
+            create_private_dataset_version=create_private_dataset_version,
+            create_private_model_version=create_private_model_version,
+        )
+    return state
+
+
+def test_tabular_node(
+    *,
+    db,
+    graph_json: dict[str, Any],
+    target_node_id: str,
+    storage_root: Path,
+) -> dict[str, Any]:
+    raw_nodes = graph_json.get("nodes", [])
+    if not isinstance(raw_nodes, list):
+        raise ValueError("Workflow graph nodes must be a list.")
+
+    required_node_ids = _collect_required_node_ids(raw_nodes, target_node_id)
+    ordered_nodes = _topological_node_order(raw_nodes, include_node_ids=required_node_ids)
+    unsupported_node_types = sorted(
+        {
+            str(node.get("type", "")).strip()
+            for node in ordered_nodes
+            if str(node.get("type", "")).strip() not in TABULAR_EXECUTABLE_NODE_TYPES
+        }
+    )
+    if unsupported_node_types:
+        raise NotImplementedError(
+            "Node testing currently supports only executable table workflow nodes. "
+            f"Unsupported node types: {', '.join(unsupported_node_types)}."
+        )
+
+    state = TabularExecutionState()
+    preview_run_id = f"node-test-{uuid4().hex[:12]}"
+    input_preview: dict[str, Any] = {}
+    output_preview: dict[str, Any] = {}
+
+    for node in ordered_nodes:
+        node_id = str(node.get("id", "")).strip()
+        bindings = node.get("input_bindings", {})
+        if not isinstance(bindings, dict):
+            raise ValueError(f"Node {node_id} has invalid input bindings.")
+        if node_id == target_node_id:
+            input_preview = _preview_bindings(db, state.resolved_outputs, bindings)
+
+        outputs = _execute_tabular_node(
+            db=db,
+            node=node,
+            state=state,
+            storage_root=storage_root,
+            run_id=preview_run_id,
+            persist_outputs=False,
+        )
+        state.resolved_outputs[node_id] = outputs
+
+        if node_id == target_node_id:
+            output_preview = {
+                key: _serialize_preview_value(db, value)
+                for key, value in outputs.items()
+            }
+            break
+
+    return {
+        "node_id": target_node_id,
+        "input_preview": input_preview,
+        "output_preview": output_preview,
+    }
+
+
 def execute_tabular_graph(
     *,
     db,
@@ -756,6 +1618,7 @@ def execute_tabular_graph(
     run_id: str,
     storage_root: Path,
     create_private_dataset_version: CreatePrivateDatasetVersionFn,
+    create_private_model_version: CreatePrivateModelVersionFn | None = None,
 ) -> dict[str, Any]:
     graph_json = (
         workflow_version.graph_json
@@ -765,127 +1628,23 @@ def execute_tabular_graph(
     raw_nodes = graph_json.get("nodes", [])
     if not isinstance(raw_nodes, list):
         raise ValueError("Workflow graph nodes must be a list.")
-
-    resolved_outputs: dict[str, dict[str, Any]] = {}
-    saved_dataset_version_ids: list[str] = []
-    result_dataset_version_id: str | None = None
-    artifact_path: str | None = None
-    latest_metrics: dict[str, float] = {}
-
-    for node in _topological_node_order(raw_nodes):
-        node_id = str(node.get("id", "")).strip()
-        node_type = str(node.get("type", "")).strip()
-        params = node.get("params", {})
-        bindings = node.get("input_bindings", {})
-        if not isinstance(params, dict) or not isinstance(bindings, dict):
-            raise ValueError(f"Node {node_id} has invalid params or input bindings.")
-
-        if node_type == "source.dataset_version":
-            dataset_version_id = str(params.get("datasetVersionId", "")).strip()
-            if not dataset_version_id:
-                raise ValueError(f"Node {node_id} is missing datasetVersionId.")
-            resolved_outputs[node_id] = {"dataset": dataset_version_id}
-        elif node_type == "source.model_version":
-            resolved_outputs[node_id] = {"model": str(params.get("modelVersionId", "")).strip()}
-        elif node_type == "table.load_csv":
-            dataset_version_id = _resolve_input_value(resolved_outputs, bindings, "dataset")
-            resolved_outputs[node_id] = {"table": _load_table(db, str(dataset_version_id))}
-        elif node_type in TABULAR_NODE_ALGORITHMS or node_type == "tabular.predict":
-            input_table = _resolve_input_value(resolved_outputs, bindings, "table")
-            resolved_outputs[node_id] = {
-                "table": _execute_prediction_node(
-                    db=db,
-                    node_type=node_type,
-                    params=params,
-                    table=input_table,
-                )
-            }
-        elif node_type == "metrics.validate_regression":
-            prediction_table = _resolve_input_value(resolved_outputs, bindings, "predictionTable")
-            ground_truth_table = _resolve_input_value(
-                resolved_outputs,
-                bindings,
-                "groundTruthTable",
-            )
-            metric_keys = params.get("metrics", ["r2", "mae", "rmse"])
-            if not isinstance(metric_keys, list):
-                raise ValueError("metrics.validate_regression requires a metrics array.")
-            report = _compute_regression_metrics(
-                prediction_table,
-                ground_truth_table,
-                str(params.get("predictionColumn", "")).strip() or "prediction",
-                str(params.get("groundTruthColumn", "")).strip() or "target",
-                [str(item) for item in metric_keys],
-            )
-            latest_metrics = dict(report.metrics)
-            resolved_outputs[node_id] = {"report": report}
-        elif node_type == "export.table":
-            table = _resolve_input_value(resolved_outputs, bindings, "input")
-            target_path = _write_table_csv(storage_root, run_id, node_id, table)
-            artifact_path = str(target_path.resolve())
-            node_outputs: dict[str, Any] = {"artifact": artifact_path}
-            if bool(params.get("saveToPlatform", True)):
-                dataset_name = (
-                    str(params.get("outputDatasetName", "")).strip()
-                    or "Prediction Output"
-                )
-                version_summary = create_private_dataset_version(
-                    db=db,
-                    workspace_id=workspace_id,
-                    current_user=current_user,
-                    run_id=run_id,
-                    dataset_name=dataset_name,
-                    kind=DatasetKind.TABLE,
-                    source_path=target_path,
-                    content_type="text/csv",
-                    metadata={"source_node_id": node_id, "output_kind": "prediction_table"},
-                )
-                saved_dataset_version_ids.append(version_summary.id)
-                result_dataset_version_id = version_summary.id
-                node_outputs["datasetVersionId"] = version_summary.id
-            resolved_outputs[node_id] = node_outputs
-        elif node_type == "export.metrics":
-            report = _resolve_input_value(resolved_outputs, bindings, "input")
-            target_path = _write_metrics_artifact(
-                storage_root,
-                run_id,
-                node_id,
-                report,
-                str(params.get("format", "json")),
-            )
-            artifact_path = str(target_path.resolve())
-            node_outputs = {"artifact": artifact_path}
-            if bool(params.get("saveToPlatform", True)):
-                dataset_name = (
-                    str(params.get("outputDatasetName", "")).strip()
-                    or "Validation Metrics"
-                )
-                content_type = (
-                    "text/csv"
-                    if target_path.suffix.lower() == ".csv"
-                    else "application/json"
-                )
-                version_summary = create_private_dataset_version(
-                    db=db,
-                    workspace_id=workspace_id,
-                    current_user=current_user,
-                    run_id=run_id,
-                    dataset_name=dataset_name,
-                    kind=DatasetKind.ARTIFACT,
-                    source_path=target_path,
-                    content_type=content_type,
-                    metadata={"source_node_id": node_id, "output_kind": "metrics_report"},
-                )
-                saved_dataset_version_ids.append(version_summary.id)
-                result_dataset_version_id = version_summary.id
-                node_outputs["datasetVersionId"] = version_summary.id
-            resolved_outputs[node_id] = node_outputs
-        else:
-            raise ValueError(f"Unsupported tabular node type: {node_type}")
+    execution_state = _execute_tabular_nodes(
+        db=db,
+        ordered_nodes=_topological_node_order(raw_nodes),
+        storage_root=storage_root,
+        run_id=run_id,
+        persist_outputs=True,
+        workspace_id=workspace_id,
+        current_user=current_user,
+        create_private_dataset_version=create_private_dataset_version,
+        create_private_model_version=create_private_model_version,
+    )
 
     return {
-        "result_dataset_version_id": result_dataset_version_id,
-        "saved_dataset_version_ids": saved_dataset_version_ids,
-        "artifact_path": artifact_path,
-        "metrics": latest_metrics,
+        "result_dataset_version_id": execution_state.result_dataset_version_id,
+        "result_model_version_id": execution_state.result_model_version_id,
+        "saved_dataset_version_ids": execution_state.saved_dataset_version_ids,
+        "saved_model_version_ids": execution_state.saved_model_version_ids,
+        "artifact_path": execution_state.artifact_path,
+        "metrics": execution_state.latest_metrics,
     }

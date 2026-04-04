@@ -133,7 +133,10 @@ def _ensure_dataset_seed(
             version=1,
             status=DatasetStatus.READY,
             asset_path=str(target_path.resolve()),
-            preview_url=f"{get_settings().api_v1_prefix}/dataset-versions/{dataset_version_id}/download",
+            preview_url=(
+                f"{get_settings().api_v1_prefix}/dataset-versions/"
+                f"{dataset_version_id}/download"
+            ),
             original_file_name=file_name,
             content_type=content_type,
             size_bytes=target_path.stat().st_size,
@@ -202,6 +205,9 @@ def _ensure_model_seed(
         default_parameters=default_parameters,
     )
     metadata_json["seeded"] = True
+    metadata_json["source_type"] = "seeded"
+    metadata_json["execution_mode"] = "in_process"
+    metadata_json["visibility"] = "workspace"
 
     model_version = session.get(ModelVersion, model_version_id)
     if model_version is None:

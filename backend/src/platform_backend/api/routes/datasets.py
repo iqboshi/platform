@@ -90,6 +90,7 @@ def upload_dataset(
     dataset_name: Annotated[str, Form(...)],
     kind: Annotated[DatasetKind, Form(...)],
     file: Annotated[UploadFile, File(...)],
+    description: Annotated[str | None, Form()] = None,
 ) -> DatasetVersionSummary:
     if file.filename is None:
         raise HTTPException(status_code=400, detail="Uploaded file must have a filename.")
@@ -105,6 +106,7 @@ def upload_dataset(
         db,
         workspace_id=workspace_id,
         dataset_name=dataset_name,
+        description=description,
         kind=kind,
         current_user=current_user,
         upload_file=file.file,
@@ -143,6 +145,12 @@ def update_dataset_route(
             dataset_id,
             current_user=current_user,
             name=request.name,
+            description=request.description,
+            original_file_name=request.original_file_name,
+            content_type=request.content_type,
+            row_count=request.row_count,
+            columns=request.columns,
+            sample_record=request.sample_record,
             visibility=request.visibility,
         )
     except LookupError as exc:

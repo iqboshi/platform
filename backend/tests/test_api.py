@@ -26,12 +26,22 @@ def _workspace_id(client: TestClient, token: str) -> str:
     return response.json()[0]["id"]
 
 
+def _current_user(client: TestClient, token: str) -> dict[str, object]:
+    response = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 def _upload_table_dataset(
     client: TestClient,
     token: str,
     workspace_id: str,
     dataset_name: str,
     csv_text: str,
+    description: str | None = None,
 ) -> dict[str, object]:
     response = client.post(
         "/api/v1/datasets/upload",
@@ -40,6 +50,7 @@ def _upload_table_dataset(
         data={
             "workspace_id": workspace_id,
             "dataset_name": dataset_name,
+            "description": description or "",
             "kind": "table",
         },
     )
@@ -129,6 +140,37 @@ def _upload_joblib_model_package(
     return response.json()
 
 
+def _create_custom_api_model(
+    client: TestClient,
+    token: str,
+    workspace_id: str,
+    model_name: str,
+    *,
+    version: str = "1.0.0",
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/models/custom",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "workspace_id": workspace_id,
+            "model_name": model_name,
+            "version": version,
+            "task_type": "regression",
+            "description": "External API backed regression model.",
+            "endpoint_url": "https://example.com/predict",
+            "timeout_seconds": 45,
+            "auth_type": "header",
+            "auth_token": "secret-token",
+            "auth_header_name": "X-API-Key",
+            "response_mode": "prediction_values",
+            "default_prediction_column": "prediction",
+            "default_parameters": {"threshold": 0.5},
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def _template_graph(client: TestClient, token: str, template_id: str) -> dict[str, object]:
     response = client.get(
         "/api/v1/workflows/templates",
@@ -179,6 +221,24 @@ def _workflow_run_details(client: TestClient, token: str, run_id: str) -> dict[s
     )
     assert response.status_code == 200
     return next(item for item in response.json() if item["id"] == run_id)
+
+
+def _test_workflow_node(
+    client: TestClient,
+    token: str,
+    graph: dict[str, object],
+    node_id: str,
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/workflows/test-node",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "graph": graph,
+            "node_id": node_id,
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
 
 
 def test_healthz(client: TestClient) -> None:
@@ -240,17 +300,159 @@ def test_workflow_templates_endpoint(client: TestClient, admin_token: str) -> No
     assert any(item.get("sample_bindings") for item in payload if item["id"].startswith("tabular"))
 
 
-def test_models_endpoint_requires_model_permission(
+def test_workflow_node_test_returns_table_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    dataset_version = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "preview-input",
+        "feature_a,feature_b,target\n1,2,1.0\n3,4,2.0\n",
+    )
+    graph = _template_graph(client, engineer_token, "tabular.prediction")
+
+    target_node_id = ""
+    for node in graph["nodes"]:
+        if node["type"] == "source.dataset_version":
+            node["params"]["datasetVersionId"] = dataset_version["id"]
+        if node["type"] == "table.load_csv":
+            target_node_id = node["id"]
+
+    payload = _test_workflow_node(client, engineer_token, graph, target_node_id)
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["dataset"]["kind"] == "dataset_version"
+    assert payload["output_preview"]["table"]["kind"] == "table"
+    assert payload["output_preview"]["table"]["row_count"] == 2
+    assert payload["output_preview"]["table"]["columns"] == ["feature_a", "feature_b", "target"]
+
+
+def test_workflow_node_test_returns_prediction_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    dataset_version = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "prediction-preview-input",
+        "feature_a,feature_b,target\n1,2,1.0\n3,4,2.0\n",
+    )
+    model_version = _upload_model_package(
+        client,
+        engineer_token,
+        workspace_id,
+        "prediction-preview-model",
+    )
+    graph = _template_graph(client, engineer_token, "tabular.prediction")
+
+    target_node_id = ""
+    for node in graph["nodes"]:
+        if node["type"] == "source.dataset_version":
+            node["params"]["datasetVersionId"] = dataset_version["id"]
+        if node["type"] == "tabular.linear_regression_predict":
+            node["params"]["modelVersionId"] = model_version["id"]
+            node["params"]["predictionColumn"] = "prediction"
+            target_node_id = node["id"]
+
+    payload = _test_workflow_node(client, engineer_token, graph, target_node_id)
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["table"]["kind"] == "table"
+    assert payload["output_preview"]["table"]["kind"] == "table"
+    assert "prediction" in payload["output_preview"]["table"]["columns"]
+    assert payload["output_preview"]["table"]["sample_rows"][0]["prediction"] == 2.0
+
+
+def test_workflow_node_test_returns_metrics_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    prediction_version = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "prediction-preview-table",
+        "feature_a,prediction\n1,2.0\n2,4.0\n3,6.0\n",
+    )
+    ground_truth_version = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "ground-truth-preview-table",
+        "feature_a,target\n1,2.5\n2,3.5\n3,6.5\n",
+    )
+    graph = _template_graph(client, engineer_token, "tabular.validation")
+
+    target_node_id = ""
+    dataset_source_nodes = [
+        node for node in graph["nodes"] if node["type"] == "source.dataset_version"
+    ]
+    dataset_source_nodes[0]["params"]["datasetVersionId"] = prediction_version["id"]
+    dataset_source_nodes[1]["params"]["datasetVersionId"] = ground_truth_version["id"]
+    for node in graph["nodes"]:
+        if node["type"] == "metrics.validate_regression":
+            node["params"]["predictionColumn"] = "prediction"
+            node["params"]["groundTruthColumn"] = "target"
+            node["params"]["metrics"] = ["r2", "mae"]
+            target_node_id = node["id"]
+
+    payload = _test_workflow_node(client, engineer_token, graph, target_node_id)
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["predictionTable"]["kind"] == "table"
+    assert payload["input_preview"]["groundTruthTable"]["kind"] == "table"
+    assert payload["output_preview"]["report"]["kind"] == "metrics_report"
+    assert set(payload["output_preview"]["report"]["metrics"]) == {"r2", "mae"}
+    assert payload["output_preview"]["report"]["row_count"] == 3
+
+
+def test_workflow_node_test_reports_not_supported_nodes(client: TestClient) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    payload = _test_workflow_node(
+        client,
+        admin_token,
+        {
+            "nodes": [
+                {
+                    "id": "unsupported-node",
+                    "type": "raster.clip",
+                    "position": {"x": 0, "y": 0},
+                    "params": {},
+                    "input_bindings": {},
+                    "output_defs": [],
+                }
+            ],
+            "edges": [],
+        },
+        "unsupported-node",
+    )
+    assert payload["status"] == "not_supported"
+    assert "Unsupported node types" in payload["errors"][0]
+
+
+def test_workflow_node_test_reports_binding_errors(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    graph = _template_graph(client, engineer_token, "tabular.prediction")
+
+    target_node_id = ""
+    for node in graph["nodes"]:
+        if node["type"] == "table.load_csv":
+            node["input_bindings"] = {}
+            target_node_id = node["id"]
+
+    payload = _test_workflow_node(client, engineer_token, graph, target_node_id)
+    assert payload["status"] == "failed"
+    assert "Missing required input binding: dataset" in payload["errors"][0]
+
+
+def test_models_endpoint_allows_members_with_model_view_permission(
     client: TestClient,
     admin_token: str,
 ) -> None:
     member_token = _login(client, "member@platform.local", "Member123!")
 
-    forbidden = client.get(
+    member_response = client.get(
         "/api/v1/models",
         headers={"Authorization": f"Bearer {member_token}"},
     )
-    assert forbidden.status_code == 403
+    assert member_response.status_code == 200
 
     allowed = client.get(
         "/api/v1/models",
@@ -285,6 +487,7 @@ def test_joblib_model_upload_persists_algorithm_metadata(client: TestClient) -> 
 
 def test_dataset_upload_persists_version(client: TestClient, admin_token: str) -> None:
     workspace_id = _workspace_id(client, admin_token)
+    description = "Generic artifact package for public sharing."
 
     response = client.post(
         "/api/v1/datasets/upload",
@@ -293,6 +496,7 @@ def test_dataset_upload_persists_version(client: TestClient, admin_token: str) -
         data={
             "workspace_id": workspace_id,
             "dataset_name": "Uploaded Sample",
+            "description": description,
             "kind": "artifact",
         },
     )
@@ -300,12 +504,19 @@ def test_dataset_upload_persists_version(client: TestClient, admin_token: str) -
     payload = response.json()
     assert payload["metadata"]["size_bytes"] == 14
 
+    datasets = client.get(
+        "/api/v1/datasets",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
     versions = client.get(
         "/api/v1/dataset-versions",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
+    assert datasets.status_code == 200
     assert versions.status_code == 200
     assert any(item["id"] == payload["id"] for item in versions.json())
+    uploaded_dataset = next(item for item in datasets.json() if item["name"] == "Uploaded Sample")
+    assert uploaded_dataset["description"] == description
 
 
 def test_table_dataset_upload_extracts_csv_metadata(client: TestClient, admin_token: str) -> None:
@@ -321,6 +532,61 @@ def test_table_dataset_upload_extracts_csv_metadata(client: TestClient, admin_to
     assert payload["metadata"]["columns"] == ["feature_a", "feature_b", "target"]
     assert payload["metadata"]["row_count"] == 2
     assert payload["metadata"]["sample_rows"][0]["feature_a"] == "1"
+
+
+def test_dataset_description_can_be_updated(client: TestClient, admin_token: str) -> None:
+    workspace_id = _workspace_id(client, admin_token)
+    _upload_table_dataset(
+        client,
+        admin_token,
+        workspace_id,
+        "editable-dataset",
+        "feature_a,feature_b,target\n1,2,2.0\n",
+        description="Initial description",
+    )
+
+    datasets = client.get(
+        "/api/v1/datasets?scope=mine",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert datasets.status_code == 200
+    dataset = next(item for item in datasets.json() if item["name"] == "editable-dataset")
+
+    update = client.patch(
+        f"/api/v1/datasets/{dataset['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "name": "editable-dataset",
+            "description": "Updated public-facing description",
+            "original_file_name": "curated-output.csv",
+            "content_type": "text/csv",
+            "row_count": 128,
+            "columns": ["feature_a", "feature_b", "prediction"],
+            "sample_record": {
+                "feature_a": 1.25,
+                "feature_b": 3.5,
+                "prediction": 0.91,
+            },
+        },
+    )
+    assert update.status_code == 200
+    assert update.json()["description"] == "Updated public-facing description"
+
+    versions = client.get(
+        f"/api/v1/dataset-versions?dataset_id={dataset['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert versions.status_code == 200
+    latest_version = versions.json()[0]
+    assert latest_version["metadata"]["original_file_name"] == "curated-output.csv"
+    assert latest_version["metadata"]["content_type"] == "text/csv"
+    assert latest_version["metadata"]["row_count"] == 128
+    assert latest_version["metadata"]["columns"] == [
+        "feature_a",
+        "feature_b",
+        "prediction",
+    ]
+    assert latest_version["metadata"]["sample_record"]["prediction"] == 0.91
 
 
 def test_workflow_save_creates_new_version(client: TestClient, admin_token: str) -> None:
@@ -638,3 +904,206 @@ def test_workflow_versions_are_user_scoped_and_downloadable(client: TestClient) 
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert delete_response.status_code == 200
+
+
+def test_custom_api_model_assets_are_private_downloadable_and_deletable(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    engineer_user = _current_user(client, engineer_token)
+
+    model_version = _create_custom_api_model(
+        client,
+        engineer_token,
+        workspace_id,
+        "external-regressor",
+    )
+    assert model_version["source_type"] == "custom_api"
+    assert model_version["execution_mode"] == "external_api"
+    assert model_version["visibility"] == "private"
+    assert model_version["owner_user_id"] == engineer_user["id"]
+
+    engineer_models = client.get(
+        "/api/v1/models/versions?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    member_visible_models = client.get(
+        "/api/v1/models/versions",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    admin_all_models = client.get(
+        "/api/v1/models/versions?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert engineer_models.status_code == 200
+    assert member_visible_models.status_code == 200
+    assert admin_all_models.status_code == 200
+    assert any(item["id"] == model_version["id"] for item in engineer_models.json())
+    assert not any(item["id"] == model_version["id"] for item in member_visible_models.json())
+    assert any(item["id"] == model_version["id"] for item in admin_all_models.json())
+
+    engineer_download = client.get(
+        f"/api/v1/models/versions/{model_version['id']}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_download = client.get(
+        f"/api/v1/models/versions/{model_version['id']}/download",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_download = client.get(
+        f"/api/v1/models/versions/{model_version['id']}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_download.status_code == 200
+    assert admin_download.status_code == 200
+    assert member_download.status_code == 404
+    assert engineer_download.json()["endpoint_url"] == "https://example.com/predict"
+
+    member_delete = client.delete(
+        f"/api/v1/models/versions/{model_version['id']}",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    owner_delete = client.delete(
+        f"/api/v1/models/versions/{model_version['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert member_delete.status_code == 403
+    assert owner_delete.status_code == 200
+
+
+def test_trained_model_assets_can_power_prediction_workflows(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    engineer_user = _current_user(client, engineer_token)
+
+    training_dataset = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "training-data",
+        (
+            "feature_a,feature_b,target\n"
+            "1,2,1.4\n"
+            "2,3,2.2\n"
+            "3,4,3.1\n"
+            "4,5,4.1\n"
+            "5,6,5.0\n"
+            "6,7,5.9\n"
+        ),
+    )
+
+    training_graph = _template_graph(
+        client,
+        engineer_token,
+        "tabular.linear_regression_training",
+    )
+    for node in training_graph["nodes"]:
+        if node["type"] == "source.dataset_version":
+            node["params"]["datasetVersionId"] = training_dataset["id"]
+        if node["type"] == "model.save_trained_model":
+            node["params"]["outputModelName"] = "Engineer Linear Model"
+            node["params"]["outputModelVersion"] = "2026.04"
+
+    training_workflow_version = _save_workflow_graph(
+        client,
+        engineer_token,
+        training_graph,
+    )
+    training_run = _run_workflow(
+        client,
+        engineer_token,
+        training_workflow_version["id"],
+        workspace_id,
+    )
+    assert training_run["status"] == "succeeded"
+
+    engineer_models = client.get(
+        "/api/v1/models/versions?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_models = client.get(
+        "/api/v1/models/versions",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_models = client.get(
+        "/api/v1/models/versions",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_models.status_code == 200
+    assert admin_models.status_code == 200
+    assert member_models.status_code == 200
+
+    trained_model = next(
+        item
+        for item in engineer_models.json()
+        if item["model_name"] == "Engineer Linear Model"
+        and item["version"] == "2026.04"
+        and item["source_type"] == "trained"
+    )
+    assert trained_model["owner_user_id"] == engineer_user["id"]
+    assert any(item["id"] == trained_model["id"] for item in admin_models.json())
+    assert not any(item["id"] == trained_model["id"] for item in member_models.json())
+
+    trained_model_download = client.get(
+        f"/api/v1/models/versions/{trained_model['id']}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert trained_model_download.status_code == 200
+    assert trained_model_download.headers["content-type"] == "application/octet-stream"
+
+    prediction_dataset = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "prediction-data",
+        "feature_a,feature_b,target\n7,8,0\n8,9,0\n",
+    )
+    prediction_graph = _template_graph(client, engineer_token, "tabular.prediction")
+    for node in prediction_graph["nodes"]:
+        if node["type"] == "source.dataset_version":
+            node["params"]["datasetVersionId"] = prediction_dataset["id"]
+        if node["type"] == "tabular.linear_regression_predict":
+            node["params"]["modelVersionId"] = trained_model["id"]
+            node["params"]["predictionColumn"] = "prediction"
+            node["params"]["roundDigits"] = 3
+        if node["type"] == "export.table":
+            node["params"]["outputDatasetName"] = "Prediction From Trained Model"
+
+    prediction_workflow_version = _save_workflow_graph(
+        client,
+        engineer_token,
+        prediction_graph,
+    )
+    prediction_run = _run_workflow(
+        client,
+        engineer_token,
+        prediction_workflow_version["id"],
+        workspace_id,
+    )
+    assert prediction_run["status"] == "succeeded"
+
+    run_details = _workflow_run_details(client, engineer_token, prediction_run["id"])
+    result_dataset_version_id = run_details["result_dataset_version_id"]
+    assert result_dataset_version_id
+
+    engineer_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_download.status_code == 200
+    assert admin_download.status_code == 200
+    assert member_download.status_code == 404
+    assert "prediction" in engineer_download.text

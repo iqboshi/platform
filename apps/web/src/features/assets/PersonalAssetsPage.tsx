@@ -23,8 +23,10 @@ import { useAuth } from '@/auth/useAuth';
 import { useI18n } from '@/i18n/useI18n';
 import {
   deleteDataset,
+  deleteModelVersion,
   deleteWorkflowVersion,
   downloadDatasetVersion,
+  downloadModelVersion,
   downloadWorkflowVersion,
   importWorkflowVersion,
   loadAssetOverview,
@@ -37,13 +39,54 @@ import { downloadUploadTemplate } from '../datasets/upload-templates';
 
 const { Paragraph } = Typography;
 
+function getMetadataString(metadata: Record<string, unknown>, key: string): string {
+  const value = metadata[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function getMetadataNumber(metadata: Record<string, unknown>, key: string): number | undefined {
+  const value = metadata[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function getMetadataStringList(metadata: Record<string, unknown>, key: string): string[] {
+  const value = metadata[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function getSampleRecord(metadata: Record<string, unknown>): Record<string, unknown> | undefined {
+  const direct = metadata.sample_record;
+  if (typeof direct === 'object' && direct !== null && !Array.isArray(direct)) {
+    return direct as Record<string, unknown>;
+  }
+
+  const rows = metadata.sample_rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return undefined;
+  }
+  const first = rows[0];
+  return typeof first === 'object' && first !== null && !Array.isArray(first)
+    ? (first as Record<string, unknown>)
+    : undefined;
+}
+
 interface UploadFormValues {
   datasetName: string;
+  description?: string;
   kind: DatasetKind;
 }
 
 interface RenameFormValues {
   datasetName: string;
+  description?: string;
+  originalFileName?: string;
+  contentType?: string;
+  rowCount?: string;
+  columnsText?: string;
+  sampleRecordJson?: string;
 }
 
 export function PersonalAssetsPage({
@@ -126,9 +169,23 @@ export function PersonalAssetsPage({
     });
   }, [latestVersionByDatasetId, overview]);
 
-  const openRenameModal = (datasetId: string, datasetName: string) => {
-    renameForm.setFieldsValue({ datasetName });
-    setRenameTargetId(datasetId);
+  const openRenameModal = (record: (typeof datasetRows)[number]) => {
+    const metadata = (record.latestVersion?.metadata as Record<string, unknown> | undefined) ?? {};
+    const sampleRecord = getSampleRecord(metadata);
+
+    renameForm.setFieldsValue({
+      datasetName: record.name,
+      description: record.description ?? '',
+      originalFileName: getMetadataString(metadata, 'original_file_name'),
+      contentType: getMetadataString(metadata, 'content_type'),
+      rowCount:
+        getMetadataNumber(metadata, 'row_count') !== undefined
+          ? String(getMetadataNumber(metadata, 'row_count'))
+          : '',
+      columnsText: getMetadataStringList(metadata, 'columns').join('\n'),
+      sampleRecordJson: sampleRecord ? JSON.stringify(sampleRecord, null, 2) : '',
+    });
+    setRenameTargetId(record.id);
   };
 
   const handleUpload = async () => {
@@ -143,6 +200,7 @@ export function PersonalAssetsPage({
       await uploadDataset(token, {
         workspaceId: snapshot.workspace.id,
         datasetName: values.datasetName,
+        description: values.description,
         kind: values.kind,
         file: selectedFile,
       });
@@ -166,7 +224,43 @@ export function PersonalAssetsPage({
     try {
       setSubmitting(true);
       const values = await renameForm.validateFields();
-      await updateDataset(token, renameTargetId, { name: values.datasetName });
+      const rowCountText = values.rowCount?.trim() ?? '';
+      if (rowCountText && !/^\d+$/.test(rowCountText)) {
+        message.error(t('assets.rowCountInvalid'));
+        return;
+      }
+
+      const columns = (values.columnsText ?? '')
+        .split(/\r?\n|,/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const sampleRecordText = values.sampleRecordJson?.trim() ?? '';
+      let sampleRecord: Record<string, unknown> | undefined;
+      if (sampleRecordText) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(sampleRecordText);
+        } catch {
+          message.error(t('assets.sampleRecordInvalid'));
+          return;
+        }
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+          message.error(t('assets.sampleRecordInvalid'));
+          return;
+        }
+        sampleRecord = parsed as Record<string, unknown>;
+      }
+
+      await updateDataset(token, renameTargetId, {
+        name: values.datasetName,
+        description: values.description,
+        originalFileName: values.originalFileName ?? '',
+        contentType: values.contentType ?? '',
+        rowCount: rowCountText ? Number(rowCountText) : undefined,
+        columns,
+        sampleRecord: sampleRecordText ? sampleRecord : {},
+      });
       message.success(t('assets.datasetRenamed'));
       setRenameTargetId(null);
       await Promise.all([refreshAssets(), onRefresh()]);
@@ -277,8 +371,8 @@ export function PersonalAssetsPage({
                 {t('common.download')}
               </Button>
             ) : null}
-            <Button type="link" onClick={() => openRenameModal(record.id, record.name)}>
-              {t('common.rename')}
+            <Button type="link" onClick={() => openRenameModal(record)}>
+              {t('common.edit')}
             </Button>
             {isAdmin ? (
               <Button
@@ -373,6 +467,61 @@ export function PersonalAssetsPage({
     },
   ];
 
+  const modelColumns = [
+    { title: t('datasets.table.dataset'), dataIndex: 'modelName', render: (value: string | undefined, record: NonNullable<typeof overview>['modelVersions'][number]) => value ?? record.modelId },
+    {
+      title: t('assets.assetType'),
+      dataIndex: 'sourceType',
+      render: (sourceType: string | undefined) => (
+        <Tag color={sourceType === 'custom_api' ? 'purple' : sourceType === 'trained' ? 'green' : 'default'}>
+          {sourceType ?? 'uploaded'}
+        </Tag>
+      ),
+    },
+    {
+      title: t('assets.owner'),
+      dataIndex: 'ownerDisplayName',
+      render: (value: string | undefined) => value ?? '-',
+    },
+    { title: t('common.createdAt'), dataIndex: 'createdAt' },
+    {
+      title: t('common.actions'),
+      key: 'actions',
+      render: (_: unknown, record: NonNullable<typeof overview>['modelVersions'][number]) => {
+        const canDeleteModel = isAdmin || currentUser?.id === record.ownerUserId;
+        return (
+          <Space wrap>
+            <Button
+              type="link"
+              onClick={() => token && void downloadModelVersion(token, record.id)}
+            >
+              {t('common.download')}
+            </Button>
+            {canDeleteModel ? (
+              <Button
+                danger
+                type="link"
+                onClick={() =>
+                  token &&
+                  void deleteModelVersion(token, record.id)
+                    .then(async () => {
+                      message.success(t('assets.modelDeleted'));
+                      await Promise.all([refreshAssets(), onRefresh()]);
+                    })
+                    .catch((error) => {
+                      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+                    })
+                }
+              >
+                {t('common.delete')}
+              </Button>
+            ) : null}
+          </Space>
+        );
+      },
+    },
+  ];
+
   return (
     <div className="page-stack">
       <div className="section-header">
@@ -458,6 +607,21 @@ export function PersonalAssetsPage({
                   <Empty description={t('assets.empty')} />
                 ),
               },
+              {
+                key: 'models',
+                label: t('assets.tabModels'),
+                children: overview.modelVersions.length ? (
+                  <Table
+                    rowKey="id"
+                    loading={loading}
+                    pagination={false}
+                    columns={modelColumns}
+                    dataSource={overview.modelVersions}
+                  />
+                ) : (
+                  <Empty description={t('assets.empty')} />
+                ),
+              },
             ]}
           />
         ) : (
@@ -478,7 +642,7 @@ export function PersonalAssetsPage({
         <Form
           form={uploadForm}
           layout="vertical"
-          initialValues={{ datasetName: '', kind: 'table' }}
+          initialValues={{ datasetName: '', description: '', kind: 'table' }}
         >
           <div className="section-actions">
             <Button onClick={() => downloadUploadTemplate(selectedUploadKind)}>
@@ -487,6 +651,9 @@ export function PersonalAssetsPage({
           </div>
           <Form.Item name="datasetName" label={t('datasets.table.dataset')} rules={[{ required: true }]}>
             <Input />
+          </Form.Item>
+          <Form.Item name="description" label={t('datasets.description')}>
+            <Input.TextArea rows={4} />
           </Form.Item>
           <Form.Item name="kind" label={t('datasets.table.kind')} rules={[{ required: true }]}>
             <Select
@@ -515,16 +682,67 @@ export function PersonalAssetsPage({
       </Modal>
 
       <Modal
-        title={t('assets.renameDataset')}
+        title={t('assets.editDataset')}
+        className="asset-editor-modal"
+        width={920}
         open={Boolean(renameTargetId)}
         onCancel={() => setRenameTargetId(null)}
         onOk={() => void handleRename()}
         confirmLoading={submitting}
       >
         <Form form={renameForm} layout="vertical">
-          <Form.Item name="datasetName" label={t('datasets.table.dataset')} rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
+          <div className="asset-editor-layout">
+            <section className="asset-editor-section">
+              <div className="asset-editor-section-title">{t('assets.basicInfoSection')}</div>
+              <Paragraph className="asset-editor-section-copy">
+                {t('assets.basicInfoCopy')}
+              </Paragraph>
+              <Form.Item
+                name="datasetName"
+                label={t('datasets.table.dataset')}
+                rules={[{ required: true }]}
+              >
+                <Input />
+              </Form.Item>
+              <Form.Item name="description" label={t('datasets.description')}>
+                <Input.TextArea rows={5} />
+              </Form.Item>
+              <Form.Item name="originalFileName" label={t('datasets.originalFileName')}>
+                <Input />
+              </Form.Item>
+              <Form.Item name="contentType" label={t('datasets.contentType')}>
+                <Input />
+              </Form.Item>
+            </section>
+
+            <section className="asset-editor-section">
+              <div className="asset-editor-section-title">{t('assets.profileInfoSection')}</div>
+              <Paragraph className="asset-editor-section-copy">
+                {t('assets.profileInfoCopy')}
+              </Paragraph>
+              <Form.Item
+                name="rowCount"
+                label={t('datasets.rowCount')}
+                extra={t('assets.rowCountHint')}
+              >
+                <Input />
+              </Form.Item>
+              <Form.Item
+                name="columnsText"
+                label={t('datasets.fields')}
+                extra={t('assets.columnsHint')}
+              >
+                <Input.TextArea rows={5} />
+              </Form.Item>
+              <Form.Item
+                name="sampleRecordJson"
+                label={t('datasets.sampleRecord')}
+                extra={t('assets.sampleRecordHint')}
+              >
+                <Input.TextArea rows={8} />
+              </Form.Item>
+            </section>
+          </div>
         </Form>
       </Modal>
     </div>

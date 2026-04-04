@@ -21,6 +21,7 @@ export type TranslationKey =
   | 'common.download'
   | 'common.delete'
   | 'common.rename'
+  | 'common.edit'
   | 'common.password'
   | 'common.displayName'
   | 'common.createdAt'
@@ -96,13 +97,24 @@ export type TranslationKey =
   | 'datasets.uploadDenied'
   | 'datasets.fileRequired'
   | 'datasets.downloadAsset'
+  | 'datasets.description'
+  | 'datasets.descriptionFallback'
   | 'datasets.table.dataset'
   | 'datasets.table.kind'
   | 'datasets.table.status'
+  | 'datasets.viewDetails'
   | 'datasets.previewTitle'
   | 'datasets.previewSubtitle'
   | 'datasets.selectedVersion'
   | 'datasets.version'
+  | 'datasets.updatedAt'
+  | 'datasets.originalFileName'
+  | 'datasets.contentType'
+  | 'datasets.fileSize'
+  | 'datasets.rowCount'
+  | 'datasets.columnCount'
+  | 'datasets.fields'
+  | 'datasets.sampleRecord'
   | 'datasets.projection'
   | 'datasets.assetPath'
   | 'datasets.footprint'
@@ -120,6 +132,7 @@ export type TranslationKey =
   | 'assets.scopeMine'
   | 'assets.scopeAll'
   | 'assets.tabDatasets'
+  | 'assets.tabModels'
   | 'assets.tabWorkflows'
   | 'assets.tabRuns'
   | 'assets.empty'
@@ -135,7 +148,18 @@ export type TranslationKey =
   | 'assets.workflowImported'
   | 'assets.workflowImportInvalid'
   | 'assets.workflowDeleted'
+  | 'assets.modelDeleted'
   | 'assets.renameDataset'
+  | 'assets.editDataset'
+  | 'assets.basicInfoSection'
+  | 'assets.basicInfoCopy'
+  | 'assets.profileInfoSection'
+  | 'assets.profileInfoCopy'
+  | 'assets.rowCountHint'
+  | 'assets.rowCountInvalid'
+  | 'assets.columnsHint'
+  | 'assets.sampleRecordHint'
+  | 'assets.sampleRecordInvalid'
   | 'assets.assetType'
   | 'assets.assetTypeDataset'
   | 'assets.assetTypeResult'
@@ -211,6 +235,22 @@ export type TranslationKey =
   | 'workflows.sampleDataset'
   | 'workflows.sampleModel'
   | 'workflows.downloadSampleInput'
+  | 'workflows.nodeTestTitle'
+  | 'workflows.nodeTestCopy'
+  | 'workflows.nodeTestRun'
+  | 'workflows.nodeTestRunning'
+  | 'workflows.nodeTestStale'
+  | 'workflows.nodeTestSuccess'
+  | 'workflows.nodeTestFailure'
+  | 'workflows.nodeTestNotSupported'
+  | 'workflows.nodeTestUnavailable'
+  | 'workflows.nodeTestInput'
+  | 'workflows.nodeTestOutput'
+  | 'workflows.nodeTestErrors'
+  | 'workflows.nodeTestDuration'
+  | 'workflows.nodeTestViewDetails'
+  | 'workflows.nodeTestNoPreview'
+  | 'workflows.nodeTestEmpty'
   | 'workflows.category.source'
   | 'workflows.category.preprocess'
   | 'workflows.category.split'
@@ -286,6 +326,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'common.download': 'Download',
     'common.delete': 'Delete',
     'common.rename': 'Rename',
+    'common.edit': 'Edit',
     'common.password': 'Password',
     'common.displayName': 'Display name',
     'common.createdAt': 'Created at',
@@ -365,22 +406,34 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'dashboard.mapSubtitle':
       'OpenLayers preview with AOI overlay. Replace the placeholder TileJSON with TiTiler-backed tiles as ingestion is wired up.',
     'datasets.kicker': 'Public Datasets',
-    'datasets.title': 'Browse platform-curated public datasets and download published versions.',
+    'datasets.title': 'Browse published public datasets, review their profiles, and download usable versions.',
     'datasets.copy':
-      'Only datasets explicitly published by administrators appear here. Personal uploads and private results are managed in My Assets.',
+      'This page is intentionally dataset-agnostic. Administrators choose which datasets become public, while richer descriptions and profile notes can be maintained during upload or later in My Assets.',
     'datasets.uploadSession': 'Upload dataset',
     'datasets.uploadCreated': 'Dataset uploaded successfully.',
     'datasets.uploadDenied': 'Only dataset managers can upload datasets.',
     'datasets.fileRequired': 'Select a file before uploading.',
     'datasets.downloadAsset': 'Download asset',
+    'datasets.description': 'Description',
+    'datasets.descriptionFallback':
+      'No dataset description has been provided yet. Add one during upload or edit it later in My Assets.',
     'datasets.table.dataset': 'Dataset',
     'datasets.table.kind': 'Kind',
     'datasets.table.status': 'Status',
+    'datasets.viewDetails': 'View details',
     'datasets.previewTitle': 'Dataset Preview',
     'datasets.previewSubtitle':
       'AOI preview reuses the same map component embedded in dataset detail and result review screens.',
     'datasets.selectedVersion': 'Selected Dataset Version',
     'datasets.version': 'Version',
+    'datasets.updatedAt': 'Updated at',
+    'datasets.originalFileName': 'Original file',
+    'datasets.contentType': 'Content type',
+    'datasets.fileSize': 'File size',
+    'datasets.rowCount': 'Record count',
+    'datasets.columnCount': 'Field count',
+    'datasets.fields': 'Fields',
+    'datasets.sampleRecord': 'Sample record',
     'datasets.projection': 'Projection',
     'datasets.assetPath': 'Asset Path',
     'datasets.footprint': 'Footprint',
@@ -399,6 +452,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.scopeMine': 'My assets',
     'assets.scopeAll': 'All users',
     'assets.tabDatasets': 'Datasets & Results',
+    'assets.tabModels': 'Models',
     'assets.tabWorkflows': 'Workflow Versions',
     'assets.tabRuns': 'Workflow Runs',
     'assets.empty': 'No assets found for the current scope.',
@@ -415,7 +469,20 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.workflowImported': 'Workflow version imported successfully.',
     'assets.workflowImportInvalid': 'The selected JSON file is not a valid workflow graph.',
     'assets.workflowDeleted': 'Workflow version deleted successfully.',
+    'assets.modelDeleted': 'Model asset deleted successfully.',
     'assets.renameDataset': 'Rename dataset',
+    'assets.editDataset': 'Edit dataset',
+    'assets.basicInfoSection': 'Basic information',
+    'assets.basicInfoCopy':
+      'Maintain the core identity and public-facing description of this dataset.',
+    'assets.profileInfoSection': 'Profile details',
+    'assets.profileInfoCopy':
+      'Fill in optional structured details for workflow-generated datasets or incomplete uploads.',
+    'assets.rowCountHint': 'Leave blank if this asset does not use row-based records.',
+    'assets.rowCountInvalid': 'Record count must be a non-negative integer.',
+    'assets.columnsHint': 'Enter one field per line, or separate multiple fields with commas.',
+    'assets.sampleRecordHint': 'Provide a single JSON object as an example record.',
+    'assets.sampleRecordInvalid': 'Sample record must be a valid JSON object.',
     'assets.assetType': 'Asset Type',
     'assets.assetTypeDataset': 'Dataset',
     'assets.assetTypeResult': 'Result',
@@ -502,6 +569,23 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.sampleDataset': 'Dataset',
     'workflows.sampleModel': 'Model',
     'workflows.downloadSampleInput': 'Download',
+    'workflows.nodeTestTitle': 'Node Test',
+    'workflows.nodeTestCopy':
+      'Run the selected node with its current upstream inputs and inspect the temporary output preview.',
+    'workflows.nodeTestRun': 'Test node',
+    'workflows.nodeTestRunning': 'Testing...',
+    'workflows.nodeTestStale': 'Needs re-test',
+    'workflows.nodeTestSuccess': 'Succeeded',
+    'workflows.nodeTestFailure': 'Failed',
+    'workflows.nodeTestNotSupported': 'Not supported',
+    'workflows.nodeTestUnavailable': 'Your account cannot execute node tests.',
+    'workflows.nodeTestInput': 'Input Preview',
+    'workflows.nodeTestOutput': 'Output Preview',
+    'workflows.nodeTestErrors': 'Errors',
+    'workflows.nodeTestDuration': 'Duration',
+    'workflows.nodeTestViewDetails': 'View details',
+    'workflows.nodeTestNoPreview': 'No preview data.',
+    'workflows.nodeTestEmpty': 'Run a node test to inspect intermediate data.',
     'workflows.category.source': 'Source',
     'workflows.category.preprocess': 'Preprocess',
     'workflows.category.split': 'Split',
@@ -582,6 +666,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'common.download': '下载',
     'common.delete': '删除',
     'common.rename': '重命名',
+    'common.edit': '编辑',
     'common.password': '密码',
     'common.displayName': '显示名称',
     'common.createdAt': '创建时间',
@@ -653,21 +738,32 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'dashboard.mapSubtitle':
       '使用 OpenLayers 预览 AOI 范围。接入 TiTiler 后可替换为真实瓦片流。',
     'datasets.kicker': '公开数据集',
-    'datasets.title': '浏览管理员公开发布的数据集，并下载可用版本。',
+    'datasets.title': '浏览已发布的公开数据集，查看资料概览，并下载可用版本。',
     'datasets.copy':
-      '只有被管理员设置为公开的数据集会出现在这里。个人上传的数据和私有结果请到“个人资产”页面管理。',
+      '这里不限定遥感场景，公开的数据集可以是表格、结果文件或其他通用资产。管理员决定哪些数据集对外公开，数据介绍可在上传时填写，也可稍后在个人资产中维护。',
     'datasets.uploadSession': '上传数据集',
     'datasets.uploadCreated': '数据集上传成功。',
     'datasets.uploadDenied': '只有具备数据集管理权限的账号可以上传数据集。',
     'datasets.fileRequired': '请先选择要上传的文件。',
     'datasets.downloadAsset': '下载文件',
+    'datasets.description': '介绍',
+    'datasets.descriptionFallback': '当前还没有填写数据集介绍。你可以在上传时填写，或稍后在个人资产中编辑。',
     'datasets.table.dataset': '数据集',
     'datasets.table.kind': '类型',
     'datasets.table.status': '状态',
+    'datasets.viewDetails': '查看详情',
     'datasets.previewTitle': '数据预览',
     'datasets.previewSubtitle': 'AOI 预览组件可复用到数据详情和结果查看页面。',
     'datasets.selectedVersion': '当前选中版本',
     'datasets.version': '版本',
+    'datasets.updatedAt': '更新时间',
+    'datasets.originalFileName': '原始文件名',
+    'datasets.contentType': '内容类型',
+    'datasets.fileSize': '文件大小',
+    'datasets.rowCount': '样本数',
+    'datasets.columnCount': '字段数',
+    'datasets.fields': '字段列表',
+    'datasets.sampleRecord': '样例记录',
     'datasets.projection': '投影',
     'datasets.assetPath': '资产路径',
     'datasets.footprint': '覆盖范围',
@@ -686,6 +782,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.scopeMine': '我的资产',
     'assets.scopeAll': '全部用户',
     'assets.tabDatasets': '数据集与结果',
+    'assets.tabModels': '模型',
     'assets.tabWorkflows': '工作流版本',
     'assets.tabRuns': '工作流运行',
     'assets.empty': '当前范围下没有资产。',
@@ -701,7 +798,18 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.workflowImported': '工作流版本导入成功。',
     'assets.workflowImportInvalid': '选中的 JSON 文件不是有效的工作流图定义。',
     'assets.workflowDeleted': '工作流版本删除成功。',
+    'assets.modelDeleted': '模型资产删除成功。',
     'assets.renameDataset': '重命名数据集',
+    'assets.editDataset': '编辑数据集',
+    'assets.basicInfoSection': '基础信息',
+    'assets.basicInfoCopy': '维护这个数据集的名称、说明，以及面向公开页面的基础资料。',
+    'assets.profileInfoSection': '资料补充',
+    'assets.profileInfoCopy': '为工作流生成结果或信息不完整的数据集补充结构化资料。',
+    'assets.rowCountHint': '如果这个资产不是按行记录组织的，可以留空。',
+    'assets.rowCountInvalid': '样本数必须是大于等于 0 的整数。',
+    'assets.columnsHint': '每行填写一个字段，也可以用逗号分隔多个字段。',
+    'assets.sampleRecordHint': '这里填写一条示例记录，对象格式为 JSON。',
+    'assets.sampleRecordInvalid': '样例记录必须是合法的 JSON 对象。',
     'assets.assetType': '资产类型',
     'assets.assetTypeDataset': '数据集',
     'assets.assetTypeResult': '结果',
@@ -828,5 +936,21 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.sampleDataset': '数据集',
     'workflows.sampleModel': '模型',
     'workflows.downloadSampleInput': '下载',
+    'workflows.nodeTestTitle': '节点测试',
+    'workflows.nodeTestCopy': '基于当前上游输入运行该节点，并查看临时输入/输出预览。',
+    'workflows.nodeTestRun': '测试节点',
+    'workflows.nodeTestRunning': '测试中...',
+    'workflows.nodeTestStale': '结果已过期',
+    'workflows.nodeTestSuccess': '成功',
+    'workflows.nodeTestFailure': '失败',
+    'workflows.nodeTestNotSupported': '暂不支持',
+    'workflows.nodeTestUnavailable': '当前账号没有执行节点测试的权限。',
+    'workflows.nodeTestInput': '输入预览',
+    'workflows.nodeTestOutput': '输出预览',
+    'workflows.nodeTestErrors': '错误信息',
+    'workflows.nodeTestDuration': '耗时',
+    'workflows.nodeTestViewDetails': '查看详情',
+    'workflows.nodeTestNoPreview': '暂无预览数据。',
+    'workflows.nodeTestEmpty': '运行一次节点测试后，这里会显示中间结果。',
   },
 };

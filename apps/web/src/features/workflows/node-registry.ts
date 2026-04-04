@@ -40,14 +40,20 @@ function compatibleModelVersions(
   context: WorkflowEditorContext,
   nodeType: string,
 ): ModelVersionSummary[] {
-  const requiredAlgorithm = algorithmForNodeType(nodeType);
-  if (!requiredAlgorithm) {
-    return context.modelVersions;
+  if (nodeType === 'custom.api_predict') {
+    return context.modelVersions.filter((item) => item.sourceType === 'custom_api');
   }
 
-  return context.modelVersions.filter(
-    (item) => item.algorithmKey === requiredAlgorithm,
-  );
+  const requiredAlgorithm = algorithmForNodeType(nodeType);
+  return context.modelVersions.filter((item) => {
+    if (item.sourceType === 'custom_api') {
+      return false;
+    }
+    if (!requiredAlgorithm) {
+      return true;
+    }
+    return item.algorithmKey === requiredAlgorithm;
+  });
 }
 
 const dataTypeLabels: Record<WorkflowPortDataType, string> = {

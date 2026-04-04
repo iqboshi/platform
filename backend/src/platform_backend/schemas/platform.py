@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,6 +52,7 @@ class DatasetSummary(BaseModel):
     id: str
     workspace_id: str
     name: str
+    description: str = ""
     kind: DatasetKind
     status: DatasetStatus
     is_private: bool = False
@@ -109,6 +110,12 @@ class DatasetUploadConfirmRequest(BaseModel):
 
 class DatasetUpdateRequest(BaseModel):
     name: str | None = None
+    description: str | None = None
+    original_file_name: str | None = None
+    content_type: str | None = None
+    row_count: int | None = None
+    columns: list[str] | None = None
+    sample_record: dict[str, Any] | None = None
     visibility: str | None = None
 
 
@@ -151,6 +158,11 @@ class ModelVersionSummary(BaseModel):
     feature_names: list[str] = Field(default_factory=list)
     default_parameters: dict[str, Any] = Field(default_factory=dict)
     artifact_format: str | None = None
+    source_type: Literal["uploaded", "trained", "custom_api", "seeded"] = "uploaded"
+    execution_mode: Literal["in_process", "external_api"] = "in_process"
+    visibility: str = "private"
+    owner_user_id: str | None = None
+    owner_display_name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
@@ -191,6 +203,22 @@ class ModelUploadRequest(BaseModel):
     task_type: str
     framework: str = "json"
     feature_names: list[str] = Field(default_factory=list)
+    default_parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class CustomApiModelCreateRequest(BaseModel):
+    workspace_id: str
+    model_name: str
+    version: str = "1.0.0"
+    task_type: str = "regression"
+    description: str = ""
+    endpoint_url: str
+    timeout_seconds: int = 30
+    auth_type: Literal["none", "bearer", "header"] = "none"
+    auth_token: str | None = None
+    auth_header_name: str | None = None
+    response_mode: Literal["prediction_values", "table_rows"] = "prediction_values"
+    default_prediction_column: str = "prediction"
     default_parameters: dict[str, Any] = Field(default_factory=dict)
 
 

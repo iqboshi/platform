@@ -298,10 +298,11 @@ export function WorkflowsPage({
         templates={snapshot.workflowTemplates}
         workflowVersion={draftWorkflowVersion}
         canManage={hasPermission('workflow.manage')}
+        canTest={hasPermission('workflow.run')}
         datasets={snapshot.datasets}
         datasetVersions={snapshot.datasetVersions}
         modelVersions={snapshot.modelVersions}
-        downloadToken={token}
+        authToken={token}
         onWorkflowChange={setDraftWorkflowVersion}
       />
 

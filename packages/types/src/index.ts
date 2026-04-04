@@ -19,9 +19,10 @@ export type PermissionKey =
 export type DatasetKind = 'raster' | 'vector' | 'table' | 'artifact';
 export type DatasetStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
 export type DatasetVisibility = 'public' | 'private' | 'workspace';
-export type AssetScope = 'mine' | 'all';
+export type AssetScope = 'visible' | 'mine' | 'all';
 export type WorkflowRunStatus = 'draft' | 'queued' | 'running' | 'succeeded' | 'failed';
 export type WorkflowNodeCategory = 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
+export type WorkflowNodeTestStatus = 'succeeded' | 'failed' | 'not_supported';
 export type WorkflowPortDataType =
   | 'dataset_version'
   | 'table'
@@ -99,6 +100,7 @@ export interface DatasetSummary {
   id: string;
   workspaceId: string;
   name: string;
+  description?: string;
   kind: DatasetKind;
   status: DatasetStatus;
   isPrivate?: boolean;
@@ -244,6 +246,29 @@ export interface WorkflowRunSummary {
   metrics?: Record<string, unknown>;
 }
 
+export interface WorkflowNodePreviewValue {
+  kind:
+    | 'dataset_version'
+    | 'model_ref'
+    | 'model_version'
+    | 'table'
+    | 'metrics_report'
+    | 'artifact_file'
+    | 'value';
+  title?: string;
+  summary?: string;
+  [key: string]: unknown;
+}
+
+export interface WorkflowNodeTestResult {
+  status: WorkflowNodeTestStatus;
+  nodeId: string;
+  durationMs: number;
+  inputPreview: Record<string, WorkflowNodePreviewValue>;
+  outputPreview: Record<string, WorkflowNodePreviewValue>;
+  errors: string[];
+}
+
 export interface ModelVersionSummary {
   id: string;
   modelId: string;
@@ -255,6 +280,11 @@ export interface ModelVersionSummary {
   featureNames?: string[];
   defaultParameters?: Record<string, unknown>;
   artifactFormat?: string;
+  sourceType?: 'uploaded' | 'trained' | 'custom_api' | 'seeded';
+  executionMode?: 'in_process' | 'external_api';
+  visibility?: 'private' | 'public' | 'workspace';
+  ownerUserId?: string;
+  ownerDisplayName?: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
 }

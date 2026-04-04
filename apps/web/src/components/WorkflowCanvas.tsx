@@ -3,10 +3,12 @@ import type {
   DatasetVersionSummary,
   ModelVersionSummary,
   WorkflowNodeCatalogItem,
+  WorkflowNodePreviewValue,
   WorkflowParamDefinition,
   WorkflowPortDataType,
   WorkflowPortDefinition,
   WorkflowTemplateDefinition,
+  WorkflowNodeTestResult,
   WorkflowVersionDetail,
 } from '@platform/types';
 import type {
@@ -19,7 +21,7 @@ import type {
   NodeProps,
 } from '@xyflow/react';
 
-import { App, Button, Card, Empty, Input, InputNumber, Select, Switch, Tag, Typography } from 'antd';
+import { App, Button, Card, Empty, Input, InputNumber, Modal, Select, Switch, Tag, Typography } from 'antd';
 import {
   addEdge,
   applyEdgeChanges,
@@ -37,7 +39,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -56,7 +57,7 @@ import {
   type WorkflowNodeDefinition,
 } from '@/features/workflows/node-registry';
 import { useI18n } from '@/i18n/useI18n';
-import { downloadDatasetVersion } from '@/lib/api';
+import { downloadDatasetVersion, testWorkflowNode } from '@/lib/api';
 import { workflowCategoryKey } from '@/lib/i18n-helpers';
 
 const { Paragraph, Text, Title } = Typography;
@@ -104,6 +105,10 @@ interface TemplateSampleItem {
   datasetVersionId?: string;
 }
 
+interface NodeTestResultState extends WorkflowNodeTestResult {
+  graphSignature: string;
+}
+
 function formatBindingSummary(binding: string | undefined): string {
   if (!binding) {
     return '';
@@ -131,6 +136,203 @@ function summarizeParamValue(value: unknown): string {
     return value.length > 22 ? `${value.slice(0, 19)}...` : value;
   }
   return '';
+}
+
+function getPreviewString(
+  preview: WorkflowNodePreviewValue,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = preview[key];
+    if (typeof value === 'string' && value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function getPreviewNumber(
+  preview: WorkflowNodePreviewValue,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = preview[key];
+    if (typeof value === 'number') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function summarizeNodePreview(preview: WorkflowNodePreviewValue): string {
+  if (typeof preview.summary === 'string' && preview.summary.trim()) {
+    return preview.summary;
+  }
+
+  if (preview.kind === 'table') {
+    const rowCount = getPreviewNumber(preview, 'rowCount', 'row_count') ?? 0;
+    const columns = Array.isArray(preview.columns) ? preview.columns.length : 0;
+    return `${rowCount} rows · ${columns} columns`;
+  }
+
+  if (preview.kind === 'metrics_report') {
+    const rowCount = getPreviewNumber(preview, 'rowCount', 'row_count') ?? 0;
+    const metrics =
+      preview.metrics && typeof preview.metrics === 'object' && !Array.isArray(preview.metrics)
+        ? Object.keys(preview.metrics).length
+        : 0;
+    return `${rowCount} rows · ${metrics} metrics`;
+  }
+
+  if (preview.kind === 'dataset_version') {
+    const name = getPreviewString(preview, 'datasetName', 'dataset_name', 'datasetId', 'dataset_id');
+    const version = getPreviewNumber(preview, 'version');
+    return version !== undefined ? `${name ?? 'Dataset'} / v${version}` : name ?? 'Dataset';
+  }
+
+  if (preview.kind === 'model_version') {
+    const name = getPreviewString(preview, 'modelName', 'model_name', 'modelId', 'model_id');
+    const version = getPreviewString(preview, 'version');
+    return version ? `${name ?? 'Model'} / ${version}` : name ?? 'Model';
+  }
+
+  if (preview.kind === 'model_ref') {
+    const algorithm = getPreviewString(preview, 'algorithmKey', 'algorithm_key') ?? 'model';
+    const featureCount = Array.isArray(preview.featureNames)
+      ? preview.featureNames.length
+      : Array.isArray(preview.feature_names)
+        ? preview.feature_names.length
+        : 0;
+    return `${algorithm} · ${featureCount} features`;
+  }
+
+  if (preview.kind === 'artifact_file') {
+    return (
+      getPreviewString(preview, 'name') ??
+      getPreviewString(preview, 'path') ??
+      'Artifact'
+    );
+  }
+
+  return '';
+}
+
+function buildPreviewPayload(preview: WorkflowNodePreviewValue): unknown {
+  if (preview.kind === 'table') {
+    return {
+      columns: Array.isArray(preview.columns) ? preview.columns : [],
+      sampleRows:
+        Array.isArray(preview.sampleRows) && preview.sampleRows.length
+          ? preview.sampleRows
+          : Array.isArray(preview.sample_rows)
+            ? preview.sample_rows
+            : [],
+    };
+  }
+
+  if (preview.kind === 'metrics_report') {
+    return {
+      metrics: preview.metrics ?? {},
+      predictionColumn:
+        getPreviewString(preview, 'predictionColumn', 'prediction_column') ?? undefined,
+      groundTruthColumn:
+        getPreviewString(preview, 'groundTruthColumn', 'ground_truth_column') ?? undefined,
+      rowCount: getPreviewNumber(preview, 'rowCount', 'row_count') ?? 0,
+    };
+  }
+
+  if (preview.kind === 'dataset_version') {
+    return {
+      datasetVersionId:
+        getPreviewString(preview, 'datasetVersionId', 'dataset_version_id') ?? undefined,
+      datasetId: getPreviewString(preview, 'datasetId', 'dataset_id') ?? undefined,
+      datasetName: getPreviewString(preview, 'datasetName', 'dataset_name') ?? undefined,
+      version: getPreviewNumber(preview, 'version') ?? undefined,
+      status: getPreviewString(preview, 'status') ?? undefined,
+    };
+  }
+
+  if (preview.kind === 'model_version') {
+    return {
+      modelVersionId:
+        getPreviewString(preview, 'modelVersionId', 'model_version_id') ?? undefined,
+      modelId: getPreviewString(preview, 'modelId', 'model_id') ?? undefined,
+      modelName: getPreviewString(preview, 'modelName', 'model_name') ?? undefined,
+      version: getPreviewString(preview, 'version') ?? undefined,
+      framework: getPreviewString(preview, 'framework') ?? undefined,
+      taskType: getPreviewString(preview, 'taskType', 'task_type') ?? undefined,
+    };
+  }
+
+  if (preview.kind === 'model_ref') {
+    return {
+      algorithmKey: getPreviewString(preview, 'algorithmKey', 'algorithm_key') ?? undefined,
+      featureNames: Array.isArray(preview.featureNames)
+        ? preview.featureNames
+        : Array.isArray(preview.feature_names)
+          ? preview.feature_names
+          : [],
+      targetColumn:
+        getPreviewString(preview, 'targetColumn', 'target_column') ?? undefined,
+      metrics:
+        preview.metrics && typeof preview.metrics === 'object' && !Array.isArray(preview.metrics)
+          ? preview.metrics
+          : {},
+      rowCount: getPreviewNumber(preview, 'rowCount', 'row_count') ?? 0,
+      framework: getPreviewString(preview, 'framework') ?? undefined,
+      defaultParameters:
+        preview.defaultParameters && typeof preview.defaultParameters === 'object'
+          ? preview.defaultParameters
+          : preview.default_parameters &&
+              typeof preview.default_parameters === 'object' &&
+              !Array.isArray(preview.default_parameters)
+            ? preview.default_parameters
+            : {},
+      trainingHyperparameters:
+        preview.trainingHyperparameters &&
+        typeof preview.trainingHyperparameters === 'object' &&
+        !Array.isArray(preview.trainingHyperparameters)
+          ? preview.trainingHyperparameters
+          : preview.training_hyperparameters &&
+              typeof preview.training_hyperparameters === 'object' &&
+              !Array.isArray(preview.training_hyperparameters)
+            ? preview.training_hyperparameters
+            : {},
+    };
+  }
+
+  if (preview.kind === 'artifact_file') {
+    return {
+      name: getPreviewString(preview, 'name') ?? undefined,
+      path: getPreviewString(preview, 'path') ?? undefined,
+      sizeBytes: getPreviewNumber(preview, 'sizeBytes', 'size_bytes') ?? undefined,
+    };
+  }
+
+  return preview.value ?? preview;
+}
+
+function NodePreviewCard({
+  portKey,
+  preview,
+}: {
+  portKey: string;
+  preview: WorkflowNodePreviewValue;
+}) {
+  return (
+    <div className="workflow-node-test-card">
+      <div className="workflow-node-test-card-head">
+        <strong>{portKey}</strong>
+        <Tag bordered={false}>{preview.kind.replace(/_/g, ' ')}</Tag>
+      </div>
+      {summarizeNodePreview(preview) ? (
+        <Text type="secondary">{summarizeNodePreview(preview)}</Text>
+      ) : null}
+      <pre className="json-block workflow-node-test-json">
+        {JSON.stringify(buildPreviewPayload(preview), null, 2)}
+      </pre>
+    </div>
+  );
 }
 
 function triggerOnEnterOrSpace(
@@ -191,9 +393,6 @@ function WorkflowEditorNode({
   data,
   selected,
 }: NodeProps<WorkflowFlowNode>) {
-  const inputRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const outputRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const [handleOffsets, setHandleOffsets] = useState<Record<string, number>>({});
   const previewParams = Object.entries(data.params)
     .map(([key, value]) => ({
       key,
@@ -202,44 +401,17 @@ function WorkflowEditorNode({
     .filter((item) => item.value)
     .slice(0, 2);
 
-  useLayoutEffect(() => {
-    const nextOffsets: Record<string, number> = {};
-
-    for (const [portKey, element] of Object.entries(inputRowRefs.current)) {
-      if (element) {
-        nextOffsets[`input:${portKey}`] = element.offsetTop + element.offsetHeight / 2;
-      }
-    }
-
-    for (const [portKey, element] of Object.entries(outputRowRefs.current)) {
-      if (element) {
-        nextOffsets[`output:${portKey}`] = element.offsetTop + element.offsetHeight / 2;
-      }
-    }
-
-    setHandleOffsets((current) => {
-      const currentEntries = Object.entries(current);
-      const nextEntries = Object.entries(nextOffsets);
-      if (
-        currentEntries.length === nextEntries.length &&
-        nextEntries.every(([key, value]) => current[key] === value)
-      ) {
-        return current;
-      }
-      return nextOffsets;
-    });
-  }, [data.inputBindings, data.inputs, data.outputs, data.params]);
-
   return (
     <div className={`workflow-node-card${selected ? ' is-selected' : ''}`}>
       <div className="workflow-node-card-head">
-        <div>
-          <div className="workflow-node-card-kicker">{data.type}</div>
-          <strong>{data.title}</strong>
+        <div className="workflow-node-card-title-block">
+          <strong className="workflow-node-card-title">{data.title}</strong>
+          <div className="workflow-node-card-type" title={data.type}>
+            {data.type}
+          </div>
         </div>
         <Tag color={categoryColor[data.category]}>{data.categoryLabel}</Tag>
       </div>
-      <Paragraph className="workflow-node-card-copy">{data.description}</Paragraph>
 
       {previewParams.length ? (
         <div className="workflow-node-parameter-preview">
@@ -255,20 +427,14 @@ function WorkflowEditorNode({
         <div className="workflow-node-port-title">{data.inputLabel}</div>
         {data.inputs.length ? (
           data.inputs.map((port) => (
-            <div
-              key={port.key}
-              className="workflow-node-port-row"
-              ref={(element) => {
-                inputRowRefs.current[port.key] = element;
-              }}
-            >
+            <div key={port.key} className="workflow-node-port-row">
               <Handle
                 type="target"
                 position={Position.Left}
                 id={port.key}
                 isConnectable={data.canManage}
                 className="workflow-handle workflow-handle-target"
-                style={{ top: handleOffsets[`input:${port.key}`] }}
+                style={{ top: '50%' }}
               />
               <div className="workflow-node-port-copy">
                 <div className="workflow-node-port-label">{port.label}</div>
@@ -294,13 +460,7 @@ function WorkflowEditorNode({
         <div className="workflow-node-port-title">{data.outputLabel}</div>
         {data.outputs.length ? (
           data.outputs.map((port) => (
-            <div
-              key={port.key}
-              className="workflow-node-port-row workflow-node-port-row-output"
-              ref={(element) => {
-                outputRowRefs.current[port.key] = element;
-              }}
-            >
+            <div key={port.key} className="workflow-node-port-row workflow-node-port-row-output">
               <div className="workflow-node-port-copy">
                 <div className="workflow-node-port-label">{port.label}</div>
                 <div className="workflow-node-port-types">
@@ -317,7 +477,7 @@ function WorkflowEditorNode({
                 id={port.key}
                 isConnectable={data.canManage}
                 className="workflow-handle workflow-handle-source"
-                style={{ top: handleOffsets[`output:${port.key}`] }}
+                style={{ top: '50%' }}
               />
             </div>
           ))
@@ -617,20 +777,22 @@ function CanvasInner({
   templates,
   workflowVersion,
   canManage,
+  canTest,
   datasets,
   datasetVersions,
   modelVersions,
-  downloadToken,
+  authToken,
   onWorkflowChange,
 }: {
   catalog: WorkflowNodeCatalogItem[];
   templates: WorkflowTemplateDefinition[];
   workflowVersion: WorkflowVersionDetail;
   canManage: boolean;
+  canTest: boolean;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
   modelVersions: ModelVersionSummary[];
-  downloadToken?: string | null;
+  authToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
   const { message } = App.useApp();
@@ -654,6 +816,9 @@ function CanvasInner({
   const [keyword, setKeyword] = useState('');
   const [selectedDataType, setSelectedDataType] = useState<WorkflowPortDataType | undefined>();
   const [selectedTask, setSelectedTask] = useState<string | undefined>();
+  const [nodeTestLoading, setNodeTestLoading] = useState(false);
+  const [nodeTestResults, setNodeTestResults] = useState<Record<string, NodeTestResultState>>({});
+  const [nodeTestModalOpen, setNodeTestModalOpen] = useState(false);
   const nodesRef = useRef<WorkflowFlowNode[]>([]);
   const edgesRef = useRef<Edge[]>([]);
 
@@ -690,10 +855,15 @@ function CanvasInner({
     const nextEdges = buildFlowEdges(definitions, workflowVersion);
 
     commitGraphState(nextNodes, nextEdges);
+    setNodeTestResults({});
     setSelectedNodeId((currentSelectedNodeId) =>
       nextNodes.some((node) => node.id === currentSelectedNodeId) ? currentSelectedNodeId : undefined,
     );
   }, [canManage, commitGraphState, definitions, editorContext, t, workflowVersion]);
+
+  useEffect(() => {
+    setNodeTestModalOpen(false);
+  }, [selectedNodeId]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -713,6 +883,18 @@ function CanvasInner({
     () =>
       selectedNode ? getWorkflowDefinitionByType(definitions, selectedNode.data.type) : undefined,
     [definitions, selectedNode],
+  );
+  const currentWorkflow = useMemo(
+    () => toWorkflowVersion(nodes, edges, workflowVersionRef.current),
+    [edges, nodes],
+  );
+  const currentGraphSignature = useMemo(
+    () => JSON.stringify(currentWorkflow.graph),
+    [currentWorkflow.graph],
+  );
+  const selectedNodeTest = selectedNodeId ? nodeTestResults[selectedNodeId] : undefined;
+  const selectedNodeTestIsStale = Boolean(
+    selectedNodeTest && selectedNodeTest.graphSignature !== currentGraphSignature,
   );
   const availableDataTypes = useMemo(
     () =>
@@ -974,6 +1156,29 @@ function CanvasInner({
     commitGraphState(nextNodes, edgesRef.current, true);
   };
 
+  const runSelectedNodeTest = async () => {
+    if (!selectedNodeId || !authToken || !canTest) {
+      return;
+    }
+
+    setNodeTestLoading(true);
+    try {
+      const result = await testWorkflowNode(authToken, currentWorkflow, selectedNodeId);
+      setNodeTestResults((current) => ({
+        ...current,
+        [selectedNodeId]: {
+          ...result,
+          graphSignature: currentGraphSignature,
+        },
+      }));
+      setNodeTestModalOpen(true);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('error.request_failed'));
+    } finally {
+      setNodeTestLoading(false);
+    }
+  };
+
   const removeSelectedNode = () => {
     if (!canManage || !selectedNodeId) {
       return;
@@ -1000,13 +1205,13 @@ function CanvasInner({
   };
 
   const onDownloadTemplateSample = async (datasetVersionId: string) => {
-    if (!downloadToken) {
+    if (!authToken) {
       message.error(t('error.request_failed'));
       return;
     }
 
     try {
-      await downloadDatasetVersion(downloadToken, datasetVersionId);
+      await downloadDatasetVersion(authToken, datasetVersionId);
     } catch (error) {
       message.error(error instanceof Error ? error.message : t('error.request_failed'));
     }
@@ -1317,6 +1522,65 @@ function CanvasInner({
               )}
             </div>
 
+            <div className="workflow-inspector-section">
+              <div className="workflow-node-test-header">
+                <Text className="workflow-inspector-section-title">
+                  {t('workflows.nodeTestTitle')}
+                </Text>
+                {selectedNodeTest ? (
+                  <Tag
+                    bordered={false}
+                    color={
+                      selectedNodeTest.status === 'succeeded'
+                        ? 'green'
+                        : selectedNodeTest.status === 'failed'
+                          ? 'red'
+                          : 'default'
+                    }
+                  >
+                    {selectedNodeTest.status === 'succeeded'
+                      ? t('workflows.nodeTestSuccess')
+                      : selectedNodeTest.status === 'failed'
+                        ? t('workflows.nodeTestFailure')
+                        : t('workflows.nodeTestNotSupported')}
+                  </Tag>
+                ) : null}
+              </div>
+              <Text type="secondary">{t('workflows.nodeTestCopy')}</Text>
+              <div className="workflow-node-test-actions">
+                <Button
+                  type="primary"
+                  loading={nodeTestLoading}
+                  disabled={!canTest}
+                  onClick={() => void runSelectedNodeTest()}
+                >
+                  {nodeTestLoading ? t('workflows.nodeTestRunning') : t('workflows.nodeTestRun')}
+                </Button>
+                {selectedNodeTest ? (
+                  <Text type="secondary">
+                    {t('workflows.nodeTestDuration')}: {selectedNodeTest.durationMs} ms
+                  </Text>
+                ) : null}
+                {selectedNodeTestIsStale ? (
+                  <Tag bordered={false} color="gold">
+                    {t('workflows.nodeTestStale')}
+                  </Tag>
+                ) : null}
+              </div>
+
+              {!canTest ? (
+                <Text type="secondary">{t('workflows.nodeTestUnavailable')}</Text>
+              ) : null}
+
+              {selectedNodeTest ? (
+                <Button onClick={() => setNodeTestModalOpen(true)}>
+                  {t('workflows.nodeTestViewDetails')}
+                </Button>
+              ) : (
+                <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>
+              )}
+            </div>
+
             {canManage ? (
               <Button danger onClick={removeSelectedNode}>
                 {t('workflows.deleteNode')}
@@ -1325,6 +1589,57 @@ function CanvasInner({
           </div>
         )}
       </Card>
+
+      <Modal
+        title={
+          selectedNode
+            ? `${t('workflows.nodeTestTitle')} · ${selectedNode.data.title}`
+            : t('workflows.nodeTestTitle')
+        }
+        open={nodeTestModalOpen}
+        onCancel={() => setNodeTestModalOpen(false)}
+        footer={null}
+        width={1040}
+        className="workflow-node-test-modal"
+      >
+        {selectedNodeTest ? (
+          <div className="workflow-node-test-modal-body">
+            {selectedNodeTest.errors.length ? (
+              <div className="workflow-node-test-errors">
+                <Text strong>{t('workflows.nodeTestErrors')}</Text>
+                <pre className="json-block workflow-node-test-json">
+                  {selectedNodeTest.errors.join('\n')}
+                </pre>
+              </div>
+            ) : null}
+
+            <div className="workflow-node-test-grid">
+              <div className="workflow-node-test-column">
+                <Text strong>{t('workflows.nodeTestInput')}</Text>
+                {Object.entries(selectedNodeTest.inputPreview).length ? (
+                  Object.entries(selectedNodeTest.inputPreview).map(([portKey, preview]) => (
+                    <NodePreviewCard key={`input-${portKey}`} portKey={portKey} preview={preview} />
+                  ))
+                ) : (
+                  <Text type="secondary">{t('workflows.nodeTestNoPreview')}</Text>
+                )}
+              </div>
+              <div className="workflow-node-test-column">
+                <Text strong>{t('workflows.nodeTestOutput')}</Text>
+                {Object.entries(selectedNodeTest.outputPreview).length ? (
+                  Object.entries(selectedNodeTest.outputPreview).map(([portKey, preview]) => (
+                    <NodePreviewCard key={`output-${portKey}`} portKey={portKey} preview={preview} />
+                  ))
+                ) : (
+                  <Text type="secondary">{t('workflows.nodeTestNoPreview')}</Text>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -1334,10 +1649,11 @@ export function WorkflowCanvas(props: {
   templates: WorkflowTemplateDefinition[];
   workflowVersion: WorkflowVersionDetail;
   canManage: boolean;
+  canTest: boolean;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
   modelVersions: ModelVersionSummary[];
-  downloadToken?: string | null;
+  authToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
   return (
