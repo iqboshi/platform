@@ -80,10 +80,43 @@ def _slugify(value: str) -> str:
     return normalized.strip("-").lower() or "file"
 
 
-def _is_private_version_metadata(metadata: dict[str, object] | None) -> bool:
-    if not metadata:
+def _is_admin_user(current_user: UserProfile | User | None) -> bool:
+    if current_user is None:
         return False
-    return str(metadata.get("visibility", "workspace")) == "private"
+    if isinstance(current_user, UserProfile):
+        return current_user.role == RoleKey.ADMIN
+    return current_user.role_key == RoleKey.ADMIN
+
+
+def _dataset_visibility(metadata: dict[str, object] | None) -> str:
+    if not metadata:
+        return "workspace"
+    visibility = str(metadata.get("visibility", "workspace")).strip().lower()
+    if visibility in {"private", "public", "workspace"}:
+        return visibility
+    return "workspace"
+
+
+def _dataset_owner_user_id(metadata: dict[str, object] | None) -> str | None:
+    if not metadata:
+        return None
+    owner_user_id = str(metadata.get("owner_user_id", "")).strip()
+    return owner_user_id or None
+
+
+def _dataset_owner_display_name(metadata: dict[str, object] | None) -> str | None:
+    if not metadata:
+        return None
+    owner_display_name = str(metadata.get("owner_display_name", "")).strip()
+    return owner_display_name or None
+
+
+def _is_private_version_metadata(metadata: dict[str, object] | None) -> bool:
+    return _dataset_visibility(metadata) == "private"
+
+
+def _is_public_version_metadata(metadata: dict[str, object] | None) -> bool:
+    return _dataset_visibility(metadata) == "public"
 
 
 def _can_access_dataset_version(
@@ -94,52 +127,88 @@ def _can_access_dataset_version(
     if current_user is None:
         return False
 
-    current_user_id = current_user.id
-    current_role = (
-        current_user.role if isinstance(current_user, UserProfile) else current_user.role_key.value
-    )
-    if current_role == RoleKey.ADMIN.value:
+    if _is_admin_user(current_user):
         return True
-    return str(row.metadata_json.get("owner_user_id", "")) == current_user_id
+    return _dataset_owner_user_id(row.metadata_json) == current_user.id
 
 
-def _resolve_dataset_visibility(
-    db: Session,
-    dataset_id: str,
-    current_user: UserProfile | User | None,
-) -> tuple[bool, bool]:
-    versions = db.scalars(
+def _latest_dataset_version(db: Session, dataset_id: str) -> DatasetVersion | None:
+    return db.scalar(
         select(DatasetVersion)
         .where(DatasetVersion.dataset_id == dataset_id)
-        .order_by(DatasetVersion.created_at.desc())
-    ).all()
-    if not versions:
-        return False, True
-
-    accessible_versions = [
-        row for row in versions if _can_access_dataset_version(row, current_user)
-    ]
-    if not accessible_versions:
-        return False, True
-
-    return True, all(_is_private_version_metadata(row.metadata_json) for row in accessible_versions)
+        .order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc())
+    )
 
 
-def _dataset_summary(row: Dataset, *, is_private: bool = False) -> DatasetSummary:
+def _dataset_is_result(metadata: dict[str, object] | None) -> bool:
+    if not metadata:
+        return False
+    return any(key in metadata for key in {"workflow_run_id", "source_run_id"})
+
+
+def _can_manage_dataset(
+    metadata: dict[str, object] | None,
+    current_user: UserProfile | User,
+) -> bool:
+    if _is_admin_user(current_user):
+        return True
+    return _dataset_owner_user_id(metadata) == current_user.id
+
+
+def _workflow_metadata(graph_json: dict[str, object] | None) -> dict[str, object]:
+    if not graph_json:
+        return {}
+    metadata = graph_json.get("metadata", {})
+    return dict(metadata) if isinstance(metadata, dict) else {}
+
+
+def _workflow_owner_user_id(row: WorkflowVersion) -> str | None:
+    owner_user_id = str(_workflow_metadata(row.graph_json).get("owner_user_id", "")).strip()
+    return owner_user_id or None
+
+
+def _workflow_owner_display_name(row: WorkflowVersion) -> str | None:
+    owner_display_name = str(_workflow_metadata(row.graph_json).get("owner_display_name", "")).strip()
+    return owner_display_name or None
+
+
+def _can_access_workflow_version(
+    row: WorkflowVersion,
+    current_user: UserProfile | User,
+    *,
+    scope: str = "mine",
+) -> bool:
+    if scope == "all":
+        return _is_admin_user(current_user)
+    return _workflow_owner_user_id(row) == current_user.id
+
+
+def _dataset_summary(
+    row: Dataset,
+    *,
+    latest_version: DatasetVersion | None = None,
+) -> DatasetSummary:
+    metadata = latest_version.metadata_json if latest_version else {}
     return DatasetSummary(
         id=row.id,
         workspace_id=row.workspace_id,
         name=row.name,
         kind=row.kind,
         status=row.status,
-        is_private=is_private,
+        is_private=_is_private_version_metadata(metadata),
         projection=row.projection,
         footprint=row.footprint,
+        visibility=_dataset_visibility(metadata),
+        owner_user_id=_dataset_owner_user_id(metadata),
+        owner_display_name=_dataset_owner_display_name(metadata),
+        latest_version_id=latest_version.id if latest_version else None,
+        latest_version_number=latest_version.version if latest_version else None,
         updated_at=row.updated_at,
     )
 
 
 def _dataset_version_summary(row: DatasetVersion) -> DatasetVersionSummary:
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     return DatasetVersionSummary(
         id=row.id,
         dataset_id=row.dataset_id,
@@ -148,8 +217,11 @@ def _dataset_version_summary(row: DatasetVersion) -> DatasetVersionSummary:
         asset_path=row.asset_path,
         preview_url=row.preview_url,
         bbox=row.bbox,
-        metadata=row.metadata_json,
-        is_private=_is_private_version_metadata(row.metadata_json),
+        metadata=metadata,
+        is_private=_is_private_version_metadata(metadata),
+        visibility=_dataset_visibility(metadata),
+        owner_user_id=_dataset_owner_user_id(metadata),
+        owner_display_name=_dataset_owner_display_name(metadata),
         created_at=row.created_at,
     )
 
@@ -203,6 +275,8 @@ def _workflow_version_summary(row: WorkflowVersion) -> WorkflowVersionSummary:
         workflow_id=row.workflow_id,
         version=row.version,
         graph=WorkflowGraph.model_validate(row.graph_json),
+        owner_user_id=_workflow_owner_user_id(row),
+        owner_display_name=_workflow_owner_display_name(row),
         created_at=row.created_at,
     )
 
@@ -230,13 +304,34 @@ def list_workspaces(db: Session) -> list[WorkspaceSummary]:
 def list_datasets(
     db: Session,
     current_user: UserProfile | User | None = None,
+    *,
+    scope: str = "visible",
+    visibility: str | None = None,
 ) -> list[DatasetSummary]:
     rows = db.scalars(select(Dataset).order_by(Dataset.updated_at.desc())).all()
     visible_rows: list[DatasetSummary] = []
     for row in rows:
-        is_visible, is_private = _resolve_dataset_visibility(db, row.id, current_user)
-        if is_visible:
-            visible_rows.append(_dataset_summary(row, is_private=is_private))
+        latest_version = _latest_dataset_version(db, row.id)
+        if latest_version is None:
+            continue
+
+        row_visibility = _dataset_visibility(latest_version.metadata_json)
+        owner_user_id = _dataset_owner_user_id(latest_version.metadata_json)
+
+        if visibility and row_visibility != visibility:
+            continue
+
+        if scope == "mine":
+            if current_user is None or owner_user_id != current_user.id:
+                continue
+        elif scope == "all":
+            if not _is_admin_user(current_user):
+                raise PermissionError("Only administrators can list all datasets.")
+        else:
+            if not _can_access_dataset_version(latest_version, current_user):
+                continue
+
+        visible_rows.append(_dataset_summary(row, latest_version=latest_version))
     return visible_rows
 
 
@@ -248,26 +343,44 @@ def get_dataset(
     row = db.get(Dataset, dataset_id)
     if row is None:
         return None
-    is_visible, is_private = _resolve_dataset_visibility(db, dataset_id, current_user)
-    if not is_visible:
+    latest_version = _latest_dataset_version(db, dataset_id)
+    if latest_version is None or not _can_access_dataset_version(latest_version, current_user):
         return None
-    return _dataset_summary(row, is_private=is_private)
+    return _dataset_summary(row, latest_version=latest_version)
 
 
 def list_dataset_versions(
     db: Session,
     current_user: UserProfile | User | None = None,
     dataset_id: str | None = None,
+    *,
+    scope: str = "visible",
+    visibility: str | None = None,
 ) -> list[DatasetVersionSummary]:
     query = select(DatasetVersion)
     if dataset_id is not None:
         query = query.where(DatasetVersion.dataset_id == dataset_id)
     rows = db.scalars(query.order_by(DatasetVersion.created_at.desc())).all()
-    return [
-        _dataset_version_summary(row)
-        for row in rows
-        if _can_access_dataset_version(row, current_user)
-    ]
+    summaries: list[DatasetVersionSummary] = []
+    for row in rows:
+        row_visibility = _dataset_visibility(row.metadata_json)
+        owner_user_id = _dataset_owner_user_id(row.metadata_json)
+
+        if visibility and row_visibility != visibility:
+            continue
+
+        if scope == "mine":
+            if current_user is None or owner_user_id != current_user.id:
+                continue
+        elif scope == "all":
+            if not _is_admin_user(current_user):
+                raise PermissionError("Only administrators can list all dataset versions.")
+        else:
+            if not _can_access_dataset_version(row, current_user):
+                continue
+
+        summaries.append(_dataset_version_summary(row))
+    return summaries
 
 
 def get_dataset_version(
@@ -293,6 +406,139 @@ def get_dataset_version_file(
     if not file_path.is_absolute():
         file_path = Path.cwd() / file_path
     return file_path, row.original_file_name, row.content_type
+
+
+def update_dataset(
+    db: Session,
+    dataset_id: str,
+    *,
+    current_user: UserProfile | User,
+    name: str | None = None,
+    visibility: str | None = None,
+) -> DatasetSummary:
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise LookupError("Dataset not found.")
+
+    versions = db.scalars(
+        select(DatasetVersion)
+        .where(DatasetVersion.dataset_id == dataset_id)
+        .order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc())
+    ).all()
+    if not versions:
+        raise LookupError("Dataset version not found.")
+
+    latest_version = versions[0]
+    if not _can_manage_dataset(latest_version.metadata_json, current_user):
+        raise PermissionError("Only the owner or an administrator can manage this dataset.")
+
+    next_name = name.strip() if name is not None else None
+    if next_name is not None:
+        if not next_name:
+            raise ValueError("Dataset name cannot be empty.")
+        dataset.name = next_name
+
+    if visibility is not None:
+        normalized_visibility = visibility.strip().lower()
+        if normalized_visibility not in {"private", "public"}:
+            raise ValueError("Dataset visibility must be either 'private' or 'public'.")
+        if not _is_admin_user(current_user):
+            raise PermissionError("Only administrators can change dataset visibility.")
+        for version in versions:
+            metadata = (
+                dict(version.metadata_json) if isinstance(version.metadata_json, dict) else {}
+            )
+            metadata["visibility"] = normalized_visibility
+            version.metadata_json = metadata
+
+    dataset.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(dataset)
+    refreshed_latest_version = _latest_dataset_version(db, dataset.id)
+    return _dataset_summary(dataset, latest_version=refreshed_latest_version)
+
+
+def _cleanup_deleted_asset(file_path: Path) -> None:
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except OSError:
+        return
+
+    storage_root = _storage_root().resolve()
+    current = file_path.parent
+    while current != storage_root and current.exists():
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
+
+
+def delete_dataset(
+    db: Session,
+    dataset_id: str,
+    *,
+    current_user: UserProfile | User,
+) -> None:
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None:
+        raise LookupError("Dataset not found.")
+
+    versions = db.scalars(
+        select(DatasetVersion)
+        .where(DatasetVersion.dataset_id == dataset_id)
+        .order_by(DatasetVersion.version.desc(), DatasetVersion.created_at.desc())
+    ).all()
+    if not versions:
+        raise LookupError("Dataset version not found.")
+
+    latest_version = versions[0]
+    if not _can_manage_dataset(latest_version.metadata_json, current_user):
+        raise PermissionError("Only the owner or an administrator can delete this dataset.")
+
+    version_ids = [version.id for version in versions]
+    input_run_count = db.scalar(
+        select(func.count())
+        .select_from(WorkflowRun)
+        .where(WorkflowRun.input_dataset_version_id.in_(version_ids))
+    )
+    if input_run_count:
+        raise ValueError("This dataset is referenced by workflow runs and cannot be deleted.")
+
+    split_input_count = db.scalar(
+        select(func.count())
+        .select_from(SplitJob)
+        .where(SplitJob.dataset_version_id.in_(version_ids))
+    )
+    if split_input_count:
+        raise ValueError("This dataset is referenced by split jobs and cannot be deleted.")
+
+    result_runs = db.scalars(
+        select(WorkflowRun).where(WorkflowRun.result_dataset_version_id.in_(version_ids))
+    ).all()
+    for run in result_runs:
+        run.result_dataset_version_id = None
+
+    split_outputs = db.scalars(
+        select(SplitJob).where(SplitJob.output_dataset_version_id.in_(version_ids))
+    ).all()
+    for split_job in split_outputs:
+        split_job.output_dataset_version_id = None
+
+    asset_paths = []
+    for version in versions:
+        file_path = Path(version.asset_path)
+        if not file_path.is_absolute():
+            file_path = Path.cwd() / file_path
+        asset_paths.append(file_path)
+        db.delete(version)
+
+    db.delete(dataset)
+    db.commit()
+
+    for file_path in asset_paths:
+        _cleanup_deleted_asset(file_path)
 
 
 def create_upload_session(
@@ -325,18 +571,37 @@ def create_dataset_upload(
     workspace_id: str,
     dataset_name: str,
     kind: DatasetKind,
+    current_user: UserProfile | User,
     upload_file: BinaryIO,
     original_file_name: str,
     content_type: str,
     size_bytes: int,
 ) -> DatasetVersionSummary:
-    dataset = db.scalar(
-        select(Dataset).where(
+    current_user_id = current_user.id
+    current_user_display_name = (
+        current_user.display_name
+        if isinstance(current_user, UserProfile)
+        else current_user.display_name
+    )
+
+    dataset = None
+    candidate_rows = db.scalars(
+        select(Dataset)
+        .where(
             Dataset.workspace_id == workspace_id,
             Dataset.name == dataset_name,
             Dataset.kind == kind,
         )
-    )
+        .order_by(Dataset.updated_at.desc())
+    ).all()
+    for candidate in candidate_rows:
+        latest_version = _latest_dataset_version(db, candidate.id)
+        if latest_version is None:
+            continue
+        if _dataset_owner_user_id(latest_version.metadata_json) == current_user_id:
+            dataset = candidate
+            break
+
     if dataset is None:
         dataset = Dataset(
             workspace_id=workspace_id,
@@ -370,7 +635,9 @@ def create_dataset_upload(
         "content_type": content_type or "application/octet-stream",
         "size_bytes": size_bytes,
         "original_file_name": original_file_name,
-        "visibility": "workspace",
+        "visibility": "private",
+        "owner_user_id": current_user_id,
+        "owner_display_name": current_user_display_name,
     }
     if kind == DatasetKind.TABLE and original_file_name.lower().endswith(".csv"):
         try:
@@ -407,7 +674,11 @@ def create_dataset_upload(
     return _dataset_version_summary(version)
 
 
-def confirm_upload(db: Session, request: DatasetUploadConfirmRequest) -> DatasetVersionSummary:
+def confirm_upload(
+    db: Session,
+    request: DatasetUploadConfirmRequest,
+    current_user: UserProfile | User,
+) -> DatasetVersionSummary:
     path = Path(request.object_key)
     size_bytes = path.stat().st_size if path.exists() else 0
     with path.open("rb") as uploaded_file:
@@ -416,6 +687,7 @@ def confirm_upload(db: Session, request: DatasetUploadConfirmRequest) -> Dataset
             workspace_id=request.workspace_id,
             dataset_name=request.dataset_name,
             kind=request.kind,
+            current_user=current_user,
             upload_file=uploaded_file,
             original_file_name=path.name,
             content_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
@@ -462,6 +734,7 @@ def create_private_dataset_version(
         metadata_json={
             "visibility": "private",
             "owner_user_id": current_user.id,
+            "owner_display_name": current_user.display_name,
             "workflow_run_id": run_id,
             **(metadata or {}),
         },
@@ -570,33 +843,115 @@ def list_workflows(db: Session) -> list[WorkflowSummary]:
     ]
 
 
-def get_current_workflow_version(db: Session) -> WorkflowVersionSummary:
-    row = db.scalar(
-        select(WorkflowVersion).order_by(
-            WorkflowVersion.version.desc(),
-            WorkflowVersion.created_at.desc(),
-        )
-    )
-    if row is None:
-        raise LookupError("Workflow version not found.")
-    return _workflow_version_summary(row)
+def _default_personal_workflow_graph() -> dict[str, object]:
+    templates = workflow_templates()
+    if templates:
+        return templates[0].graph.model_dump(mode="json")
+    return {"nodes": [], "edges": []}
 
 
-def save_current_workflow_version(db: Session, graph: WorkflowGraph) -> WorkflowVersionSummary:
-    latest = db.scalar(
-        select(WorkflowVersion).order_by(
-            WorkflowVersion.version.desc(),
-            WorkflowVersion.created_at.desc(),
-        )
+def _ensure_workflow_owner_metadata(
+    graph_json: dict[str, object],
+    current_user: UserProfile | User,
+) -> dict[str, object]:
+    metadata = _workflow_metadata(graph_json)
+    metadata["owner_user_id"] = current_user.id
+    metadata["owner_display_name"] = (
+        current_user.display_name
+        if isinstance(current_user, UserProfile)
+        else current_user.display_name
     )
-    workflow = db.scalar(select(Workflow).order_by(Workflow.created_at.asc()))
-    if latest is None or workflow is None:
-        raise LookupError("Workflow definition is not initialized.")
+    graph_json["metadata"] = metadata
+    return graph_json
+
+
+def _first_workflow(db: Session) -> Workflow | None:
+    return db.scalar(select(Workflow).order_by(Workflow.created_at.asc()))
+
+
+def _next_workflow_version_number(db: Session, workflow_id: str) -> int:
+    current = db.scalar(
+        select(func.max(WorkflowVersion.version)).where(WorkflowVersion.workflow_id == workflow_id)
+    )
+    return (current or 0) + 1
+
+
+def _create_personal_workflow_version(
+    db: Session,
+    *,
+    current_user: UserProfile | User,
+    graph_json: dict[str, object] | None = None,
+) -> WorkflowVersionSummary:
+    workflow = _first_workflow(db)
+    workspace = db.scalar(select(Workspace).order_by(Workspace.created_at.asc()))
+    if workflow is None:
+        if workspace is None:
+            raise LookupError("Workflow definition is not initialized.")
+        workflow = Workflow(
+            workspace_id=workspace.id,
+            name="Personal Workflow",
+            description="User-scoped workflow definition.",
+        )
+        db.add(workflow)
+        db.flush()
 
     saved = WorkflowVersion(
         workflow_id=workflow.id,
-        version=latest.version + 1,
-        graph_json=graph.model_dump(mode="json"),
+        version=_next_workflow_version_number(db, workflow.id),
+        graph_json=_ensure_workflow_owner_metadata(
+            graph_json or _default_personal_workflow_graph(),
+            current_user,
+        ),
+    )
+    db.add(saved)
+    db.flush()
+    db.commit()
+    db.refresh(saved)
+    return _workflow_version_summary(saved)
+
+
+def get_current_workflow_version(
+    db: Session,
+    current_user: UserProfile | User,
+) -> WorkflowVersionSummary:
+    row = db.scalar(
+        select(WorkflowVersion).order_by(
+            WorkflowVersion.created_at.desc(),
+        )
+    )
+    if row is not None:
+        owned_rows = db.scalars(
+            select(WorkflowVersion).order_by(WorkflowVersion.created_at.desc())
+        ).all()
+        for candidate in owned_rows:
+            if _workflow_owner_user_id(candidate) == current_user.id:
+                return _workflow_version_summary(candidate)
+
+    return _create_personal_workflow_version(db, current_user=current_user)
+
+
+def save_current_workflow_version(
+    db: Session,
+    graph: WorkflowGraph,
+    current_user: UserProfile | User,
+) -> WorkflowVersionSummary:
+    workflow = _first_workflow(db)
+    workspace = db.scalar(select(Workspace).order_by(Workspace.created_at.asc()))
+    if workflow is None:
+        if workspace is None:
+            raise LookupError("Workflow definition is not initialized.")
+        workflow = Workflow(
+            workspace_id=workspace.id,
+            name="Personal Workflow",
+            description="User-scoped workflow definition.",
+        )
+        db.add(workflow)
+        db.flush()
+
+    saved = WorkflowVersion(
+        workflow_id=workflow.id,
+        version=_next_workflow_version_number(db, workflow.id),
+        graph_json=_ensure_workflow_owner_metadata(graph.model_dump(mode="json"), current_user),
     )
     db.add(saved)
     db.flush()
@@ -613,8 +968,94 @@ def save_current_workflow_version(db: Session, graph: WorkflowGraph) -> Workflow
     return _workflow_version_summary(saved)
 
 
-def list_workflow_runs(db: Session) -> list[WorkflowRunSummary]:
+def list_workflow_versions(
+    db: Session,
+    current_user: UserProfile | User,
+    *,
+    scope: str = "mine",
+) -> list[WorkflowVersionSummary]:
+    rows = db.scalars(select(WorkflowVersion).order_by(WorkflowVersion.created_at.desc())).all()
+    if scope == "all" and not _is_admin_user(current_user):
+        raise PermissionError("Only administrators can list all workflow versions.")
+    return [
+        _workflow_version_summary(row)
+        for row in rows
+        if _can_access_workflow_version(row, current_user, scope=scope)
+    ]
+
+
+def get_workflow_version(
+    db: Session,
+    workflow_version_id: str,
+    current_user: UserProfile | User,
+) -> WorkflowVersionSummary | None:
+    row = db.get(WorkflowVersion, workflow_version_id)
+    if row is None:
+        return None
+    if not _can_access_workflow_version(row, current_user, scope="all" if _is_admin_user(current_user) else "mine"):
+        return None
+    return _workflow_version_summary(row)
+
+
+def get_workflow_version_download_payload(
+    db: Session,
+    workflow_version_id: str,
+    current_user: UserProfile | User,
+) -> tuple[str, str] | None:
+    row = db.get(WorkflowVersion, workflow_version_id)
+    if row is None:
+        return None
+    if not _can_access_workflow_version(
+        row,
+        current_user,
+        scope="all" if _is_admin_user(current_user) else "mine",
+    ):
+        return None
+    file_name = f"workflow-version-{row.version}.json"
+    payload = json.dumps(row.graph_json, indent=2, ensure_ascii=False)
+    return payload, file_name
+
+
+def import_workflow_version(
+    db: Session,
+    graph: WorkflowGraph,
+    current_user: UserProfile | User,
+) -> WorkflowVersionSummary:
+    return save_current_workflow_version(db, graph, current_user)
+
+
+def delete_workflow_version(
+    db: Session,
+    workflow_version_id: str,
+    *,
+    current_user: UserProfile | User,
+) -> None:
+    row = db.get(WorkflowVersion, workflow_version_id)
+    if row is None:
+        raise LookupError("Workflow version not found.")
+    if not _can_access_workflow_version(
+        row,
+        current_user,
+        scope="all" if _is_admin_user(current_user) else "mine",
+    ):
+        raise PermissionError("Only the owner or an administrator can delete this workflow version.")
+    db.delete(row)
+    db.commit()
+
+
+def list_workflow_runs(
+    db: Session,
+    current_user: UserProfile | User,
+    *,
+    scope: str = "visible",
+) -> list[WorkflowRunSummary]:
     rows = db.scalars(select(WorkflowRun).order_by(WorkflowRun.created_at.desc())).all()
+    if scope == "all" and not _is_admin_user(current_user):
+        raise PermissionError("Only administrators can list all workflow runs.")
+    if scope == "mine":
+        rows = [row for row in rows if row.submitted_by == current_user.id]
+    elif scope != "all" and not _is_admin_user(current_user):
+        rows = [row for row in rows if row.submitted_by == current_user.id]
     user_ids = {row.submitted_by for row in rows}
     users = {
         row.id: row.display_name
@@ -756,6 +1197,12 @@ def create_workflow_run(
     workflow_version = db.get(WorkflowVersion, request.workflow_version_id)
     if workflow_version is None:
         raise LookupError("Workflow version was not found.")
+    if not _can_access_workflow_version(
+        workflow_version,
+        current_user,
+        scope="all" if _is_admin_user(current_user) else "mine",
+    ):
+        raise PermissionError("You do not have access to this workflow version.")
 
     graph_json = (
         workflow_version.graph_json if isinstance(workflow_version.graph_json, dict) else {}

@@ -526,3 +526,112 @@ def test_validation_workflow_exports_metrics_and_keeps_output_private(client: Te
 
     metrics_payload = admin_download.json()
     assert set(metrics_payload["metrics"]) == {"r2", "mae", "rmse"}
+
+
+def test_private_dataset_can_be_published_by_admin(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "engineer-private-dataset",
+        "feature_a,feature_b,target\n1,2,3.0\n",
+    )
+
+    engineer_datasets = client.get(
+        "/api/v1/datasets?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    member_visible_before = client.get(
+        "/api/v1/datasets",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_datasets.status_code == 200
+    assert member_visible_before.status_code == 200
+
+    engineer_dataset = next(
+        item for item in engineer_datasets.json() if item["name"] == "engineer-private-dataset"
+    )
+    assert engineer_dataset["visibility"] == "private"
+    assert not any(
+        item["id"] == engineer_dataset["id"] for item in member_visible_before.json()
+    )
+
+    publish = client.patch(
+        f"/api/v1/datasets/{engineer_dataset['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert publish.status_code == 200
+    assert publish.json()["visibility"] == "public"
+
+    member_visible_after = client.get(
+        "/api/v1/datasets",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    public_versions = client.get(
+        "/api/v1/dataset-versions?visibility=public",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_after.status_code == 200
+    assert public_versions.status_code == 200
+    assert any(item["id"] == engineer_dataset["id"] for item in member_visible_after.json())
+    assert any(
+        item["dataset_id"] == engineer_dataset["id"] for item in public_versions.json()
+    )
+
+
+def test_workflow_versions_are_user_scoped_and_downloadable(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+
+    engineer_current = client.get(
+        "/api/v1/workflows/versions/current",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    member_current = client.get(
+        "/api/v1/workflows/versions/current",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_current.status_code == 200
+    assert member_current.status_code == 200
+    assert engineer_current.json()["id"] != member_current.json()["id"]
+    assert engineer_current.json()["owner_user_id"] != member_current.json()["owner_user_id"]
+
+    member_versions = client.get(
+        "/api/v1/workflows/versions?scope=mine",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    forbidden_all_scope = client.get(
+        "/api/v1/workflows/versions?scope=all",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_versions.status_code == 200
+    assert forbidden_all_scope.status_code == 403
+    assert all(item["owner_user_id"] == member_current.json()["owner_user_id"] for item in member_versions.json())
+
+    download = client.get(
+        f"/api/v1/workflows/versions/{member_current.json()['id']}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert download.status_code == 200
+    assert download.headers["content-type"].startswith("application/json")
+
+    imported = client.post(
+        "/api/v1/workflows/versions/import",
+        headers={"Authorization": f"Bearer {member_token}"},
+        json=member_current.json()["graph"],
+    )
+    assert imported.status_code == 200
+    imported_id = imported.json()["id"]
+
+    delete_response = client.delete(
+        f"/api/v1/workflows/versions/{imported_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert delete_response.status_code == 200

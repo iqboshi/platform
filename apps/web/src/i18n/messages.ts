@@ -17,6 +17,10 @@ export type TranslationKey =
   | 'common.status'
   | 'common.email'
   | 'common.file'
+  | 'common.upload'
+  | 'common.download'
+  | 'common.delete'
+  | 'common.rename'
   | 'common.password'
   | 'common.displayName'
   | 'common.createdAt'
@@ -29,6 +33,7 @@ export type TranslationKey =
   | 'locale.en-US'
   | 'menu.overview'
   | 'menu.datasets'
+  | 'menu.assets'
   | 'menu.workflows'
   | 'menu.models'
   | 'menu.approvals'
@@ -103,6 +108,44 @@ export type TranslationKey =
   | 'datasets.footprint'
   | 'datasets.metadata'
   | 'datasets.tileEndpoint'
+  | 'datasets.owner'
+  | 'datasets.visibility'
+  | 'datasets.visibilityPublic'
+  | 'datasets.unpublish'
+  | 'datasets.unpublished'
+  | 'datasets.emptyPublic'
+  | 'assets.kicker'
+  | 'assets.title'
+  | 'assets.copy'
+  | 'assets.scopeMine'
+  | 'assets.scopeAll'
+  | 'assets.tabDatasets'
+  | 'assets.tabWorkflows'
+  | 'assets.tabRuns'
+  | 'assets.empty'
+  | 'assets.uploadDataset'
+  | 'assets.downloadTemplate'
+  | 'assets.datasetUploaded'
+  | 'assets.datasetRenamed'
+  | 'assets.datasetDeleted'
+  | 'assets.visibilityUpdated'
+  | 'assets.deleteDatasetTitle'
+  | 'assets.deleteDatasetBody'
+  | 'assets.importWorkflow'
+  | 'assets.workflowImported'
+  | 'assets.workflowImportInvalid'
+  | 'assets.workflowDeleted'
+  | 'assets.renameDataset'
+  | 'assets.assetType'
+  | 'assets.assetTypeDataset'
+  | 'assets.assetTypeResult'
+  | 'assets.visibility'
+  | 'assets.visibilityPublic'
+  | 'assets.visibilityPrivate'
+  | 'assets.publish'
+  | 'assets.unpublish'
+  | 'assets.owner'
+  | 'assets.resultDataset'
   | 'workflows.kicker'
   | 'workflows.title'
   | 'workflows.copy'
@@ -112,9 +155,21 @@ export type TranslationKey =
   | 'workflows.edgesDetail'
   | 'workflows.categoriesLabel'
   | 'workflows.categoriesDetail'
+  | 'workflows.import'
+  | 'workflows.importFile'
+  | 'workflows.importAsset'
+  | 'workflows.export'
+  | 'workflows.assetImportTitle'
+  | 'workflows.assetImportCopy'
+  | 'workflows.assetImportEmpty'
+  | 'workflows.assetImportSuccess'
   | 'workflows.validate'
   | 'workflows.save'
   | 'workflows.run'
+  | 'workflows.importSuccess'
+  | 'workflows.importInvalid'
+  | 'workflows.importConfirmTitle'
+  | 'workflows.importConfirmBody'
   | 'workflows.validateSuccess'
   | 'workflows.validateFailure'
   | 'workflows.saveSuccess'
@@ -227,6 +282,10 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'common.status': 'Status',
     'common.email': 'Email',
     'common.file': 'File',
+    'common.upload': 'Upload',
+    'common.download': 'Download',
+    'common.delete': 'Delete',
+    'common.rename': 'Rename',
     'common.password': 'Password',
     'common.displayName': 'Display name',
     'common.createdAt': 'Created at',
@@ -238,7 +297,8 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'locale.zh-CN': 'Chinese',
     'locale.en-US': 'English',
     'menu.overview': 'Overview',
-    'menu.datasets': 'Datasets',
+    'menu.datasets': 'Public Datasets',
+    'menu.assets': 'My Assets',
     'menu.workflows': 'Workflows',
     'menu.models': 'Models',
     'menu.approvals': 'Approvals',
@@ -304,10 +364,10 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'dashboard.submittedBy': 'Submitted By',
     'dashboard.mapSubtitle':
       'OpenLayers preview with AOI overlay. Replace the placeholder TileJSON with TiTiler-backed tiles as ingestion is wired up.',
-    'datasets.kicker': 'Datasets',
-    'datasets.title': 'Upload, version, preview, and split remote-sensing assets.',
+    'datasets.kicker': 'Public Datasets',
+    'datasets.title': 'Browse platform-curated public datasets and download published versions.',
     'datasets.copy':
-      'Dataset pages now support real file upload and persisted dataset versions. Members can browse, while managers can upload.',
+      'Only datasets explicitly published by administrators appear here. Personal uploads and private results are managed in My Assets.',
     'datasets.uploadSession': 'Upload dataset',
     'datasets.uploadCreated': 'Dataset uploaded successfully.',
     'datasets.uploadDenied': 'Only dataset managers can upload datasets.',
@@ -326,6 +386,46 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'datasets.footprint': 'Footprint',
     'datasets.metadata': 'Metadata',
     'datasets.tileEndpoint': 'Tile Endpoint',
+    'datasets.owner': 'Owner',
+    'datasets.visibility': 'Visibility',
+    'datasets.visibilityPublic': 'Public',
+    'datasets.unpublish': 'Set private',
+    'datasets.unpublished': 'Dataset removed from the public dataset page.',
+    'datasets.emptyPublic': 'No public datasets are available yet.',
+    'assets.kicker': 'Personal Assets',
+    'assets.title': 'Manage your datasets, workflow versions, and workflow results.',
+    'assets.copy':
+      'Users manage their own assets here. Administrators can switch scope to inspect and manage all users’ assets, and publish selected datasets to the public dataset page.',
+    'assets.scopeMine': 'My assets',
+    'assets.scopeAll': 'All users',
+    'assets.tabDatasets': 'Datasets & Results',
+    'assets.tabWorkflows': 'Workflow Versions',
+    'assets.tabRuns': 'Workflow Runs',
+    'assets.empty': 'No assets found for the current scope.',
+    'assets.uploadDataset': 'Upload dataset',
+    'assets.downloadTemplate': 'Download template',
+    'assets.datasetUploaded': 'Dataset uploaded successfully.',
+    'assets.datasetRenamed': 'Dataset renamed successfully.',
+    'assets.datasetDeleted': 'Dataset deleted successfully.',
+    'assets.visibilityUpdated': 'Dataset visibility updated.',
+    'assets.deleteDatasetTitle': 'Delete dataset',
+    'assets.deleteDatasetBody':
+      'This action removes the dataset and its stored versions. Datasets referenced by workflow inputs cannot be deleted.',
+    'assets.importWorkflow': 'Import workflow JSON',
+    'assets.workflowImported': 'Workflow version imported successfully.',
+    'assets.workflowImportInvalid': 'The selected JSON file is not a valid workflow graph.',
+    'assets.workflowDeleted': 'Workflow version deleted successfully.',
+    'assets.renameDataset': 'Rename dataset',
+    'assets.assetType': 'Asset Type',
+    'assets.assetTypeDataset': 'Dataset',
+    'assets.assetTypeResult': 'Result',
+    'assets.visibility': 'Visibility',
+    'assets.visibilityPublic': 'Public',
+    'assets.visibilityPrivate': 'Private',
+    'assets.publish': 'Publish',
+    'assets.unpublish': 'Unpublish',
+    'assets.owner': 'Owner',
+    'assets.resultDataset': 'Result Dataset',
     'workflows.kicker': 'Workflow Orchestration',
     'workflows.title':
       'Design versioned DAGs for preprocessing, splitting, inference, and export.',
@@ -338,9 +438,23 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.categoriesLabel': 'Categories',
     'workflows.categoriesDetail':
       'Source, preprocess, split, inference, and export blocks.',
+    'workflows.import': 'Import workflow',
+    'workflows.importFile': 'Import file',
+    'workflows.importAsset': 'Import from assets',
+    'workflows.export': 'Export workflow',
+    'workflows.assetImportTitle': 'Import a workflow from your assets',
+    'workflows.assetImportCopy':
+      'Choose one of your saved workflow versions and load it into the current editor.',
+    'workflows.assetImportEmpty': 'No workflow versions are available in your assets.',
+    'workflows.assetImportSuccess': 'Workflow loaded from your assets.',
     'workflows.validate': 'Validate workflow',
     'workflows.save': 'Save workflow',
     'workflows.run': 'Run workflow',
+    'workflows.importSuccess': 'Workflow imported as a new version.',
+    'workflows.importInvalid': 'The selected JSON file is not a valid workflow graph.',
+    'workflows.importConfirmTitle': 'Import workflow',
+    'workflows.importConfirmBody':
+      'Importing will replace the current editor draft. Save your current changes first if you need to keep them.',
     'workflows.validateSuccess': 'Workflow graph is valid.',
     'workflows.validateFailure': 'Workflow validation returned errors.',
     'workflows.saveSuccess': 'Workflow version saved.',
@@ -464,6 +578,10 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'common.status': '状态',
     'common.email': '邮箱',
     'common.file': '文件',
+    'common.upload': '上传',
+    'common.download': '下载',
+    'common.delete': '删除',
+    'common.rename': '重命名',
     'common.password': '密码',
     'common.displayName': '显示名称',
     'common.createdAt': '创建时间',
@@ -475,7 +593,8 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'locale.zh-CN': '中文',
     'locale.en-US': '英文',
     'menu.overview': '总览',
-    'menu.datasets': '数据集',
+    'menu.datasets': '公开数据集',
+    'menu.assets': '个人资产',
     'menu.workflows': '工作流',
     'menu.models': '模型',
     'menu.approvals': '审批',
@@ -533,10 +652,10 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'dashboard.submittedBy': '提交人',
     'dashboard.mapSubtitle':
       '使用 OpenLayers 预览 AOI 范围。接入 TiTiler 后可替换为真实瓦片流。',
-    'datasets.kicker': '数据集',
-    'datasets.title': '上传、版本化、预览并管理遥感数据资产。',
+    'datasets.kicker': '公开数据集',
+    'datasets.title': '浏览管理员公开发布的数据集，并下载可用版本。',
     'datasets.copy':
-      '数据集页面现在支持真实文件上传和持久化版本记录。成员可查看，具备权限的角色可上传。',
+      '只有被管理员设置为公开的数据集会出现在这里。个人上传的数据和私有结果请到“个人资产”页面管理。',
     'datasets.uploadSession': '上传数据集',
     'datasets.uploadCreated': '数据集上传成功。',
     'datasets.uploadDenied': '只有具备数据集管理权限的账号可以上传数据集。',
@@ -554,6 +673,45 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'datasets.footprint': '覆盖范围',
     'datasets.metadata': '元数据',
     'datasets.tileEndpoint': '瓦片地址',
+    'datasets.owner': '所有者',
+    'datasets.visibility': '可见性',
+    'datasets.visibilityPublic': '公开',
+    'datasets.unpublish': '设为私有',
+    'datasets.unpublished': '该数据集已从公开数据集页面移除。',
+    'datasets.emptyPublic': '当前还没有公开数据集。',
+    'assets.kicker': '个人资产',
+    'assets.title': '管理自己的数据集、工作流版本和运行结果。',
+    'assets.copy':
+      '普通用户在这里管理自己的资产。管理员可以切换到全部用户视角，统一管理所有人的资产，并将指定数据集发布到公开数据集页面。',
+    'assets.scopeMine': '我的资产',
+    'assets.scopeAll': '全部用户',
+    'assets.tabDatasets': '数据集与结果',
+    'assets.tabWorkflows': '工作流版本',
+    'assets.tabRuns': '工作流运行',
+    'assets.empty': '当前范围下没有资产。',
+    'assets.uploadDataset': '上传数据集',
+    'assets.downloadTemplate': '下载模板',
+    'assets.datasetUploaded': '数据集上传成功。',
+    'assets.datasetRenamed': '数据集重命名成功。',
+    'assets.datasetDeleted': '数据集删除成功。',
+    'assets.visibilityUpdated': '数据集可见性已更新。',
+    'assets.deleteDatasetTitle': '删除数据集',
+    'assets.deleteDatasetBody': '该操作会删除数据集及其已保存版本。若数据集被工作流输入引用，则不能删除。',
+    'assets.importWorkflow': '导入工作流 JSON',
+    'assets.workflowImported': '工作流版本导入成功。',
+    'assets.workflowImportInvalid': '选中的 JSON 文件不是有效的工作流图定义。',
+    'assets.workflowDeleted': '工作流版本删除成功。',
+    'assets.renameDataset': '重命名数据集',
+    'assets.assetType': '资产类型',
+    'assets.assetTypeDataset': '数据集',
+    'assets.assetTypeResult': '结果',
+    'assets.visibility': '可见性',
+    'assets.visibilityPublic': '公开',
+    'assets.visibilityPrivate': '私有',
+    'assets.publish': '发布公开',
+    'assets.unpublish': '取消公开',
+    'assets.owner': '所有者',
+    'assets.resultDataset': '结果数据集',
     'workflows.kicker': '工作流编排',
     'workflows.title': '为预处理、切片、推理和导出设计可版本化 DAG。',
     'workflows.copy':
@@ -564,9 +722,21 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.edgesDetail': '节点之间的有向依赖关系。',
     'workflows.categoriesLabel': '节点类别',
     'workflows.categoriesDetail': '来源、预处理、切分、推理与导出等类别。',
+    'workflows.import': '导入工作流',
+    'workflows.importFile': '导入文件',
+    'workflows.importAsset': '从资产导入',
+    'workflows.export': '导出工作流',
+    'workflows.assetImportTitle': '从个人资产导入工作流',
+    'workflows.assetImportCopy': '选择一个你已保存的工作流版本，并加载到当前编辑器中。',
+    'workflows.assetImportEmpty': '你的资产里还没有可导入的工作流版本。',
+    'workflows.assetImportSuccess': '已从个人资产加载工作流。',
     'workflows.validate': '校验工作流',
     'workflows.save': '保存工作流',
     'workflows.run': '运行工作流',
+    'workflows.importSuccess': '工作流已导入为新版本。',
+    'workflows.importInvalid': '选中的 JSON 文件不是有效的工作流图定义。',
+    'workflows.importConfirmTitle': '导入工作流',
+    'workflows.importConfirmBody': '导入后会替换当前编辑器中的草稿内容。如果当前修改需要保留，请先保存。',
     'workflows.validateSuccess': '工作流校验通过。',
     'workflows.validateFailure': '工作流校验返回错误。',
     'workflows.saveSuccess': '工作流版本已保存。',

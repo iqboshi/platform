@@ -1,14 +1,21 @@
 import type { PlatformDataSnapshot } from '@/lib/api';
 
-import { App, Button, Card, Col, Row, Table, Tag, Typography } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { App, Button, Card, Col, Modal, Row, Table, Tag, Typography } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { isApiError } from '@/auth/errors';
 import { useAuth } from '@/auth/useAuth';
 import { StatCard } from '@/components/StatCard';
 import { WorkflowCanvas } from '@/components/WorkflowCanvas';
 import { useI18n } from '@/i18n/useI18n';
-import { createWorkflowRun, saveWorkflowVersion, validateWorkflow } from '@/lib/api';
+import {
+  createWorkflowRun,
+  importWorkflowVersion,
+  listWorkflowVersions,
+  saveWorkflowVersion,
+  validateWorkflow,
+} from '@/lib/api';
+import { parseImportedWorkflowGraph } from '@/lib/workflow-import';
 import { workflowRunStatusKey } from '@/lib/i18n-helpers';
 import { buildWorkflowStats } from './workflow-utils';
 
@@ -21,10 +28,17 @@ export function WorkflowsPage({
   snapshot: PlatformDataSnapshot;
   onRefresh: () => Promise<void>;
 }) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const { hasPermission, token } = useAuth();
   const { locale, t } = useI18n();
   const [draftWorkflowVersion, setDraftWorkflowVersion] = useState(snapshot.workflowVersion);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [assetImportOpen, setAssetImportOpen] = useState(false);
+  const [assetWorkflowsLoading, setAssetWorkflowsLoading] = useState(false);
+  const [assetWorkflowVersions, setAssetWorkflowVersions] = useState<
+    Awaited<ReturnType<typeof listWorkflowVersions>>
+  >([]);
+  const [selectedAssetWorkflowId, setSelectedAssetWorkflowId] = useState<string | null>(null);
   const stats = useMemo(
     () => buildWorkflowStats(snapshot.workflowCatalog, draftWorkflowVersion),
     [draftWorkflowVersion, snapshot.workflowCatalog],
@@ -101,8 +115,126 @@ export function WorkflowsPage({
     }
   };
 
+  const downloadDraftWorkflow = () => {
+    const payload = {
+      nodes: draftWorkflowVersion.graph.nodes,
+      edges: draftWorkflowVersion.graph.edges,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `workflow-v${draftWorkflowVersion.version}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importWorkflowFile = async (file: File) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const graph = parseImportedWorkflowGraph(text);
+      const imported = await importWorkflowVersion(token, graph);
+      setDraftWorkflowVersion(imported);
+      message.success(t('workflows.importSuccess'));
+      await onRefresh();
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        message.error(t('workflows.importInvalid'));
+        return;
+      }
+      message.error(isApiError(error) ? error.message : t('workflows.importInvalid'));
+    }
+  };
+
+  const onImportWorkflowClick = () => {
+    if (!hasPermission('workflow.manage')) {
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      modal.confirm({
+        title: t('workflows.importConfirmTitle'),
+        content: t('workflows.importConfirmBody'),
+        onOk: () => importInputRef.current?.click(),
+      });
+      return;
+    }
+
+    importInputRef.current?.click();
+  };
+
+  const openAssetWorkflowPicker = async () => {
+    if (!token || !hasPermission('workflow.manage')) {
+      return;
+    }
+
+    try {
+      setAssetWorkflowsLoading(true);
+      const workflows = await listWorkflowVersions(token, 'mine');
+      setAssetWorkflowVersions(workflows);
+      setSelectedAssetWorkflowId(workflows[0]?.id ?? null);
+      setAssetImportOpen(true);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    } finally {
+      setAssetWorkflowsLoading(false);
+    }
+  };
+
+  const importSelectedAssetWorkflow = () => {
+    const selectedWorkflow = assetWorkflowVersions.find((item) => item.id === selectedAssetWorkflowId);
+    if (!selectedWorkflow) {
+      message.warning(t('workflows.assetImportEmpty'));
+      return;
+    }
+
+    const applySelectedWorkflow = () => {
+      setDraftWorkflowVersion({
+        id: selectedWorkflow.id,
+        workflowId: selectedWorkflow.workflowId,
+        version: selectedWorkflow.version,
+        ownerUserId: selectedWorkflow.ownerUserId,
+        ownerDisplayName: selectedWorkflow.ownerDisplayName,
+        graph: selectedWorkflow.graph,
+        createdAt: selectedWorkflow.createdAt,
+      });
+      setAssetImportOpen(false);
+      message.success(t('workflows.assetImportSuccess'));
+    };
+
+    if (hasUnsavedChanges) {
+      modal.confirm({
+        title: t('workflows.importConfirmTitle'),
+        content: t('workflows.importConfirmBody'),
+        onOk: applySelectedWorkflow,
+      });
+      return;
+    }
+
+    applySelectedWorkflow();
+  };
+
   return (
     <div className="page-stack">
+      <input
+        ref={importInputRef}
+        hidden
+        type="file"
+        accept=".json"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) {
+            void importWorkflowFile(file);
+          }
+          event.currentTarget.value = '';
+        }}
+      />
       <div className="section-header">
         <div className="section-header-actions">
           <div>
@@ -111,6 +243,13 @@ export function WorkflowsPage({
             <Paragraph className="section-copy">{t('workflows.copy')}</Paragraph>
           </div>
           <div className="section-actions">
+            {hasPermission('workflow.manage') ? (
+              <Button onClick={onImportWorkflowClick}>{t('workflows.importFile')}</Button>
+            ) : null}
+            {hasPermission('workflow.manage') ? (
+              <Button onClick={() => void openAssetWorkflowPicker()}>{t('workflows.importAsset')}</Button>
+            ) : null}
+            <Button onClick={downloadDraftWorkflow}>{t('workflows.export')}</Button>
             {hasPermission('workflow.manage') ? (
               <Button onClick={() => void onValidate()}>{t('workflows.validate')}</Button>
             ) : null}
@@ -203,6 +342,46 @@ export function WorkflowsPage({
           ]}
         />
       </Card>
+
+      <Modal
+        title={t('workflows.assetImportTitle')}
+        open={assetImportOpen}
+        onCancel={() => setAssetImportOpen(false)}
+        onOk={importSelectedAssetWorkflow}
+        okText={t('workflows.importAsset')}
+        confirmLoading={assetWorkflowsLoading}
+      >
+        <Paragraph className="workflow-asset-import-copy">{t('workflows.assetImportCopy')}</Paragraph>
+        <Table
+          rowKey="id"
+          loading={assetWorkflowsLoading}
+          pagination={false}
+          dataSource={assetWorkflowVersions}
+          rowSelection={{
+            type: 'radio',
+            selectedRowKeys: selectedAssetWorkflowId ? [selectedAssetWorkflowId] : [],
+            onChange: (selectedRowKeys) => {
+              setSelectedAssetWorkflowId((selectedRowKeys[0] as string | undefined) ?? null);
+            },
+          }}
+          onRow={(record) => ({
+            onClick: () => setSelectedAssetWorkflowId(record.id),
+          })}
+          locale={{ emptyText: t('workflows.assetImportEmpty') }}
+          columns={[
+            { title: t('workflows.workflowVersion'), dataIndex: 'version' },
+            {
+              title: t('assets.owner'),
+              dataIndex: 'ownerDisplayName',
+              render: (value: string | undefined) => value ?? '-',
+            },
+            {
+              title: t('common.createdAt'),
+              dataIndex: 'createdAt',
+            },
+          ]}
+        />
+      </Modal>
     </div>
   );
 }

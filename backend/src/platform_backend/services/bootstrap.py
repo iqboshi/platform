@@ -119,7 +119,7 @@ def _ensure_dataset_seed(
 
     metadata_json = {
         "seeded": True,
-        "visibility": "workspace",
+        "visibility": "public",
         **(metadata or {}),
     }
     if kind == DatasetKind.TABLE:

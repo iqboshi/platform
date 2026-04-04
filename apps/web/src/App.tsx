@@ -9,6 +9,7 @@ import {
   LogoutOutlined,
   RadarChartOutlined,
   SafetyCertificateOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { Button, Card, Layout, Menu, Select, Space, Spin, Tag, Typography } from 'antd';
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
@@ -34,6 +35,11 @@ const DatasetsPage = lazy(() =>
 const WorkflowsPage = lazy(() =>
   import('./features/workflows/WorkflowsPage').then((module) => ({
     default: module.WorkflowsPage,
+  })),
+);
+const PersonalAssetsPage = lazy(() =>
+  import('./features/assets/PersonalAssetsPage').then((module) => ({
+    default: module.PersonalAssetsPage,
   })),
 );
 const ModelsPage = lazy(() =>
@@ -67,36 +73,47 @@ const UserApprovalPage = lazy(() =>
   })),
 );
 
-const { Header, Content, Sider } = Layout;
+const { Content, Sider } = Layout;
 const { Title, Paragraph, Text } = Typography;
 
 interface ShellMenuItem {
   key: string;
   permission?: PermissionKey;
   icon: ReactNode;
+  placement: 'primary' | 'secondary';
   labelKey:
     | 'menu.overview'
     | 'menu.datasets'
+    | 'menu.assets'
     | 'menu.workflows'
     | 'menu.models'
     | 'menu.approvals';
 }
 
 const menuConfig: ShellMenuItem[] = [
-  { key: '/', icon: <AppstoreOutlined />, labelKey: 'menu.overview' },
-  { key: '/datasets', icon: <FolderOpenOutlined />, labelKey: 'menu.datasets' },
-  { key: '/workflows', icon: <DeploymentUnitOutlined />, labelKey: 'menu.workflows' },
-  { key: '/models', icon: <RadarChartOutlined />, labelKey: 'menu.models', permission: 'model.view' },
+  { key: '/', icon: <AppstoreOutlined />, placement: 'primary', labelKey: 'menu.overview' },
+  { key: '/datasets', icon: <FolderOpenOutlined />, placement: 'primary', labelKey: 'menu.datasets' },
+  { key: '/workflows', icon: <DeploymentUnitOutlined />, placement: 'primary', labelKey: 'menu.workflows' },
+  {
+    key: '/models',
+    icon: <RadarChartOutlined />,
+    placement: 'primary',
+    labelKey: 'menu.models',
+    permission: 'model.view',
+  },
   {
     key: '/admin/users',
     icon: <SafetyCertificateOutlined />,
+    placement: 'primary',
     labelKey: 'menu.approvals',
     permission: 'user.approve',
   },
+  { key: '/assets', icon: <UserOutlined />, placement: 'secondary', labelKey: 'menu.assets' },
 ];
 
 function routeKey(pathname: string): string {
   if (pathname.startsWith('/datasets')) return '/datasets';
+  if (pathname.startsWith('/assets')) return '/assets';
   if (pathname.startsWith('/workflows')) return '/workflows';
   if (pathname.startsWith('/models')) return '/models';
   if (pathname.startsWith('/admin')) return '/admin/users';
@@ -159,9 +176,22 @@ function AppShell({
   const location = useLocation();
 
   const selectedKey = useMemo(() => routeKey(location.pathname), [location.pathname]);
-  const menuItems = useMemo<MenuProps['items']>(
+  const primaryMenuItems = useMemo<MenuProps['items']>(
     () =>
       menuConfig
+        .filter((item) => item.placement === 'primary')
+        .filter((item) => (item.permission ? hasPermission(item.permission) : true))
+        .map((item) => ({
+          key: item.key,
+          icon: item.icon,
+          label: t(item.labelKey),
+        })),
+    [hasPermission, t],
+  );
+  const secondaryMenuItems = useMemo<MenuProps['items']>(
+    () =>
+      menuConfig
+        .filter((item) => item.placement === 'secondary')
         .filter((item) => (item.permission ? hasPermission(item.permission) : true))
         .map((item) => ({
           key: item.key,
@@ -174,69 +204,75 @@ function AppShell({
   return (
     <Layout className="app-shell">
       <Sider breakpoint="lg" collapsedWidth="0" width={280} className="app-sider">
-        <div className="brand-panel">
-          <div className="brand-kicker">{t('app.title')}</div>
-          <Title level={3} className="brand-title">
-            {snapshot.workspace.name}
-          </Title>
-          <Paragraph className="brand-copy">{snapshot.workspace.description}</Paragraph>
-          <Tag color={snapshot.source === 'api' ? 'green' : 'gold'}>
-            {t('header.dataSource')}: {snapshot.source.toUpperCase()}
-          </Tag>
-        </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          className="nav-menu"
-        />
-      </Sider>
-      <Layout>
-        <Header className="app-header">
-          <div>
-            <div className="header-eyebrow">{t('header.workspace')}</div>
-            <Title level={2} className="header-title">
+        <div className="sider-shell">
+          <div className="brand-panel">
+            <div className="brand-kicker">{t('app.title')}</div>
+            <Title level={3} className="brand-title">
               {snapshot.workspace.name}
             </Title>
+            <Paragraph className="brand-copy">{snapshot.workspace.description}</Paragraph>
+            <Tag color={snapshot.source === 'api' ? 'green' : 'gold'}>
+              {t('header.dataSource')}: {snapshot.source.toUpperCase()}
+            </Tag>
           </div>
-          <Space size="middle" wrap className="header-actions">
-            <div className="header-meta">
-              <span>
-                {snapshot.workspace.memberCount} {t('header.members')}
-              </span>
-              <span>
-                {snapshot.datasets.length} {t('header.datasets')}
-              </span>
-              <span>
-                {snapshot.workflowRuns.length} {t('header.runs')}
-              </span>
+          <div className="sider-nav-shell">
+            <div className="nav-menu-block">
+              <Menu
+                mode="inline"
+                selectedKeys={[selectedKey]}
+                items={primaryMenuItems}
+                onClick={({ key }) => navigate(key)}
+                className="nav-menu nav-menu-primary"
+              />
             </div>
-            {currentUser ? (
-              <Tag color="blue">
-                {t('header.signedInAs')}: {currentUser.displayName} / {t(roleKey(currentUser.role))}
-              </Tag>
+            {secondaryMenuItems && secondaryMenuItems.length > 0 ? (
+              <div className="nav-bottom-panel">
+                {currentUser ? (
+                  <div className="nav-profile-card">
+                    <div className="nav-profile-name">{currentUser.displayName}</div>
+                    <div className="nav-profile-role">{t(roleKey(currentUser.role))}</div>
+                    <div className="nav-profile-tools">
+                      <Select
+                        value={locale}
+                        onChange={setLocale}
+                        suffixIcon={<GlobalOutlined />}
+                        options={[
+                          { value: 'zh-CN', label: t('locale.zh-CN') },
+                          { value: 'en-US', label: t('locale.en-US') },
+                        ]}
+                        className="nav-utility-select"
+                      />
+                      <Button
+                        icon={<LogoutOutlined />}
+                        onClick={() => void logout().then(() => navigate('/login'))}
+                        className="nav-utility-button"
+                      >
+                        {t('common.logout')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="nav-menu-block nav-menu-block-secondary">
+                  <Menu
+                    mode="inline"
+                    selectedKeys={[selectedKey]}
+                    items={secondaryMenuItems}
+                    onClick={({ key }) => navigate(key)}
+                    className="nav-menu nav-menu-secondary"
+                  />
+                </div>
+              </div>
             ) : null}
-            <Select
-              value={locale}
-              onChange={setLocale}
-              suffixIcon={<GlobalOutlined />}
-              options={[
-                { value: 'zh-CN', label: t('locale.zh-CN') },
-                { value: 'en-US', label: t('locale.en-US') },
-              ]}
-              style={{ width: 140 }}
-            />
-            <Button icon={<LogoutOutlined />} onClick={() => void logout().then(() => navigate('/login'))}>
-              {t('common.logout')}
-            </Button>
-          </Space>
-        </Header>
+          </div>
+        </div>
+      </Sider>
+      <Layout>
         <Content className="app-content">
           <Suspense fallback={<RouteSpinner />}>
             <Routes>
               <Route path="/" element={<DashboardPage snapshot={snapshot} />} />
               <Route path="/datasets" element={<DatasetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
+              <Route path="/assets" element={<PersonalAssetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/workflows" element={<WorkflowsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route
                 path="/models"

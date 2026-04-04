@@ -18,10 +18,16 @@ DatabaseDep = Annotated[Session, Depends(get_db)]
 @router.get(
     "",
     response_model=list[WorkflowRunSummary],
-    dependencies=[Depends(require_permission("workflow.view"))],
 )
-def list_workflow_runs_route(db: DatabaseDep) -> list[WorkflowRunSummary]:
-    return list_workflow_runs(db)
+def list_workflow_runs_route(
+    db: DatabaseDep,
+    current_user: Annotated[UserProfile, Depends(require_permission("workflow.view"))],
+    scope: str = "visible",
+) -> list[WorkflowRunSummary]:
+    try:
+        return list_workflow_runs(db, current_user, scope=scope)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.post(
@@ -40,5 +46,7 @@ def create_workflow_run_route(
         return create_workflow_run(db, request, user)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

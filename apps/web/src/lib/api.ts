@@ -1,8 +1,10 @@
 import type {
+  AssetScope,
   AuthTokenResponse,
   AuthUser,
   DatasetKind,
   DatasetSummary,
+  DatasetVisibility,
   DatasetVersionSummary,
   LocaleCode,
   ModelVersionSummary,
@@ -18,6 +20,7 @@ import type {
   WorkflowRunSummary,
   WorkflowTemplateDefinition,
   WorkflowVersionDetail,
+  WorkflowVersionSummary,
 } from '@platform/types';
 
 export interface PlatformDataSnapshot {
@@ -30,6 +33,14 @@ export interface PlatformDataSnapshot {
   workflowRuns: WorkflowRunSummary[];
   modelVersions: ModelVersionSummary[];
   source: 'api' | 'mock';
+}
+
+export interface AssetOverview {
+  scope: AssetScope;
+  datasets: DatasetSummary[];
+  datasetVersions: DatasetVersionSummary[];
+  workflowVersions: WorkflowVersionSummary[];
+  workflowRuns: WorkflowRunSummary[];
 }
 
 export class ApiError extends Error {
@@ -48,7 +59,7 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8002/a
 type ApiRecord = Record<string, unknown>;
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: Record<string, unknown> | FormData;
   token?: string;
 }
@@ -184,6 +195,19 @@ function normalizeDatasetSummary(input: ApiRecord): DatasetSummary {
     bands: getOptionalNumber(input, 'bands'),
     projection: getOptionalString(input, 'projection'),
     footprint: getOptionalString(input, 'footprint'),
+    visibility:
+      (getOptionalString(input, 'visibility') as DatasetVisibility | undefined) ?? undefined,
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
+    latestVersionId:
+      getOptionalString(input, 'latestVersionId') ??
+      getOptionalString(input, 'latest_version_id'),
+    latestVersionNumber:
+      getOptionalNumber(input, 'latestVersionNumber') ??
+      getOptionalNumber(input, 'latest_version_number'),
     updatedAt: getString(input, 'updatedAt') || getString(input, 'updated_at'),
   };
 }
@@ -199,6 +223,13 @@ function normalizeDatasetVersionSummary(input: ApiRecord): DatasetVersionSummary
     bbox: getBBox(input),
     metadata: (input.metadata as Record<string, unknown> | undefined) ?? {},
     isPrivate: getOptionalBoolean(input, 'isPrivate') ?? getOptionalBoolean(input, 'is_private'),
+    visibility:
+      (getOptionalString(input, 'visibility') as DatasetVisibility | undefined) ?? undefined,
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
   };
 }
@@ -277,6 +308,55 @@ function normalizeWorkflowVersion(input: ApiRecord): WorkflowVersionDetail {
     id: getString(input, 'id'),
     workflowId: getString(input, 'workflowId') || getString(input, 'workflow_id'),
     version: getOptionalNumber(input, 'version') ?? 1,
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
+    graph: {
+      nodes: rawNodes.map((node) => ({
+        id: getString(node, 'id'),
+        type: getString(node, 'type'),
+        position: (node.position as { x: number; y: number } | undefined) ?? { x: 0, y: 0 },
+        params: (node.params as Record<string, unknown> | undefined) ?? {},
+        inputBindings:
+          (node.inputBindings as Record<string, string> | undefined) ??
+          (node.input_bindings as Record<string, string> | undefined) ??
+          {},
+        outputDefs: Array.isArray(node.outputDefs)
+          ? (node.outputDefs as ApiRecord[]).map(normalizeWorkflowPort)
+          : Array.isArray(node.output_defs)
+            ? (node.output_defs as ApiRecord[]).map(normalizeWorkflowPort)
+            : [],
+      })),
+      edges: rawEdges.map((edge) => ({
+        id: getString(edge, 'id'),
+        source: getString(edge, 'source'),
+        target: getString(edge, 'target'),
+        sourceHandle:
+          getOptionalString(edge, 'sourceHandle') ?? getOptionalString(edge, 'source_handle'),
+        targetHandle:
+          getOptionalString(edge, 'targetHandle') ?? getOptionalString(edge, 'target_handle'),
+      })),
+    },
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
+function normalizeWorkflowVersionSummary(input: ApiRecord): WorkflowVersionSummary {
+  const graph = (input.graph as ApiRecord | undefined) ?? {};
+  const rawNodes = Array.isArray(graph.nodes) ? (graph.nodes as ApiRecord[]) : [];
+  const rawEdges = Array.isArray(graph.edges) ? (graph.edges as ApiRecord[]) : [];
+
+  return {
+    id: getString(input, 'id'),
+    workflowId: getString(input, 'workflowId') || getString(input, 'workflow_id'),
+    version: getOptionalNumber(input, 'version') ?? 1,
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
     graph: {
       nodes: rawNodes.map((node) => ({
         id: getString(node, 'id'),
@@ -451,6 +531,20 @@ function toWorkflowValidationPayload(workflowVersion: WorkflowVersionDetail): Re
   };
 }
 
+function withQuery(
+  path: string,
+  params: Record<string, string | undefined>,
+): string {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      search.set(key, value);
+    }
+  });
+  const query = search.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 export async function login(credentials: {
   email: string;
   password: string;
@@ -558,6 +652,29 @@ export async function uploadDataset(
   return normalizeDatasetVersionSummary(response);
 }
 
+export async function updateDataset(
+  token: string,
+  datasetId: string,
+  payload: {
+    name?: string;
+    visibility?: 'public' | 'private';
+  },
+): Promise<DatasetSummary> {
+  const response = await requestJson<ApiRecord>(`/datasets/${datasetId}`, {
+    method: 'PATCH',
+    token,
+    body: payload,
+  });
+  return normalizeDatasetSummary(response);
+}
+
+export async function deleteDataset(token: string, datasetId: string): Promise<void> {
+  await requestJson<ApiRecord>(`/datasets/${datasetId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
 export async function uploadModelPackage(
   token: string,
   payload: {
@@ -606,6 +723,40 @@ export async function saveWorkflowVersion(
   return normalizeWorkflowVersion(payload);
 }
 
+export async function importWorkflowVersion(
+  token: string,
+  workflowGraph: WorkflowVersionDetail['graph'],
+): Promise<WorkflowVersionDetail> {
+  const payload = await requestJson<ApiRecord>('/workflows/versions/import', {
+    method: 'POST',
+    token,
+    body: {
+      nodes: workflowGraph.nodes.map((node) => ({
+        id: node.id,
+        type: node.type,
+        position: node.position,
+        params: node.params,
+        input_bindings: node.inputBindings,
+        output_defs: node.outputDefs.map((port) => ({
+          key: port.key,
+          label: port.label,
+          description: port.description,
+          data_types: port.dataTypes,
+          required: port.required,
+        })),
+      })),
+      edges: workflowGraph.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        source_handle: edge.sourceHandle,
+        target_handle: edge.targetHandle,
+      })),
+    },
+  });
+  return normalizeWorkflowVersion(payload);
+}
+
 export function getDatasetDownloadUrl(datasetVersionId: string): string {
   return `${apiBaseUrl}/dataset-versions/${datasetVersionId}/download`;
 }
@@ -634,6 +785,53 @@ export async function downloadDatasetVersion(
   anchor.download = extractDownloadFileName(response, fallbackFileName);
   anchor.click();
   window.URL.revokeObjectURL(objectUrl);
+}
+
+export async function listWorkflowVersions(
+  token: string,
+  scope: AssetScope = 'mine',
+): Promise<WorkflowVersionSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/workflows/versions', { scope }),
+    { token },
+  );
+  return payload.map(normalizeWorkflowVersionSummary);
+}
+
+export async function downloadWorkflowVersion(
+  token: string,
+  workflowVersionId: string,
+  fallbackFileName = `workflow-${workflowVersionId}.json`,
+): Promise<void> {
+  const path = `/workflows/versions/${workflowVersionId}/download`;
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response, path);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = extractDownloadFileName(response, fallbackFileName);
+  anchor.click();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+export async function deleteWorkflowVersion(
+  token: string,
+  workflowVersionId: string,
+): Promise<void> {
+  await requestJson<ApiRecord>(`/workflows/versions/${workflowVersionId}`, {
+    method: 'DELETE',
+    token,
+  });
 }
 
 export async function validateWorkflow(
@@ -667,6 +865,26 @@ export async function createWorkflowRun(
     },
   });
   return normalizeWorkflowRun(payload);
+}
+
+export async function loadAssetOverview(
+  token: string,
+  scope: AssetScope = 'mine',
+): Promise<AssetOverview> {
+  const [datasets, datasetVersions, workflowVersions, workflowRuns] = await Promise.all([
+    requestJson<ApiRecord[]>(withQuery('/datasets', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/dataset-versions', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/workflows/versions', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/workflow-runs', { scope }), { token }),
+  ]);
+
+  return {
+    scope,
+    datasets: datasets.map(normalizeDatasetSummary),
+    datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
+    workflowVersions: workflowVersions.map(normalizeWorkflowVersionSummary),
+    workflowRuns: workflowRuns.map(normalizeWorkflowRun),
+  };
 }
 
 export async function loadPlatformData(

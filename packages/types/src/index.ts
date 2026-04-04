@@ -18,6 +18,8 @@ export type PermissionKey =
 
 export type DatasetKind = 'raster' | 'vector' | 'table' | 'artifact';
 export type DatasetStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
+export type DatasetVisibility = 'public' | 'private' | 'workspace';
+export type AssetScope = 'mine' | 'all';
 export type WorkflowRunStatus = 'draft' | 'queued' | 'running' | 'succeeded' | 'failed';
 export type WorkflowNodeCategory = 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
 export type WorkflowPortDataType =
@@ -103,6 +105,11 @@ export interface DatasetSummary {
   bands?: number;
   projection?: string;
   footprint?: string;
+  visibility?: DatasetVisibility;
+  ownerUserId?: string;
+  ownerDisplayName?: string;
+  latestVersionId?: string;
+  latestVersionNumber?: number;
   updatedAt: string;
 }
 
@@ -116,6 +123,9 @@ export interface DatasetVersionSummary {
   bbox?: [number, number, number, number];
   metadata: Record<string, unknown>;
   isPrivate?: boolean;
+  visibility?: DatasetVisibility;
+  ownerUserId?: string;
+  ownerDisplayName?: string;
   createdAt: string;
 }
 
@@ -183,6 +193,21 @@ export interface WorkflowVersionDetail {
   id: string;
   workflowId: string;
   version: number;
+  ownerUserId?: string;
+  ownerDisplayName?: string;
+  graph: {
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+  };
+  createdAt: string;
+}
+
+export interface WorkflowVersionSummary {
+  id: string;
+  workflowId: string;
+  version: number;
+  ownerUserId?: string;
+  ownerDisplayName?: string;
   graph: {
     nodes: WorkflowNode[];
     edges: WorkflowEdge[];

@@ -26,8 +26,19 @@ def list_dataset_versions_route(
     db: DatabaseDep,
     current_user: DatasetViewUserDep,
     dataset_id: str | None = None,
+    scope: str = "visible",
+    visibility: str | None = None,
 ) -> list[DatasetVersionSummary]:
-    return list_dataset_versions(db, current_user=current_user, dataset_id=dataset_id)
+    try:
+        return list_dataset_versions(
+            db,
+            current_user=current_user,
+            dataset_id=dataset_id,
+            scope=scope,
+            visibility=visibility,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.get(

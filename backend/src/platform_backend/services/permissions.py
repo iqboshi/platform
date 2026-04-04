@@ -35,7 +35,9 @@ ROLE_PERMISSIONS: dict[RoleKey, set[PermissionKey]] = {
     RoleKey.MEMBER: {
         "workspace.view",
         "dataset.view",
+        "dataset.manage",
         "workflow.view",
+        "workflow.manage",
         "workflow.run",
         "job.view",
         "result.view",

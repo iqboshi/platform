@@ -58,6 +58,11 @@ class DatasetSummary(BaseModel):
     bands: int | None = None
     projection: str | None = None
     footprint: str | None = None
+    visibility: str = "private"
+    owner_user_id: str | None = None
+    owner_display_name: str | None = None
+    latest_version_id: str | None = None
+    latest_version_number: int | None = None
     updated_at: datetime
 
 
@@ -73,6 +78,9 @@ class DatasetVersionSummary(BaseModel):
     bbox: list[float] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     is_private: bool = False
+    visibility: str = "private"
+    owner_user_id: str | None = None
+    owner_display_name: str | None = None
     created_at: datetime
 
 
@@ -97,6 +105,11 @@ class DatasetUploadConfirmRequest(BaseModel):
     workspace_id: str
     dataset_name: str
     kind: DatasetKind
+
+
+class DatasetUpdateRequest(BaseModel):
+    name: str | None = None
+    visibility: str | None = None
 
 
 class SplitJobRequest(BaseModel):

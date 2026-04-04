@@ -7,9 +7,11 @@ from platform_backend.api.deps import require_permission
 from platform_backend.db.session import get_db
 from platform_backend.domain_enums import DatasetKind
 from platform_backend.schemas.platform import (
+    ApiMessage,
     DatasetSummary,
     DatasetUploadConfirmRequest,
     DatasetUploadRequest,
+    DatasetUpdateRequest,
     DatasetVersionSummary,
     UploadSessionResponse,
     UserProfile,
@@ -18,13 +20,16 @@ from platform_backend.services.platform_store import (
     confirm_upload,
     create_dataset_upload,
     create_upload_session,
+    delete_dataset,
     get_dataset,
     list_datasets,
+    update_dataset,
 )
 
 router = APIRouter()
 DatabaseDep = Annotated[Session, Depends(get_db)]
 DatasetViewUserDep = Annotated[UserProfile, Depends(require_permission("dataset.view"))]
+DatasetManageUserDep = Annotated[UserProfile, Depends(require_permission("dataset.manage"))]
 
 
 @router.get(
@@ -34,8 +39,13 @@ DatasetViewUserDep = Annotated[UserProfile, Depends(require_permission("dataset.
 def list_datasets_route(
     db: DatabaseDep,
     current_user: DatasetViewUserDep,
+    scope: str = "visible",
+    visibility: str | None = None,
 ) -> list[DatasetSummary]:
-    return list_datasets(db, current_user)
+    try:
+        return list_datasets(db, current_user, scope=scope, visibility=visibility)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.get(
@@ -75,6 +85,7 @@ def create_upload_session_route(request: DatasetUploadRequest) -> UploadSessionR
 )
 def upload_dataset(
     db: DatabaseDep,
+    current_user: DatasetManageUserDep,
     workspace_id: Annotated[str, Form(...)],
     dataset_name: Annotated[str, Form(...)],
     kind: Annotated[DatasetKind, Form(...)],
@@ -95,6 +106,7 @@ def upload_dataset(
         workspace_id=workspace_id,
         dataset_name=dataset_name,
         kind=kind,
+        current_user=current_user,
         upload_file=file.file,
         original_file_name=file.filename,
         content_type=file.content_type or "application/octet-stream",
@@ -110,5 +122,52 @@ def upload_dataset(
 def confirm_dataset_upload(
     request: DatasetUploadConfirmRequest,
     db: DatabaseDep,
+    current_user: DatasetManageUserDep,
 ) -> DatasetVersionSummary:
-    return confirm_upload(db, request)
+    return confirm_upload(db, request, current_user)
+
+
+@router.patch(
+    "/{dataset_id}",
+    response_model=DatasetSummary,
+)
+def update_dataset_route(
+    dataset_id: str,
+    request: DatasetUpdateRequest,
+    db: DatabaseDep,
+    current_user: DatasetManageUserDep,
+) -> DatasetSummary:
+    try:
+        return update_dataset(
+            db,
+            dataset_id,
+            current_user=current_user,
+            name=request.name,
+            visibility=request.visibility,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{dataset_id}",
+    response_model=ApiMessage,
+)
+def delete_dataset_route(
+    dataset_id: str,
+    db: DatabaseDep,
+    current_user: DatasetManageUserDep,
+) -> ApiMessage:
+    try:
+        delete_dataset(db, dataset_id, current_user=current_user)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiMessage(message="Dataset deleted.")
