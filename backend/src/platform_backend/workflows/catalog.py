@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from platform_backend.schemas.workflow import (
     WorkflowCatalogItem,
     WorkflowEdge,
     WorkflowGraph,
     WorkflowNode,
+    WorkflowNodeExample,
     WorkflowNodePort,
     WorkflowParamDefinition,
     WorkflowParamFieldType,
     WorkflowParamOption,
+    WorkflowPortContract,
     WorkflowTemplateDefinition,
     WorkflowTemplateSampleBinding,
 )
@@ -70,6 +74,558 @@ def _param(
             for option_value, option_label in (options or [])
         ],
     )
+
+
+def _contract(
+    port_key: str,
+    summary: str,
+    *,
+    dataset_kinds: list[str] | None = None,
+    file_formats: list[str] | None = None,
+    column_requirements: list[str] | None = None,
+    sample_columns: list[str] | None = None,
+    produced_columns: list[str] | None = None,
+    notes: list[str] | None = None,
+) -> WorkflowPortContract:
+    return WorkflowPortContract(
+        port_key=port_key,
+        summary=summary,
+        dataset_kinds=dataset_kinds or [],
+        file_formats=file_formats or [],
+        column_requirements=column_requirements or [],
+        sample_columns=sample_columns or [],
+        produced_columns=produced_columns or [],
+        notes=notes or [],
+    )
+
+
+def _example(
+    title: str,
+    kind: str,
+    *,
+    port_key: str | None = None,
+    columns: list[str] | None = None,
+    rows: list[dict[str, Any]] | None = None,
+    content: str | None = None,
+) -> WorkflowNodeExample:
+    return WorkflowNodeExample(
+        title=title,
+        kind=kind,
+        port_key=port_key,
+        columns=columns or [],
+        rows=rows or [],
+        content=content,
+    )
+
+
+def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
+    feature_rows = [
+        {"feature_a": 1.0, "feature_b": 2.0, "target": 2.1},
+        {"feature_a": 2.0, "feature_b": 3.0, "target": 3.4},
+    ]
+    prediction_rows = [
+        {"feature_a": 1.0, "feature_b": 2.0, "prediction": 2.3},
+        {"feature_a": 2.0, "feature_b": 3.0, "prediction": 3.5},
+    ]
+    metrics_rows = [
+        {"metric": "r2", "value": 0.94},
+        {"metric": "rmse", "value": 0.31},
+    ]
+
+    if node_type == "source.dataset_version":
+        return {
+            "input_contracts": [],
+            "output_contracts": [
+                _contract(
+                    "dataset",
+                    "Outputs a dataset version handle that downstream nodes can consume.",
+                    dataset_kinds=["table"],
+                    file_formats=["csv"],
+                    notes=[
+                        "For the current tabular workflow chain, use a table dataset backed by CSV.",
+                    ],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Example selection",
+                    "text",
+                    content="Select a table dataset version such as sample-regression-dataset / v1.",
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Example output handle",
+                    "text",
+                    port_key="dataset",
+                    content="dataset_version: sample-regression-dataset / v1",
+                )
+            ],
+            "common_errors": [
+                "No dataset version is selected.",
+                "The selected dataset version does not belong to a table dataset.",
+            ],
+        }
+
+    if node_type == "table.load_csv":
+        return {
+            "input_contracts": [
+                _contract(
+                    "dataset",
+                    "Accepts a table dataset version backed by a CSV file.",
+                    dataset_kinds=["table"],
+                    file_formats=["csv"],
+                    column_requirements=["The CSV must include a header row."],
+                    sample_columns=["feature_a", "feature_b", "target"],
+                    notes=["Each CSV row is treated as one sample."],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "table",
+                    "Outputs a table whose columns come from the CSV header.",
+                    produced_columns=["feature_a", "feature_b", "target"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Example CSV table",
+                    "table",
+                    port_key="dataset",
+                    columns=["feature_a", "feature_b", "target"],
+                    rows=feature_rows,
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Loaded table",
+                    "table",
+                    port_key="table",
+                    columns=["feature_a", "feature_b", "target"],
+                    rows=feature_rows,
+                )
+            ],
+            "common_errors": [
+                "The selected dataset is not a table dataset.",
+                "The CSV file does not contain a header row.",
+            ],
+        }
+
+    if node_type == "table.train_test_split":
+        return {
+            "input_contracts": [
+                _contract(
+                    "table",
+                    "Accepts a loaded table and keeps all columns during splitting.",
+                    sample_columns=["feature_a", "feature_b", "target"],
+                    notes=[
+                        "Use testSize to control the split ratio.",
+                        "Both outputs keep the same schema as the input table.",
+                    ],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "trainTable",
+                    "Outputs the training split.",
+                    produced_columns=["feature_a", "feature_b", "target"],
+                ),
+                _contract(
+                    "testTable",
+                    "Outputs the test split.",
+                    produced_columns=["feature_a", "feature_b", "target"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Input table",
+                    "table",
+                    port_key="table",
+                    columns=["feature_a", "feature_b", "target"],
+                    rows=feature_rows,
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Train split",
+                    "table",
+                    port_key="trainTable",
+                    columns=["feature_a", "feature_b", "target"],
+                    rows=feature_rows[:1],
+                ),
+                _example(
+                    "Test split",
+                    "table",
+                    port_key="testTable",
+                    columns=["feature_a", "feature_b", "target"],
+                    rows=feature_rows[1:],
+                ),
+            ],
+            "common_errors": [
+                "The input table is missing.",
+                "testSize must be between 0 and 1.",
+            ],
+        }
+
+    if node_type in {
+        "tabular.linear_regression_train",
+        "tabular.svm_regression_train",
+        "tabular.random_forest_regression_train",
+    }:
+        label = {
+            "tabular.linear_regression_train": "trained linear regression model",
+            "tabular.svm_regression_train": "trained SVM regression model",
+            "tabular.random_forest_regression_train": "trained random forest regression model",
+        }[node_type]
+        return {
+            "input_contracts": [
+                _contract(
+                    "trainTable",
+                    "Accepts the training table for model fitting.",
+                    column_requirements=[
+                        "Every column named in featureColumns must exist.",
+                        "The column named in targetColumn must exist.",
+                    ],
+                    sample_columns=["feature_a", "feature_b", "target"],
+                ),
+                _contract(
+                    "testTable",
+                    "Optional evaluation table using the same schema as the training table.",
+                    sample_columns=["feature_a", "feature_b", "target"],
+                    notes=["When connected, the node computes evaluation metrics on this table."],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "model",
+                    f"Outputs a {label}.",
+                    notes=["The output can be passed to Save Trained Model."],
+                ),
+                _contract(
+                    "report",
+                    "Outputs regression metrics such as r2, mae, and rmse.",
+                    produced_columns=["metric", "value"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Training table",
+                    "table",
+                    port_key="trainTable",
+                    columns=["feature_a", "feature_b", "target"],
+                    rows=feature_rows,
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Model artifact",
+                    "text",
+                    port_key="model",
+                    content=f"model_ref: {label}",
+                ),
+                _example(
+                    "Training metrics",
+                    "table",
+                    port_key="report",
+                    columns=["metric", "value"],
+                    rows=metrics_rows,
+                ),
+            ],
+            "common_errors": [
+                "featureColumns is empty or contains unknown columns.",
+                "targetColumn is missing from the table schema.",
+            ],
+        }
+
+    if node_type in {
+        "tabular.linear_regression_predict",
+        "tabular.svm_regression_predict",
+        "tabular.random_forest_regression_predict",
+        "tabular.predict",
+    }:
+        return {
+            "input_contracts": [
+                _contract(
+                    "table",
+                    "Accepts a feature table for batch prediction.",
+                    column_requirements=[
+                        "All feature columns required by the selected model must exist.",
+                    ],
+                    sample_columns=["feature_a", "feature_b"],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "table",
+                    "Outputs the input table plus a prediction column.",
+                    produced_columns=["feature_a", "feature_b", "prediction"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Prediction input",
+                    "table",
+                    port_key="table",
+                    columns=["feature_a", "feature_b"],
+                    rows=[
+                        {"feature_a": 1.0, "feature_b": 2.0},
+                        {"feature_a": 2.0, "feature_b": 3.0},
+                    ],
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Prediction output",
+                    "table",
+                    port_key="table",
+                    columns=["feature_a", "feature_b", "prediction"],
+                    rows=prediction_rows,
+                )
+            ],
+            "common_errors": [
+                "No compatible model asset is selected.",
+                "The input table is missing one or more model feature columns.",
+            ],
+        }
+
+    if node_type == "custom.api_predict":
+        return {
+            "input_contracts": [
+                _contract(
+                    "table",
+                    "Accepts a feature table and sends it to the saved external API model.",
+                    sample_columns=["feature_a", "feature_b"],
+                    notes=[
+                        "The selected model asset must be a Custom API model.",
+                        "The external API must return prediction_values or table_rows.",
+                    ],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "table",
+                    "Outputs a prediction table returned by the external API.",
+                    produced_columns=["feature_a", "feature_b", "prediction"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "External API request table",
+                    "table",
+                    port_key="table",
+                    columns=["feature_a", "feature_b"],
+                    rows=[
+                        {"feature_a": 1.0, "feature_b": 2.0},
+                        {"feature_a": 2.0, "feature_b": 3.0},
+                    ],
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "External API prediction table",
+                    "table",
+                    port_key="table",
+                    columns=["feature_a", "feature_b", "prediction"],
+                    rows=prediction_rows,
+                )
+            ],
+            "common_errors": [
+                "The selected model asset is not a Custom API model.",
+                "The external API response format does not match the configured response mode.",
+            ],
+        }
+
+    if node_type == "metrics.validate_regression":
+        return {
+            "input_contracts": [
+                _contract(
+                    "predictionTable",
+                    "Accepts a prediction table containing predictionColumn.",
+                    column_requirements=["The column named in predictionColumn must exist."],
+                    sample_columns=["feature_a", "prediction"],
+                ),
+                _contract(
+                    "groundTruthTable",
+                    "Accepts a ground-truth table containing groundTruthColumn.",
+                    column_requirements=["The column named in groundTruthColumn must exist."],
+                    sample_columns=["feature_a", "target"],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "report",
+                    "Outputs regression metrics for the selected metric list.",
+                    produced_columns=["metric", "value"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Prediction table",
+                    "table",
+                    port_key="predictionTable",
+                    columns=["feature_a", "prediction"],
+                    rows=[
+                        {"feature_a": 1.0, "prediction": 2.3},
+                        {"feature_a": 2.0, "prediction": 3.5},
+                    ],
+                ),
+                _example(
+                    "Ground-truth table",
+                    "table",
+                    port_key="groundTruthTable",
+                    columns=["feature_a", "target"],
+                    rows=[
+                        {"feature_a": 1.0, "target": 2.1},
+                        {"feature_a": 2.0, "target": 3.4},
+                    ],
+                ),
+            ],
+            "example_outputs": [
+                _example(
+                    "Validation metrics",
+                    "table",
+                    port_key="report",
+                    columns=["metric", "value"],
+                    rows=metrics_rows,
+                )
+            ],
+            "common_errors": [
+                "predictionColumn is missing from the prediction table.",
+                "groundTruthColumn is missing from the ground-truth table.",
+            ],
+        }
+
+    if node_type == "model.save_trained_model":
+        return {
+            "input_contracts": [
+                _contract(
+                    "model",
+                    "Accepts a trained model artifact produced by a training node.",
+                    notes=["Use this node to save the trained model into personal assets."],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "model",
+                    "Outputs a saved model reference.",
+                    notes=["The saved model can be reused in prediction nodes."],
+                ),
+                _contract(
+                    "artifact",
+                    "Outputs the raw model artifact file path.",
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Incoming trained model",
+                    "text",
+                    port_key="model",
+                    content="model_ref: trained random forest regression model",
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Saved model asset",
+                    "text",
+                    port_key="model",
+                    content="model_ref: Engineer Random Forest Model / 1.0.0",
+                )
+            ],
+            "common_errors": [
+                "The incoming model port is not connected.",
+                "saveToPlatform is enabled but the model cannot be persisted.",
+            ],
+        }
+
+    if node_type == "export.table":
+        return {
+            "input_contracts": [
+                _contract(
+                    "input",
+                    "Accepts any table output that should be written to CSV.",
+                    sample_columns=["feature_a", "feature_b", "prediction"],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "artifact",
+                    "Outputs a CSV artifact and can optionally save it as a dataset version.",
+                    file_formats=["csv"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Table to export",
+                    "table",
+                    port_key="input",
+                    columns=["feature_a", "feature_b", "prediction"],
+                    rows=prediction_rows,
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Exported artifact",
+                    "text",
+                    port_key="artifact",
+                    content="prediction-output.csv",
+                )
+            ],
+            "common_errors": [
+                "The input table is not connected.",
+                "The table cannot be serialized to CSV.",
+            ],
+        }
+
+    if node_type == "export.metrics":
+        return {
+            "input_contracts": [
+                _contract(
+                    "input",
+                    "Accepts a metrics report produced by Regression Validation or training nodes.",
+                    produced_columns=["metric", "value"],
+                ),
+            ],
+            "output_contracts": [
+                _contract(
+                    "artifact",
+                    "Outputs a JSON or CSV metrics artifact and can optionally save it as a dataset version.",
+                    file_formats=["json", "csv"],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Metrics report",
+                    "table",
+                    port_key="input",
+                    columns=["metric", "value"],
+                    rows=metrics_rows,
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Exported metrics artifact",
+                    "text",
+                    port_key="artifact",
+                    content="validation-metrics.json",
+                )
+            ],
+            "common_errors": [
+                "The metrics input is not connected.",
+                "The selected export format is not supported.",
+            ],
+        }
+
+    return {
+        "input_contracts": [],
+        "output_contracts": [],
+        "example_inputs": [],
+        "example_outputs": [],
+        "common_errors": [],
+    }
+
+
+def _augment_catalog_item(item: WorkflowCatalogItem) -> WorkflowCatalogItem:
+    return item.model_copy(update=_catalog_contract_metadata(item.type))
 
 
 BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
@@ -531,6 +1087,8 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         ],
     ),
 ]
+
+BUILTIN_NODE_CATALOG = [_augment_catalog_item(item) for item in BUILTIN_NODE_CATALOG]
 
 BUILTIN_NODE_DEFINITIONS = {item.type: item for item in BUILTIN_NODE_CATALOG}
 

@@ -158,6 +158,26 @@ export interface WorkflowParamDefinition {
   required?: boolean;
 }
 
+export interface WorkflowPortContract {
+  portKey: string;
+  summary: string;
+  datasetKinds?: DatasetKind[];
+  fileFormats?: string[];
+  columnRequirements?: string[];
+  sampleColumns?: string[];
+  producedColumns?: string[];
+  notes?: string[];
+}
+
+export interface WorkflowNodeExample {
+  title: string;
+  kind: 'table' | 'json' | 'text';
+  portKey?: string;
+  columns?: string[];
+  rows?: Record<string, unknown>[];
+  content?: string;
+}
+
 export interface WorkflowNodeCatalogItem {
   type: string;
   label: string;
@@ -169,6 +189,11 @@ export interface WorkflowNodeCatalogItem {
   inputs: WorkflowPortDefinition[];
   outputs: WorkflowPortDefinition[];
   params: WorkflowParamDefinition[];
+  inputContracts?: WorkflowPortContract[];
+  outputContracts?: WorkflowPortContract[];
+  exampleInputs?: WorkflowNodeExample[];
+  exampleOutputs?: WorkflowNodeExample[];
+  commonErrors?: string[];
 }
 
 export interface WorkflowNode {

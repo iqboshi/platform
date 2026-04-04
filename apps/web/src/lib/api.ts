@@ -14,10 +14,12 @@ import type {
   RoleKey,
   WorkspaceSummary,
   WorkflowNodeCatalogItem,
+  WorkflowNodeExample,
   WorkflowNodePreviewValue,
   WorkflowNodeTestResult,
   WorkflowParamDefinition,
   WorkflowParamOption,
+  WorkflowPortContract,
   WorkflowPortDefinition,
   WorkflowRunSummary,
   WorkflowTemplateDefinition,
@@ -278,10 +280,74 @@ function normalizeWorkflowParamDefinition(input: ApiRecord): WorkflowParamDefini
   };
 }
 
+function normalizeWorkflowPortContract(input: ApiRecord): WorkflowPortContract {
+  return {
+    portKey: getString(input, 'portKey') || getString(input, 'port_key'),
+    summary: getString(input, 'summary'),
+    datasetKinds:
+      getStringArray<DatasetKind>(input, 'datasetKinds').length > 0
+        ? getStringArray<DatasetKind>(input, 'datasetKinds')
+        : getStringArray<DatasetKind>(input, 'dataset_kinds'),
+    fileFormats:
+      getStringArray<string>(input, 'fileFormats').length > 0
+        ? getStringArray<string>(input, 'fileFormats')
+        : getStringArray<string>(input, 'file_formats'),
+    columnRequirements:
+      getStringArray<string>(input, 'columnRequirements').length > 0
+        ? getStringArray<string>(input, 'columnRequirements')
+        : getStringArray<string>(input, 'column_requirements'),
+    sampleColumns:
+      getStringArray<string>(input, 'sampleColumns').length > 0
+        ? getStringArray<string>(input, 'sampleColumns')
+        : getStringArray<string>(input, 'sample_columns'),
+    producedColumns:
+      getStringArray<string>(input, 'producedColumns').length > 0
+        ? getStringArray<string>(input, 'producedColumns')
+        : getStringArray<string>(input, 'produced_columns'),
+    notes: getStringArray<string>(input, 'notes'),
+  };
+}
+
+function normalizeWorkflowNodeExample(input: ApiRecord): WorkflowNodeExample {
+  const rawRows = Array.isArray(input.rows) ? input.rows : [];
+
+  return {
+    title: getString(input, 'title'),
+    kind: (getString(input, 'kind') || 'text') as WorkflowNodeExample['kind'],
+    portKey: getOptionalString(input, 'portKey') ?? getOptionalString(input, 'port_key'),
+    columns: getStringArray<string>(input, 'columns'),
+    rows: rawRows.filter(
+      (row): row is Record<string, unknown> =>
+        typeof row === 'object' && row !== null && !Array.isArray(row),
+    ),
+    content: getOptionalString(input, 'content'),
+  };
+}
+
 function normalizeWorkflowCatalogItem(input: ApiRecord): WorkflowNodeCatalogItem {
   const rawInputs = Array.isArray(input.inputs) ? (input.inputs as ApiRecord[]) : [];
   const rawOutputs = Array.isArray(input.outputs) ? (input.outputs as ApiRecord[]) : [];
   const rawParams = Array.isArray(input.params) ? (input.params as ApiRecord[]) : [];
+  const rawInputContracts = Array.isArray(input.inputContracts)
+    ? (input.inputContracts as ApiRecord[])
+    : Array.isArray(input.input_contracts)
+      ? (input.input_contracts as ApiRecord[])
+      : [];
+  const rawOutputContracts = Array.isArray(input.outputContracts)
+    ? (input.outputContracts as ApiRecord[])
+    : Array.isArray(input.output_contracts)
+      ? (input.output_contracts as ApiRecord[])
+      : [];
+  const rawExampleInputs = Array.isArray(input.exampleInputs)
+    ? (input.exampleInputs as ApiRecord[])
+    : Array.isArray(input.example_inputs)
+      ? (input.example_inputs as ApiRecord[])
+      : [];
+  const rawExampleOutputs = Array.isArray(input.exampleOutputs)
+    ? (input.exampleOutputs as ApiRecord[])
+    : Array.isArray(input.example_outputs)
+      ? (input.example_outputs as ApiRecord[])
+      : [];
 
   return {
     type: getString(input, 'type'),
@@ -300,6 +366,14 @@ function normalizeWorkflowCatalogItem(input: ApiRecord): WorkflowNodeCatalogItem
     inputs: rawInputs.map(normalizeWorkflowPort),
     outputs: rawOutputs.map(normalizeWorkflowPort),
     params: rawParams.map(normalizeWorkflowParamDefinition),
+    inputContracts: rawInputContracts.map(normalizeWorkflowPortContract),
+    outputContracts: rawOutputContracts.map(normalizeWorkflowPortContract),
+    exampleInputs: rawExampleInputs.map(normalizeWorkflowNodeExample),
+    exampleOutputs: rawExampleOutputs.map(normalizeWorkflowNodeExample),
+    commonErrors:
+      getStringArray<string>(input, 'commonErrors').length > 0
+        ? getStringArray<string>(input, 'commonErrors')
+        : getStringArray<string>(input, 'common_errors'),
   };
 }
 

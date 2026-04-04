@@ -300,6 +300,37 @@ def test_workflow_templates_endpoint(client: TestClient, admin_token: str) -> No
     assert any(item.get("sample_bindings") for item in payload if item["id"].startswith("tabular"))
 
 
+def test_workflow_catalog_endpoint_exposes_contract_metadata(
+    client: TestClient,
+    admin_token: str,
+) -> None:
+    response = client.get(
+        "/api/v1/workflows/catalog",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload
+
+    load_csv = next(item for item in payload if item["type"] == "table.load_csv")
+    validate_regression = next(
+        item for item in payload if item["type"] == "metrics.validate_regression"
+    )
+
+    assert load_csv["input_contracts"]
+    assert load_csv["output_contracts"]
+    assert load_csv["example_inputs"]
+    assert load_csv["example_outputs"]
+    assert load_csv["common_errors"]
+    assert load_csv["input_contracts"][0]["port_key"] == "dataset"
+    assert "csv" in load_csv["input_contracts"][0]["file_formats"]
+
+    assert validate_regression["input_contracts"]
+    assert validate_regression["output_contracts"][0]["port_key"] == "report"
+    assert validate_regression["example_outputs"][0]["kind"] == "table"
+
+
 def test_workflow_node_test_returns_table_preview(client: TestClient) -> None:
     engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
     workspace_id = _workspace_id(client, engineer_token)

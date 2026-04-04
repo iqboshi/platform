@@ -64,6 +64,49 @@ class WorkflowParamDefinition(BaseModel):
     required: bool = False
 
 
+class WorkflowPortContract(BaseModel):
+    port_key: str = Field(
+        validation_alias=AliasChoices("port_key", "portKey"),
+    )
+    summary: str
+    dataset_kinds: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("dataset_kinds", "datasetKinds"),
+    )
+    file_formats: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("file_formats", "fileFormats"),
+    )
+    column_requirements: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("column_requirements", "columnRequirements"),
+    )
+    sample_columns: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("sample_columns", "sampleColumns"),
+    )
+    produced_columns: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("produced_columns", "producedColumns"),
+    )
+    notes: list[str] = Field(default_factory=list)
+
+
+WorkflowExampleKind = Literal["table", "json", "text"]
+
+
+class WorkflowNodeExample(BaseModel):
+    title: str
+    kind: WorkflowExampleKind
+    port_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("port_key", "portKey"),
+    )
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    content: str | None = None
+
+
 class WorkflowNode(BaseModel):
     id: str
     type: str
@@ -109,6 +152,11 @@ class WorkflowCatalogItem(BaseModel):
     inputs: list[WorkflowNodePort] = Field(default_factory=list)
     outputs: list[WorkflowNodePort] = Field(default_factory=list)
     params: list[WorkflowParamDefinition] = Field(default_factory=list)
+    input_contracts: list[WorkflowPortContract] = Field(default_factory=list)
+    output_contracts: list[WorkflowPortContract] = Field(default_factory=list)
+    example_inputs: list[WorkflowNodeExample] = Field(default_factory=list)
+    example_outputs: list[WorkflowNodeExample] = Field(default_factory=list)
+    common_errors: list[str] = Field(default_factory=list)
 
 
 class WorkflowTemplateSampleBinding(BaseModel):

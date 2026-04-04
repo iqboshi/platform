@@ -251,6 +251,24 @@ export type TranslationKey =
   | 'workflows.nodeTestViewDetails'
   | 'workflows.nodeTestNoPreview'
   | 'workflows.nodeTestEmpty'
+  | 'workflows.nodeStatusTitle'
+  | 'workflows.nodeStatusIssues'
+  | 'workflows.nodeStatusReady'
+  | 'workflows.nodeStatusMissingInputs'
+  | 'workflows.nodeStatusInvalidParams'
+  | 'workflows.nodeStatusSchemaMismatch'
+  | 'workflows.contractInputTitle'
+  | 'workflows.contractOutputTitle'
+  | 'workflows.contractExamplesTitle'
+  | 'workflows.contractDatasetKinds'
+  | 'workflows.contractFileFormats'
+  | 'workflows.contractColumnRequirements'
+  | 'workflows.contractSampleColumns'
+  | 'workflows.contractProducedColumns'
+  | 'workflows.contractNotes'
+  | 'workflows.commonErrorsTitle'
+  | 'workflows.contractHighlights'
+  | 'workflows.downloadContractTemplate'
   | 'workflows.category.source'
   | 'workflows.category.preprocess'
   | 'workflows.category.split'
@@ -586,6 +604,24 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.nodeTestViewDetails': 'View details',
     'workflows.nodeTestNoPreview': 'No preview data.',
     'workflows.nodeTestEmpty': 'Run a node test to inspect intermediate data.',
+    'workflows.nodeStatusTitle': 'Node status',
+    'workflows.nodeStatusIssues': 'Current issues',
+    'workflows.nodeStatusReady': 'Ready',
+    'workflows.nodeStatusMissingInputs': 'Missing inputs',
+    'workflows.nodeStatusInvalidParams': 'Invalid params',
+    'workflows.nodeStatusSchemaMismatch': 'Schema mismatch',
+    'workflows.contractInputTitle': 'Input contract',
+    'workflows.contractOutputTitle': 'Output contract',
+    'workflows.contractExamplesTitle': 'Examples',
+    'workflows.contractDatasetKinds': 'Dataset kinds',
+    'workflows.contractFileFormats': 'File formats',
+    'workflows.contractColumnRequirements': 'Required columns',
+    'workflows.contractSampleColumns': 'Example columns',
+    'workflows.contractProducedColumns': 'Produced columns',
+    'workflows.contractNotes': 'Notes',
+    'workflows.commonErrorsTitle': 'Common errors',
+    'workflows.contractHighlights': 'What this template expects',
+    'workflows.downloadContractTemplate': 'Download template CSV',
     'workflows.category.source': 'Source',
     'workflows.category.preprocess': 'Preprocess',
     'workflows.category.split': 'Split',
@@ -952,5 +988,23 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.nodeTestViewDetails': '查看详情',
     'workflows.nodeTestNoPreview': '暂无预览数据。',
     'workflows.nodeTestEmpty': '运行一次节点测试后，这里会显示中间结果。',
+    'workflows.nodeStatusTitle': '节点状态',
+    'workflows.nodeStatusIssues': '当前问题',
+    'workflows.nodeStatusReady': '可执行',
+    'workflows.nodeStatusMissingInputs': '缺少输入',
+    'workflows.nodeStatusInvalidParams': '参数无效',
+    'workflows.nodeStatusSchemaMismatch': '数据结构不匹配',
+    'workflows.contractInputTitle': '输入要求',
+    'workflows.contractOutputTitle': '输出结果',
+    'workflows.contractExamplesTitle': '输入输出示例',
+    'workflows.contractDatasetKinds': '数据集类型',
+    'workflows.contractFileFormats': '文件格式',
+    'workflows.contractColumnRequirements': '字段要求',
+    'workflows.contractSampleColumns': '示例字段',
+    'workflows.contractProducedColumns': '输出字段',
+    'workflows.contractNotes': '说明',
+    'workflows.commonErrorsTitle': '常见错误',
+    'workflows.contractHighlights': '模板输入要求',
+    'workflows.downloadContractTemplate': '下载模板 CSV',
   },
 };

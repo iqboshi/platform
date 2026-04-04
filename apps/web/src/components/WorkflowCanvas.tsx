@@ -3,6 +3,7 @@ import type {
   DatasetVersionSummary,
   ModelVersionSummary,
   WorkflowNodeCatalogItem,
+  WorkflowNodeExample,
   WorkflowNodePreviewValue,
   WorkflowParamDefinition,
   WorkflowPortDataType,
@@ -21,7 +22,8 @@ import type {
   NodeProps,
 } from '@xyflow/react';
 
-import { App, Button, Card, Empty, Input, InputNumber, Modal, Select, Switch, Tag, Typography } from 'antd';
+import { App, Button, Card, Collapse, Empty, Input, InputNumber, Modal, Select, Switch, Tag, Typography } from 'antd';
+import type { CollapseProps } from 'antd';
 import {
   addEdge,
   applyEdgeChanges,
@@ -43,6 +45,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 
 import {
@@ -56,6 +59,12 @@ import {
   type WorkflowEditorContext,
   type WorkflowNodeDefinition,
 } from '@/features/workflows/node-registry';
+import {
+  analyzeWorkflowGraph,
+  downloadExampleTableTemplate,
+  getTemplateContractHints,
+  type WorkflowNodeAnalysis,
+} from '@/features/workflows/workflow-contracts';
 import { useI18n } from '@/i18n/useI18n';
 import { downloadDatasetVersion, testWorkflowNode } from '@/lib/api';
 import { workflowCategoryKey } from '@/lib/i18n-helpers';
@@ -89,6 +98,13 @@ interface WorkflowFlowNodeData {
   outputs: WorkflowPortDefinition[];
   params: Record<string, unknown>;
   inputBindings: Record<string, string>;
+  inputContracts: WorkflowNodeDefinition['inputContracts'];
+  outputContracts: WorkflowNodeDefinition['outputContracts'];
+  exampleInputs: WorkflowNodeDefinition['exampleInputs'];
+  exampleOutputs: WorkflowNodeDefinition['exampleOutputs'];
+  commonErrors: string[];
+  analysis: WorkflowNodeAnalysis;
+  statusLabel: string;
   canManage: boolean;
   inputLabel: string;
   outputLabel: string;
@@ -335,6 +351,53 @@ function NodePreviewCard({
   );
 }
 
+function ContractExampleCard({ example }: { example: WorkflowNodeExample }) {
+  const kindLabel =
+    example.kind === 'table'
+      ? 'table'
+      : example.kind === 'json'
+        ? 'json'
+        : 'text';
+
+  const payload =
+    example.kind === 'table'
+      ? {
+          columns: example.columns ?? [],
+          sampleRows: example.rows ?? [],
+        }
+      : example.kind === 'json'
+        ? JSON.parse(example.content ?? '{}')
+        : example.content ?? '';
+
+  return (
+    <div className="workflow-node-test-card">
+      <div className="workflow-node-test-card-head">
+        <strong>{example.title}</strong>
+        {example.portKey ? <Text type="secondary">{example.portKey}</Text> : null}
+        <Tag bordered={false}>{kindLabel}</Tag>
+      </div>
+      <pre className="json-block workflow-node-test-json">
+        {typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
+function InspectorPanelLabel({
+  title,
+  meta,
+}: {
+  title: string;
+  meta?: ReactNode;
+}) {
+  return (
+    <div className="workflow-inspector-panel-label">
+      <span>{title}</span>
+      {meta ? <span className="workflow-inspector-panel-meta">{meta}</span> : null}
+    </div>
+  );
+}
+
 function triggerOnEnterOrSpace(
   event: KeyboardEvent<HTMLElement>,
   callback: () => void,
@@ -402,7 +465,11 @@ function WorkflowEditorNode({
     .slice(0, 2);
 
   return (
-    <div className={`workflow-node-card${selected ? ' is-selected' : ''}`}>
+    <div
+      className={`workflow-node-card workflow-node-card-${data.analysis.tone}${
+        selected ? ' is-selected' : ''
+      }`}
+    >
       <div className="workflow-node-card-head">
         <div className="workflow-node-card-title-block">
           <strong className="workflow-node-card-title">{data.title}</strong>
@@ -410,7 +477,19 @@ function WorkflowEditorNode({
             {data.type}
           </div>
         </div>
-        <Tag color={categoryColor[data.category]}>{data.categoryLabel}</Tag>
+        <div className="workflow-node-card-badges">
+          <Tag bordered={false} color={data.analysis.tone}>
+            {data.statusLabel}
+          </Tag>
+          <Tag color={categoryColor[data.category]}>{data.categoryLabel}</Tag>
+        </div>
+      </div>
+
+      <div
+        className={`workflow-node-card-summary workflow-node-card-summary-${data.analysis.tone}`}
+        title={data.analysis.summary}
+      >
+        {data.analysis.summary}
       </div>
 
       {previewParams.length ? (
@@ -548,17 +627,65 @@ function buildInputBindings(edges: Edge[], nodeId: string): Record<string, strin
   return bindings;
 }
 
-function applyBindingsToNodes(
+function fallbackNodeAnalysis(
+  definition: WorkflowNodeDefinition | undefined,
+  nodeType: string,
+): WorkflowNodeAnalysis {
+  return {
+    state: 'ready',
+    tone: 'green',
+    summary: definition?.description ?? nodeType,
+    issues: [],
+  };
+}
+
+function hydrateFlowNodes(
   nodes: WorkflowFlowNode[],
   edges: Edge[],
+  definitions: WorkflowNodeDefinition[],
+  workflowVersion: WorkflowVersionDetail,
+  context: WorkflowEditorContext,
+  canManage: boolean,
+  t: ReturnType<typeof useI18n>['t'],
 ): WorkflowFlowNode[] {
-  return nodes.map((node) => ({
-    ...node,
-    data: {
-      ...node.data,
-      inputBindings: buildInputBindings(edges, node.id),
-    },
-  }));
+  const hydratedWorkflow = toWorkflowVersion(nodes, edges, workflowVersion);
+  const analysisByNodeId = analyzeWorkflowGraph(definitions, hydratedWorkflow, context);
+
+  return nodes.map((node) => {
+    const definition = getWorkflowDefinitionByType(definitions, node.data.type);
+    const analysis =
+      analysisByNodeId[node.id] ?? fallbackNodeAnalysis(definition, node.data.type);
+    const category = definition?.category ?? node.data.category;
+
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        title: definition?.label ?? node.data.title,
+        description: definition?.description ?? node.data.description,
+        category,
+        categoryLabel: t(workflowCategoryKey(category)),
+        inputs: definition?.inputs ?? node.data.inputs,
+        outputs: definition?.outputs ?? node.data.outputs,
+        params: {
+          ...(definition ? createDefaultParams(definition, context) : {}),
+          ...node.data.params,
+        },
+        inputBindings: buildInputBindings(edges, node.id),
+        inputContracts: definition?.inputContracts ?? node.data.inputContracts,
+        outputContracts: definition?.outputContracts ?? node.data.outputContracts,
+        exampleInputs: definition?.exampleInputs ?? node.data.exampleInputs,
+        exampleOutputs: definition?.exampleOutputs ?? node.data.exampleOutputs,
+        commonErrors: definition?.commonErrors ?? node.data.commonErrors,
+        analysis,
+        statusLabel: nodeStatusLabel(analysis, t),
+        canManage,
+        inputLabel: t('workflows.inputsLabel'),
+        outputLabel: t('workflows.outputsLabel'),
+        unboundLabel: t('workflows.unbound'),
+      },
+    };
+  });
 }
 
 function resolveNodeCollisions(nodes: WorkflowFlowNode[]): WorkflowFlowNode[] {
@@ -604,6 +731,22 @@ function resolveNodeCollisions(nodes: WorkflowFlowNode[]): WorkflowFlowNode[] {
   return positioned;
 }
 
+function nodeStatusLabel(
+  analysis: WorkflowNodeAnalysis,
+  t: ReturnType<typeof useI18n>['t'],
+): string {
+  if (analysis.state === 'ready') {
+    return t('workflows.nodeStatusReady');
+  }
+  if (analysis.state === 'missing_inputs') {
+    return t('workflows.nodeStatusMissingInputs');
+  }
+  if (analysis.state === 'invalid_params') {
+    return t('workflows.nodeStatusInvalidParams');
+  }
+  return t('workflows.nodeStatusSchemaMismatch');
+}
+
 function buildFlowNodes(
   definitions: WorkflowNodeDefinition[],
   workflowVersion: WorkflowVersionDetail,
@@ -611,10 +754,18 @@ function buildFlowNodes(
   canManage: boolean,
   t: ReturnType<typeof useI18n>['t'],
 ): WorkflowFlowNode[] {
+  const analysisByNodeId = analyzeWorkflowGraph(definitions, workflowVersion, context);
+
   return resolveNodeCollisions(
     workflowVersion.graph.nodes.map((node) => {
       const definition = getWorkflowDefinitionByType(definitions, node.type);
       const outputs = definition?.outputs ?? node.outputDefs;
+      const analysis = analysisByNodeId[node.id] ?? {
+        state: 'ready',
+        tone: 'green',
+        summary: definition?.description ?? node.type,
+        issues: [],
+      };
 
       return {
         id: node.id,
@@ -637,6 +788,13 @@ function buildFlowNodes(
             ...node.params,
           },
           inputBindings: node.inputBindings,
+          inputContracts: definition?.inputContracts ?? [],
+          outputContracts: definition?.outputContracts ?? [],
+          exampleInputs: definition?.exampleInputs ?? [],
+          exampleOutputs: definition?.exampleOutputs ?? [],
+          commonErrors: definition?.commonErrors ?? [],
+          analysis,
+          statusLabel: nodeStatusLabel(analysis, t),
           canManage,
           inputLabel: t('workflows.inputsLabel'),
           outputLabel: t('workflows.outputsLabel'),
@@ -813,6 +971,7 @@ function CanvasInner({
   const [nodes, setNodes] = useState<WorkflowFlowNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [activeInspectorPanels, setActiveInspectorPanels] = useState<string[]>([]);
   const [keyword, setKeyword] = useState('');
   const [selectedDataType, setSelectedDataType] = useState<WorkflowPortDataType | undefined>();
   const [selectedTask, setSelectedTask] = useState<string | undefined>();
@@ -828,19 +987,27 @@ function CanvasInner({
       nextEdges: Edge[],
       sync = false,
     ) => {
-      const boundNodes = applyBindingsToNodes(nextNodes, nextEdges);
-      nodesRef.current = boundNodes;
+      const hydratedNodes = hydrateFlowNodes(
+        nextNodes,
+        nextEdges,
+        definitions,
+        workflowVersionRef.current,
+        editorContext,
+        canManage,
+        t,
+      );
+      nodesRef.current = hydratedNodes;
       edgesRef.current = nextEdges;
-      setNodes(boundNodes);
+      setNodes(hydratedNodes);
       setEdges(nextEdges);
 
       if (sync && onWorkflowChange) {
         onWorkflowChange(
-          toWorkflowVersion(boundNodes, nextEdges, workflowVersionRef.current),
+          toWorkflowVersion(hydratedNodes, nextEdges, workflowVersionRef.current),
         );
       }
     },
-    [onWorkflowChange],
+    [canManage, definitions, editorContext, onWorkflowChange, t],
   );
 
   useEffect(() => {
@@ -863,6 +1030,15 @@ function CanvasInner({
 
   useEffect(() => {
     setNodeTestModalOpen(false);
+  }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setActiveInspectorPanels([]);
+      return;
+    }
+
+    setActiveInspectorPanels(['status', 'parameters', 'nodeTest']);
   }, [selectedNodeId]);
 
   useEffect(() => {
@@ -934,6 +1110,16 @@ function CanvasInner({
         .filter((group) => group.items.length > 0),
     [filteredDefinitions, t],
   );
+  const templateContractMap = useMemo(
+    () =>
+      new Map(
+        availableTemplates.map((template) => [
+          template.id,
+          getTemplateContractHints(template, definitions),
+        ]),
+      ),
+    [availableTemplates, definitions],
+  );
   const templateSampleMap = useMemo(
     () =>
       new Map(
@@ -943,6 +1129,10 @@ function CanvasInner({
         ]),
       ),
     [availableTemplates, datasetVersions, datasets, modelVersions],
+  );
+  const selectedNodeCsvExample = useMemo(
+    () => (selectedNode?.data.exampleInputs ?? []).find((item) => item.kind === 'table'),
+    [selectedNode],
   );
   const isValidConnection = useCallback<IsValidConnection>(
     (connection) =>
@@ -1067,6 +1257,13 @@ function CanvasInner({
         outputs: definition.outputs,
         params: createDefaultParams(definition, editorContext),
         inputBindings: {},
+        inputContracts: definition.inputContracts ?? [],
+        outputContracts: definition.outputContracts ?? [],
+        exampleInputs: definition.exampleInputs ?? [],
+        exampleOutputs: definition.exampleOutputs ?? [],
+        commonErrors: definition.commonErrors ?? [],
+        analysis: fallbackNodeAnalysis(definition, definition.type),
+        statusLabel: t('workflows.nodeStatusReady'),
         canManage,
         inputLabel: t('workflows.inputsLabel'),
         outputLabel: t('workflows.outputsLabel'),
@@ -1217,6 +1414,432 @@ function CanvasInner({
     }
   };
 
+  const onDownloadTemplateContract = (template: WorkflowTemplateDefinition) => {
+    const exampleInput = templateContractMap.get(template.id)?.exampleInput;
+    if (!exampleInput) {
+      return;
+    }
+
+    downloadExampleTableTemplate(`${template.id}-template`, exampleInput);
+  };
+
+  const onDownloadSelectedNodeTemplate = () => {
+    if (!selectedNode || !selectedNodeCsvExample) {
+      return;
+    }
+
+    downloadExampleTableTemplate(
+      `${selectedNode.data.type.replace(/\./g, '-')}-input-template`,
+      selectedNodeCsvExample,
+    );
+  };
+
+  const inspectorItems: CollapseProps['items'] =
+    !selectedNode || !selectedDefinition
+      ? []
+      : (() => {
+          const items: NonNullable<CollapseProps['items']> = [];
+
+          items.push({
+            key: 'status',
+            label: (
+              <InspectorPanelLabel
+                title={t('workflows.nodeStatusTitle')}
+                meta={
+                  <Tag bordered={false} color={selectedNode.data.analysis.tone}>
+                    {selectedNode.data.statusLabel}
+                  </Tag>
+                }
+              />
+            ),
+            children: (
+              <div className="workflow-node-status-card">
+                <div className="workflow-node-status-summary">
+                  {selectedNode.data.analysis.summary}
+                </div>
+                {selectedNode.data.analysis.issues.length ? (
+                  <div className="workflow-node-status-issues">
+                    <Text strong>{t('workflows.nodeStatusIssues')}</Text>
+                    {selectedNode.data.analysis.issues.map((issue) => (
+                      <div key={issue} className="workflow-node-status-issue">
+                        {issue}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ),
+          });
+
+          if (
+            selectedNode.data.inputContracts?.length ||
+            selectedNode.data.outputContracts?.length ||
+            selectedNode.data.commonErrors?.length
+          ) {
+            items.push({
+              key: 'contracts',
+              label: (
+                <InspectorPanelLabel
+                  title={t('workflows.contractInputTitle')}
+                  meta={
+                    (selectedNode.data.inputContracts?.length ?? 0) +
+                    (selectedNode.data.outputContracts?.length ?? 0) +
+                    (selectedNode.data.commonErrors?.length ?? 0)
+                  }
+                />
+              ),
+              children: (
+                <div className="workflow-inspector-section">
+                  {selectedNode.data.inputContracts?.length ? (
+                    <div className="workflow-contract-section">
+                      <Text className="workflow-inspector-section-title">
+                        {t('workflows.contractInputTitle')}
+                      </Text>
+                      {selectedNode.data.inputContracts.map((contract) => (
+                        <div key={`input-contract-${contract.portKey}`} className="workflow-contract-card">
+                          <strong>{contract.portKey}</strong>
+                          <div className="workflow-contract-copy">{contract.summary}</div>
+                          {contract.datasetKinds?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractDatasetKinds')}</Text>
+                              <div className="workflow-node-port-types">
+                                {contract.datasetKinds.map((item) => (
+                                  <Tag key={item} bordered={false} className="workflow-type-tag">
+                                    {item}
+                                  </Tag>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {contract.fileFormats?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractFileFormats')}</Text>
+                              <div className="workflow-node-port-types">
+                                {contract.fileFormats.map((item) => (
+                                  <Tag key={item} bordered={false} className="workflow-type-tag">
+                                    {item}
+                                  </Tag>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {contract.columnRequirements?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractColumnRequirements')}</Text>
+                              {contract.columnRequirements.map((item) => (
+                                <div key={item} className="workflow-contract-line">
+                                  {item}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {contract.sampleColumns?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractSampleColumns')}</Text>
+                              <div className="workflow-node-port-types">
+                                {contract.sampleColumns.map((item) => (
+                                  <Tag key={item} bordered={false} className="workflow-type-tag">
+                                    {item}
+                                  </Tag>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {contract.notes?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractNotes')}</Text>
+                              {contract.notes.map((item) => (
+                                <div key={item} className="workflow-contract-line">
+                                  {item}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {selectedNode.data.outputContracts?.length ? (
+                    <div className="workflow-contract-section">
+                      <Text className="workflow-inspector-section-title">
+                        {t('workflows.contractOutputTitle')}
+                      </Text>
+                      {selectedNode.data.outputContracts.map((contract) => (
+                        <div key={`output-contract-${contract.portKey}`} className="workflow-contract-card">
+                          <strong>{contract.portKey}</strong>
+                          <div className="workflow-contract-copy">{contract.summary}</div>
+                          {contract.producedColumns?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractProducedColumns')}</Text>
+                              <div className="workflow-node-port-types">
+                                {contract.producedColumns.map((item) => (
+                                  <Tag key={item} bordered={false} className="workflow-type-tag">
+                                    {item}
+                                  </Tag>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {contract.fileFormats?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractFileFormats')}</Text>
+                              <div className="workflow-node-port-types">
+                                {contract.fileFormats.map((item) => (
+                                  <Tag key={item} bordered={false} className="workflow-type-tag">
+                                    {item}
+                                  </Tag>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {contract.notes?.length ? (
+                            <div className="workflow-contract-field">
+                              <Text type="secondary">{t('workflows.contractNotes')}</Text>
+                              {contract.notes.map((item) => (
+                                <div key={item} className="workflow-contract-line">
+                                  {item}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {selectedNode.data.commonErrors?.length ? (
+                    <div className="workflow-contract-section">
+                      <Text className="workflow-inspector-section-title">
+                        {t('workflows.commonErrorsTitle')}
+                      </Text>
+                      <div className="workflow-contract-card">
+                        {selectedNode.data.commonErrors.map((item) => (
+                          <div key={item} className="workflow-contract-line">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ),
+            });
+          }
+
+          if (selectedNode.data.exampleInputs?.length || selectedNode.data.exampleOutputs?.length) {
+            items.push({
+              key: 'examples',
+              label: (
+                <InspectorPanelLabel
+                  title={t('workflows.contractExamplesTitle')}
+                  meta={
+                    (selectedNode.data.exampleInputs?.length ?? 0) +
+                    (selectedNode.data.exampleOutputs?.length ?? 0)
+                  }
+                />
+              ),
+              children: (
+                <div className="workflow-inspector-section">
+                  <div className="workflow-node-test-header">
+                    <Text className="workflow-inspector-section-title">
+                      {t('workflows.contractExamplesTitle')}
+                    </Text>
+                    {selectedNodeCsvExample ? (
+                      <Button size="small" onClick={onDownloadSelectedNodeTemplate}>
+                        {t('workflows.downloadContractTemplate')}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {selectedNode.data.exampleInputs?.length ? (
+                    <div className="workflow-contract-section">
+                      <Text strong>{t('workflows.nodeTestInput')}</Text>
+                      {selectedNode.data.exampleInputs.map((example) => (
+                        <ContractExampleCard
+                          key={`example-input-${example.title}-${example.portKey ?? 'none'}`}
+                          example={example}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                  {selectedNode.data.exampleOutputs?.length ? (
+                    <div className="workflow-contract-section">
+                      <Text strong>{t('workflows.nodeTestOutput')}</Text>
+                      {selectedNode.data.exampleOutputs.map((example) => (
+                        <ContractExampleCard
+                          key={`example-output-${example.title}-${example.portKey ?? 'none'}`}
+                          example={example}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ),
+            });
+          }
+
+          items.push({
+            key: 'ports',
+            label: (
+              <InspectorPanelLabel
+                title={`${t('workflows.inputsLabel')} / ${t('workflows.outputsLabel')}`}
+                meta={selectedNode.data.inputs.length + selectedNode.data.outputs.length}
+              />
+            ),
+            children: (
+              <div className="workflow-inspector-section">
+                <div className="workflow-contract-section">
+                  <Text className="workflow-inspector-section-title">{t('workflows.inputsLabel')}</Text>
+                  {selectedNode.data.inputs.length ? (
+                    selectedNode.data.inputs.map((port) => (
+                      <div key={port.key} className="workflow-binding-row workflow-binding-row-detail">
+                        <div>
+                          <strong>{port.label}</strong>
+                          <div className="workflow-node-port-types">
+                            {getDataTypeLabels(port).map((label) => (
+                              <Tag key={label} bordered={false} className="workflow-type-tag">
+                                {label}
+                              </Tag>
+                            ))}
+                          </div>
+                        </div>
+                        <span>
+                          {formatBindingSummary(selectedNode.data.inputBindings[port.key]) ||
+                            t('workflows.unbound')}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <Text type="secondary">{t('workflows.unbound')}</Text>
+                  )}
+                </div>
+
+                <div className="workflow-contract-section">
+                  <Text className="workflow-inspector-section-title">{t('workflows.outputsLabel')}</Text>
+                  {selectedNode.data.outputs.map((port) => (
+                    <div key={port.key} className="workflow-binding-row workflow-binding-row-detail">
+                      <div>
+                        <strong>{port.label}</strong>
+                        <div className="workflow-node-port-types">
+                          {getDataTypeLabels(port).map((label) => (
+                            <Tag key={label} bordered={false} className="workflow-type-tag">
+                              {label}
+                            </Tag>
+                          ))}
+                        </div>
+                      </div>
+                      <span>{port.key}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ),
+          });
+
+          items.push({
+            key: 'parameters',
+            label: (
+              <InspectorPanelLabel
+                title={t('workflows.parametersLabel')}
+                meta={selectedDefinition.params.length}
+              />
+            ),
+            children: (
+              <div className="workflow-inspector-section">
+                {selectedDefinition.params.length ? (
+                  selectedDefinition.params.map((field) => (
+                    <div key={field.key} className="workflow-parameter-field">
+                      <div className="workflow-parameter-head">
+                        <strong>{field.label}</strong>
+                        {field.description ? (
+                          <Text type="secondary">{field.description}</Text>
+                        ) : null}
+                      </div>
+                      <ParameterField
+                        definition={field}
+                        nodeType={selectedNode.data.type}
+                        value={selectedNode.data.params[field.key]}
+                        context={editorContext}
+                        onChange={(value) => updateSelectedNodeParams(field.key, value)}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  <Text type="secondary">{t('workflows.noParameters')}</Text>
+                )}
+              </div>
+            ),
+          });
+
+          items.push({
+            key: 'nodeTest',
+            label: (
+              <InspectorPanelLabel
+                title={t('workflows.nodeTestTitle')}
+                meta={
+                  selectedNodeTest ? (
+                    <Tag
+                      bordered={false}
+                      color={
+                        selectedNodeTest.status === 'succeeded'
+                          ? 'green'
+                          : selectedNodeTest.status === 'failed'
+                            ? 'red'
+                            : 'default'
+                      }
+                    >
+                      {selectedNodeTest.status === 'succeeded'
+                        ? t('workflows.nodeTestSuccess')
+                        : selectedNodeTest.status === 'failed'
+                          ? t('workflows.nodeTestFailure')
+                          : t('workflows.nodeTestNotSupported')}
+                    </Tag>
+                  ) : undefined
+                }
+              />
+            ),
+            children: (
+              <div className="workflow-inspector-section">
+                <Text type="secondary">{t('workflows.nodeTestCopy')}</Text>
+                <div className="workflow-node-test-actions">
+                  <Button
+                    type="primary"
+                    loading={nodeTestLoading}
+                    disabled={!canTest}
+                    onClick={() => void runSelectedNodeTest()}
+                  >
+                    {nodeTestLoading ? t('workflows.nodeTestRunning') : t('workflows.nodeTestRun')}
+                  </Button>
+                  {selectedNodeTest ? (
+                    <Text type="secondary">
+                      {t('workflows.nodeTestDuration')}: {selectedNodeTest.durationMs} ms
+                    </Text>
+                  ) : null}
+                  {selectedNodeTestIsStale ? (
+                    <Tag bordered={false} color="gold">
+                      {t('workflows.nodeTestStale')}
+                    </Tag>
+                  ) : null}
+                </div>
+
+                {!canTest ? (
+                  <Text type="secondary">{t('workflows.nodeTestUnavailable')}</Text>
+                ) : null}
+
+                {selectedNodeTest ? (
+                  <Button onClick={() => setNodeTestModalOpen(true)}>
+                    {t('workflows.nodeTestViewDetails')}
+                  </Button>
+                ) : (
+                  <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>
+                )}
+              </div>
+            ),
+          });
+
+          return items;
+        })();
+
   return (
     <div className="workflow-grid">
       <Card className="workflow-palette" variant="borderless">
@@ -1360,6 +1983,7 @@ function CanvasInner({
           <div className="workflow-template-grid">
             {availableTemplates.map((item) => {
               const sampleItems = templateSampleMap.get(item.id) ?? [];
+              const contractHints = templateContractMap.get(item.id);
               return (
                 <div key={item.id} className="workflow-library-item workflow-library-template-item">
                   <div className="workflow-library-item-head">
@@ -1374,6 +1998,23 @@ function CanvasInner({
                       </Tag>
                     ))}
                   </div>
+                  {contractHints?.lines.length ? (
+                    <div className="workflow-template-contracts">
+                      <Text className="workflow-inspector-section-title">
+                        {t('workflows.contractHighlights')}
+                      </Text>
+                      {contractHints.lines.map((line) => (
+                        <div key={line} className="workflow-template-contract-line">
+                          {line}
+                        </div>
+                      ))}
+                      {contractHints.exampleInput ? (
+                        <Button type="link" onClick={() => onDownloadTemplateContract(item)}>
+                          {t('workflows.downloadContractTemplate')}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {sampleItems.length ? (
                     <div className="workflow-template-samples">
                       <Text className="workflow-inspector-section-title">
@@ -1452,134 +2093,21 @@ function CanvasInner({
               </div>
             </div>
 
-            <div className="workflow-inspector-section">
-              <Text className="workflow-inspector-section-title">{t('workflows.inputsLabel')}</Text>
-              {selectedNode.data.inputs.length ? (
-                selectedNode.data.inputs.map((port) => (
-                  <div key={port.key} className="workflow-binding-row workflow-binding-row-detail">
-                    <div>
-                      <strong>{port.label}</strong>
-                      <div className="workflow-node-port-types">
-                        {getDataTypeLabels(port).map((label) => (
-                          <Tag key={label} bordered={false} className="workflow-type-tag">
-                            {label}
-                          </Tag>
-                        ))}
-                      </div>
-                    </div>
-                    <span>
-                      {formatBindingSummary(selectedNode.data.inputBindings[port.key]) ||
-                        t('workflows.unbound')}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <Text type="secondary">{t('workflows.unbound')}</Text>
-              )}
-            </div>
-
-            <div className="workflow-inspector-section">
-              <Text className="workflow-inspector-section-title">{t('workflows.outputsLabel')}</Text>
-              {selectedNode.data.outputs.map((port) => (
-                <div key={port.key} className="workflow-binding-row workflow-binding-row-detail">
-                  <div>
-                    <strong>{port.label}</strong>
-                    <div className="workflow-node-port-types">
-                      {getDataTypeLabels(port).map((label) => (
-                        <Tag key={label} bordered={false} className="workflow-type-tag">
-                          {label}
-                        </Tag>
-                      ))}
-                    </div>
-                  </div>
-                  <span>{port.key}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="workflow-inspector-section">
-              <Text className="workflow-inspector-section-title">{t('workflows.parametersLabel')}</Text>
-              {selectedDefinition.params.length ? (
-                selectedDefinition.params.map((field) => (
-                  <div key={field.key} className="workflow-parameter-field">
-                    <div className="workflow-parameter-head">
-                      <strong>{field.label}</strong>
-                      {field.description ? (
-                        <Text type="secondary">{field.description}</Text>
-                      ) : null}
-                    </div>
-                    <ParameterField
-                      definition={field}
-                      nodeType={selectedNode.data.type}
-                      value={selectedNode.data.params[field.key]}
-                      context={editorContext}
-                      onChange={(value) => updateSelectedNodeParams(field.key, value)}
-                    />
-                  </div>
-                ))
-              ) : (
-                <Text type="secondary">{t('workflows.noParameters')}</Text>
-              )}
-            </div>
-
-            <div className="workflow-inspector-section">
-              <div className="workflow-node-test-header">
-                <Text className="workflow-inspector-section-title">
-                  {t('workflows.nodeTestTitle')}
-                </Text>
-                {selectedNodeTest ? (
-                  <Tag
-                    bordered={false}
-                    color={
-                      selectedNodeTest.status === 'succeeded'
-                        ? 'green'
-                        : selectedNodeTest.status === 'failed'
-                          ? 'red'
-                          : 'default'
-                    }
-                  >
-                    {selectedNodeTest.status === 'succeeded'
-                      ? t('workflows.nodeTestSuccess')
-                      : selectedNodeTest.status === 'failed'
-                        ? t('workflows.nodeTestFailure')
-                        : t('workflows.nodeTestNotSupported')}
-                  </Tag>
-                ) : null}
-              </div>
-              <Text type="secondary">{t('workflows.nodeTestCopy')}</Text>
-              <div className="workflow-node-test-actions">
-                <Button
-                  type="primary"
-                  loading={nodeTestLoading}
-                  disabled={!canTest}
-                  onClick={() => void runSelectedNodeTest()}
-                >
-                  {nodeTestLoading ? t('workflows.nodeTestRunning') : t('workflows.nodeTestRun')}
-                </Button>
-                {selectedNodeTest ? (
-                  <Text type="secondary">
-                    {t('workflows.nodeTestDuration')}: {selectedNodeTest.durationMs} ms
-                  </Text>
-                ) : null}
-                {selectedNodeTestIsStale ? (
-                  <Tag bordered={false} color="gold">
-                    {t('workflows.nodeTestStale')}
-                  </Tag>
-                ) : null}
-              </div>
-
-              {!canTest ? (
-                <Text type="secondary">{t('workflows.nodeTestUnavailable')}</Text>
-              ) : null}
-
-              {selectedNodeTest ? (
-                <Button onClick={() => setNodeTestModalOpen(true)}>
-                  {t('workflows.nodeTestViewDetails')}
-                </Button>
-              ) : (
-                <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>
-              )}
-            </div>
+            <Collapse
+              ghost
+              className="workflow-inspector-collapse"
+              activeKey={activeInspectorPanels}
+              onChange={(keys) =>
+                setActiveInspectorPanels(
+                  Array.isArray(keys)
+                    ? keys.map(String)
+                    : keys
+                      ? [String(keys)]
+                      : [],
+                )
+              }
+              items={inspectorItems}
+            />
 
             {canManage ? (
               <Button danger onClick={removeSelectedNode}>
