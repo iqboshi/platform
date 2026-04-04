@@ -19,6 +19,32 @@ export type PermissionKey =
 export type DatasetKind = 'raster' | 'vector' | 'table' | 'artifact';
 export type DatasetStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
 export type WorkflowRunStatus = 'draft' | 'queued' | 'running' | 'succeeded' | 'failed';
+export type WorkflowNodeCategory = 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
+export type WorkflowPortDataType =
+  | 'dataset_version'
+  | 'table'
+  | 'raster'
+  | 'vector'
+  | 'roi'
+  | 'tile_set'
+  | 'label_set'
+  | 'model_ref'
+  | 'metrics_report'
+  | 'prediction_mask'
+  | 'prediction_vector'
+  | 'artifact';
+export type WorkflowParamFieldType =
+  | 'text'
+  | 'number'
+  | 'boolean'
+  | 'select'
+  | 'multiselect'
+  | 'datasetVersion'
+  | 'modelVersion';
+export type ModelAlgorithmKey =
+  | 'linear_regression'
+  | 'svm_regression'
+  | 'random_forest_regression';
 
 export interface AuthUser {
   id: string;
@@ -73,6 +99,7 @@ export interface DatasetSummary {
   name: string;
   kind: DatasetKind;
   status: DatasetStatus;
+  isPrivate?: boolean;
   bands?: number;
   projection?: string;
   footprint?: string;
@@ -88,14 +115,48 @@ export interface DatasetVersionSummary {
   previewUrl?: string;
   bbox?: [number, number, number, number];
   metadata: Record<string, unknown>;
+  isPrivate?: boolean;
   createdAt: string;
+}
+
+export interface WorkflowParamOption {
+  label: string;
+  value: string;
+}
+
+export interface WorkflowPortDefinition {
+  key: string;
+  label: string;
+  description?: string;
+  dataTypes: WorkflowPortDataType[];
+  required?: boolean;
+}
+
+export interface WorkflowParamDefinition {
+  key: string;
+  label: string;
+  fieldType: WorkflowParamFieldType;
+  description?: string;
+  defaultValue?: string | number | boolean | string[];
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: WorkflowParamOption[];
+  required?: boolean;
 }
 
 export interface WorkflowNodeCatalogItem {
   type: string;
   label: string;
-  category: 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
+  category: WorkflowNodeCategory;
   description: string;
+  runtimeKind: 'source' | 'transform' | 'inference' | 'export';
+  supportedTasks: string[];
+  tags: string[];
+  inputs: WorkflowPortDefinition[];
+  outputs: WorkflowPortDefinition[];
+  params: WorkflowParamDefinition[];
 }
 
 export interface WorkflowNode {
@@ -107,10 +168,7 @@ export interface WorkflowNode {
   };
   params: Record<string, unknown>;
   inputBindings: Record<string, string>;
-  outputDefs: Array<{
-    key: string;
-    label: string;
-  }>;
+  outputDefs: WorkflowPortDefinition[];
 }
 
 export interface WorkflowEdge {
@@ -132,6 +190,24 @@ export interface WorkflowVersionDetail {
   createdAt: string;
 }
 
+export interface WorkflowTemplateSampleBinding {
+  nodeId: string;
+  params: Record<string, unknown>;
+}
+
+export interface WorkflowTemplateDefinition {
+  id: string;
+  label: string;
+  description: string;
+  tags: string[];
+  supportedTasks: string[];
+  sampleBindings?: WorkflowTemplateSampleBinding[];
+  graph: {
+    nodes: WorkflowNode[];
+    edges: WorkflowEdge[];
+  };
+}
+
 export interface WorkflowRunSummary {
   id: string;
   workflowVersionId: string;
@@ -139,13 +215,21 @@ export interface WorkflowRunSummary {
   startedAt?: string;
   finishedAt?: string;
   submittedBy: string;
+  resultDatasetVersionId?: string;
+  metrics?: Record<string, unknown>;
 }
 
 export interface ModelVersionSummary {
   id: string;
   modelId: string;
+  modelName?: string;
+  algorithmKey?: string;
   version: string;
   framework: string;
   taskType: string;
+  featureNames?: string[];
+  defaultParameters?: Record<string, unknown>;
+  artifactFormat?: string;
+  metadata?: Record<string, unknown>;
   createdAt: string;
 }

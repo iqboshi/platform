@@ -1,6 +1,6 @@
 import type { PlatformDataSnapshot } from '@/lib/api';
 
-import { App, Button, Card, Col, Row, Select, Space, Table, Tag, Typography } from 'antd';
+import { App, Button, Card, Col, Row, Table, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 
 import { isApiError } from '@/auth/errors';
@@ -23,30 +23,33 @@ export function WorkflowsPage({
 }) {
   const { message } = App.useApp();
   const { hasPermission, token } = useAuth();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [draftWorkflowVersion, setDraftWorkflowVersion] = useState(snapshot.workflowVersion);
-  const [selectedDatasetVersionId, setSelectedDatasetVersionId] = useState<string | undefined>(
-    snapshot.datasetVersions[0]?.id,
-  );
-  const [selectedModelVersionId, setSelectedModelVersionId] = useState<string | undefined>(
-    snapshot.modelVersions[0]?.id,
-  );
   const stats = useMemo(
     () => buildWorkflowStats(snapshot.workflowCatalog, draftWorkflowVersion),
     [draftWorkflowVersion, snapshot.workflowCatalog],
+  );
+  const hasUnsavedChanges = useMemo(
+    () => JSON.stringify(draftWorkflowVersion.graph) !== JSON.stringify(snapshot.workflowVersion.graph),
+    [draftWorkflowVersion.graph, snapshot.workflowVersion.graph],
+  );
+  const runTableCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            resultDataset: '结果数据集',
+            metrics: '评测指标',
+          }
+        : {
+            resultDataset: 'Result Dataset',
+            metrics: 'Metrics',
+          },
+    [locale],
   );
 
   useEffect(() => {
     setDraftWorkflowVersion(snapshot.workflowVersion);
   }, [snapshot.workflowVersion]);
-
-  useEffect(() => {
-    setSelectedDatasetVersionId(snapshot.datasetVersions[0]?.id);
-  }, [snapshot.datasetVersions]);
-
-  useEffect(() => {
-    setSelectedModelVersionId(snapshot.modelVersions[0]?.id);
-  }, [snapshot.modelVersions]);
 
   const onValidate = async () => {
     if (!token) {
@@ -79,17 +82,18 @@ export function WorkflowsPage({
   };
 
   const onRun = async () => {
-    if (!token || !selectedDatasetVersionId || !selectedModelVersionId) {
+    if (!token) {
       return;
     }
     try {
-      await createWorkflowRun(
-        token,
-        draftWorkflowVersion,
-        selectedDatasetVersionId,
-        selectedModelVersionId,
-        snapshot.workspace.id,
-      );
+      let workflowVersionToRun = draftWorkflowVersion;
+
+      if (hasPermission('workflow.manage') && hasUnsavedChanges) {
+        workflowVersionToRun = await saveWorkflowVersion(token, draftWorkflowVersion);
+        setDraftWorkflowVersion(workflowVersionToRun);
+      }
+
+      await createWorkflowRun(token, workflowVersionToRun, snapshot.workspace.id);
       message.success(t('workflows.runCompleted'));
       await onRefresh();
     } catch (error) {
@@ -111,12 +115,12 @@ export function WorkflowsPage({
               <Button onClick={() => void onValidate()}>{t('workflows.validate')}</Button>
             ) : null}
             {hasPermission('workflow.manage') ? (
-              <Button onClick={() => void onSave()}>{t('common.submit')}</Button>
+              <Button onClick={() => void onSave()}>{t('workflows.save')}</Button>
             ) : null}
             {hasPermission('workflow.run') ? (
               <Button
                 type="primary"
-                disabled={!selectedDatasetVersionId || !selectedModelVersionId}
+                disabled={!draftWorkflowVersion.graph.nodes.length}
                 onClick={() => void onRun()}
               >
                 {t('workflows.run')}
@@ -150,42 +154,15 @@ export function WorkflowsPage({
         </Col>
       </Row>
 
-      <Card className="panel-card" variant="borderless">
-        <Space wrap size="large">
-          <div>
-            <div className="panel-kicker">{t('menu.datasets')}</div>
-            <Select
-              value={selectedDatasetVersionId}
-              onChange={setSelectedDatasetVersionId}
-              options={snapshot.datasetVersions.map((item) => ({
-                value: item.id,
-                label: `${item.id} / v${item.version}`,
-              }))}
-              style={{ minWidth: 260 }}
-            />
-          </div>
-          <div>
-            <div className="panel-kicker">{t('menu.models')}</div>
-            <Select
-              value={selectedModelVersionId}
-              onChange={setSelectedModelVersionId}
-              options={snapshot.modelVersions.map((item) => ({
-                value: item.id,
-                label: `${item.version} / ${item.framework}`,
-              }))}
-              style={{ minWidth: 220 }}
-            />
-          </div>
-        </Space>
-      </Card>
-
       <WorkflowCanvas
         catalog={snapshot.workflowCatalog}
+        templates={snapshot.workflowTemplates}
         workflowVersion={draftWorkflowVersion}
         canManage={hasPermission('workflow.manage')}
         datasets={snapshot.datasets}
         datasetVersions={snapshot.datasetVersions}
         modelVersions={snapshot.modelVersions}
+        downloadToken={token}
         onWorkflowChange={setDraftWorkflowVersion}
       />
 
@@ -208,6 +185,21 @@ export function WorkflowsPage({
               ),
             },
             { title: t('workflows.submittedBy'), dataIndex: 'submittedBy' },
+            {
+              title: runTableCopy.resultDataset,
+              dataIndex: 'resultDatasetVersionId',
+              render: (value: string | undefined) => value ?? '-',
+            },
+            {
+              title: runTableCopy.metrics,
+              dataIndex: 'metrics',
+              render: (metrics: Record<string, unknown> | undefined) =>
+                metrics && Object.keys(metrics).length ? (
+                  <pre className="json-block">{JSON.stringify(metrics, null, 2)}</pre>
+                ) : (
+                  '-'
+                ),
+            },
           ]}
         />
       </Card>

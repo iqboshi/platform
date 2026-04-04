@@ -9,12 +9,14 @@ from platform_backend.schemas.workflow import (
     WorkflowCatalogItem,
     WorkflowGraph,
     WorkflowSummary,
+    WorkflowTemplateDefinition,
     WorkflowValidationResult,
     WorkflowVersionSummary,
 )
 from platform_backend.services.platform_store import (
     get_current_workflow_version,
     list_workflow_catalog,
+    list_workflow_templates,
     list_workflows,
     save_current_workflow_version,
 )
@@ -40,6 +42,15 @@ def list_workflows_route(db: DatabaseDep) -> list[WorkflowSummary]:
 )
 def list_catalog() -> list[WorkflowCatalogItem]:
     return list_workflow_catalog()
+
+
+@router.get(
+    "/templates",
+    response_model=list[WorkflowTemplateDefinition],
+    dependencies=[Depends(require_permission("workflow.view"))],
+)
+def list_templates() -> list[WorkflowTemplateDefinition]:
+    return list_workflow_templates()
 
 
 @router.get(

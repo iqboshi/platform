@@ -242,7 +242,7 @@ function AppShell({
                 path="/models"
                 element={
                   <RequirePermission permission="model.view">
-                    <ModelsPage snapshot={snapshot} />
+                    <ModelsPage snapshot={snapshot} onRefresh={onRefresh} />
                   </RequirePermission>
                 }
               />

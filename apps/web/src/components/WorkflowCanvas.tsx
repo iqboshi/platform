@@ -3,18 +3,23 @@ import type {
   DatasetVersionSummary,
   ModelVersionSummary,
   WorkflowNodeCatalogItem,
+  WorkflowParamDefinition,
+  WorkflowPortDataType,
+  WorkflowPortDefinition,
+  WorkflowTemplateDefinition,
   WorkflowVersionDetail,
 } from '@platform/types';
 import type {
   Connection,
   Edge,
   EdgeChange,
+  IsValidConnection,
   Node,
   NodeChange,
   NodeProps,
 } from '@xyflow/react';
 
-import { App, Button, Card, Empty, Input, InputNumber, List, Select, Switch, Tag, Typography } from 'antd';
+import { App, Button, Card, Empty, Input, InputNumber, Select, Switch, Tag, Typography } from 'antd';
 import {
   addEdge,
   applyEdgeChanges,
@@ -29,24 +34,30 @@ import {
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react';
 
 import {
+  canConnectPorts,
+  catalogMatchesFilters,
   createDefaultParams,
-  enrichWorkflowCatalog,
+  getDataTypeLabels,
   getWorkflowDefinitionByType,
+  instantiateTemplateGraph,
   resolveParameterOptions,
   type WorkflowEditorContext,
   type WorkflowNodeDefinition,
-  type WorkflowParamDefinition,
-  type WorkflowPortDefinition,
 } from '@/features/workflows/node-registry';
 import { useI18n } from '@/i18n/useI18n';
-import {
-  workflowCategoryKey,
-  workflowNodeDescriptionKey,
-  workflowNodeLabelKey,
-} from '@/lib/i18n-helpers';
+import { downloadDatasetVersion } from '@/lib/api';
+import { workflowCategoryKey } from '@/lib/i18n-helpers';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -57,6 +68,14 @@ const categoryColor: Record<WorkflowNodeDefinition['category'], string> = {
   inference: '#1d4ed8',
   postprocess: '#7c3aed',
 };
+
+const categoryOrder: WorkflowNodeDefinition['category'][] = [
+  'source',
+  'preprocess',
+  'split',
+  'inference',
+  'postprocess',
+];
 
 interface WorkflowFlowNodeData {
   [key: string]: unknown;
@@ -77,6 +96,14 @@ interface WorkflowFlowNodeData {
 
 type WorkflowFlowNode = Node<WorkflowFlowNodeData, 'workflowNode'>;
 
+interface TemplateSampleItem {
+  key: string;
+  kind: 'dataset' | 'model';
+  label: string;
+  value: string;
+  datasetVersionId?: string;
+}
+
 function formatBindingSummary(binding: string | undefined): string {
   if (!binding) {
     return '';
@@ -87,6 +114,13 @@ function formatBindingSummary(binding: string | undefined): string {
 }
 
 function summarizeParamValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    const rendered = value
+      .filter((item): item is string | number | boolean => ['string', 'number', 'boolean'].includes(typeof item))
+      .map((item) => String(item))
+      .join(', ');
+    return rendered.length > 22 ? `${rendered.slice(0, 19)}...` : rendered;
+  }
   if (typeof value === 'boolean') {
     return value ? 'On' : 'Off';
   }
@@ -99,10 +133,67 @@ function summarizeParamValue(value: unknown): string {
   return '';
 }
 
+function triggerOnEnterOrSpace(
+  event: KeyboardEvent<HTMLElement>,
+  callback: () => void,
+): void {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    callback();
+  }
+}
+
+function describeTemplateSampleInputs(
+  template: WorkflowTemplateDefinition,
+  datasets: DatasetSummary[],
+  datasetVersions: DatasetVersionSummary[],
+  modelVersions: ModelVersionSummary[],
+): TemplateSampleItem[] {
+  const datasetNames = new Map(datasets.map((item) => [item.id, item.name]));
+  const items: TemplateSampleItem[] = [];
+
+  for (const binding of template.sampleBindings ?? []) {
+    const datasetVersionId =
+      typeof binding.params.datasetVersionId === 'string' ? binding.params.datasetVersionId : undefined;
+    const modelVersionId =
+      typeof binding.params.modelVersionId === 'string' ? binding.params.modelVersionId : undefined;
+
+    if (datasetVersionId) {
+      const datasetVersion = datasetVersions.find((item) => item.id === datasetVersionId);
+      if (datasetVersion) {
+        items.push({
+          key: `${binding.nodeId}:${datasetVersionId}`,
+          kind: 'dataset',
+          label: binding.nodeId,
+          value: `${datasetNames.get(datasetVersion.datasetId) ?? datasetVersion.datasetId} / v${datasetVersion.version}`,
+          datasetVersionId: datasetVersion.id,
+        });
+      }
+    }
+
+    if (modelVersionId) {
+      const modelVersion = modelVersions.find((item) => item.id === modelVersionId);
+      if (modelVersion) {
+        items.push({
+          key: `${binding.nodeId}:${modelVersionId}`,
+          kind: 'model',
+          label: binding.nodeId,
+          value: `${modelVersion.modelName ?? modelVersion.modelId} / ${modelVersion.version}`,
+        });
+      }
+    }
+  }
+
+  return items;
+}
+
 function WorkflowEditorNode({
   data,
   selected,
 }: NodeProps<WorkflowFlowNode>) {
+  const inputRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const outputRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [handleOffsets, setHandleOffsets] = useState<Record<string, number>>({});
   const previewParams = Object.entries(data.params)
     .map(([key, value]) => ({
       key,
@@ -110,6 +201,34 @@ function WorkflowEditorNode({
     }))
     .filter((item) => item.value)
     .slice(0, 2);
+
+  useLayoutEffect(() => {
+    const nextOffsets: Record<string, number> = {};
+
+    for (const [portKey, element] of Object.entries(inputRowRefs.current)) {
+      if (element) {
+        nextOffsets[`input:${portKey}`] = element.offsetTop + element.offsetHeight / 2;
+      }
+    }
+
+    for (const [portKey, element] of Object.entries(outputRowRefs.current)) {
+      if (element) {
+        nextOffsets[`output:${portKey}`] = element.offsetTop + element.offsetHeight / 2;
+      }
+    }
+
+    setHandleOffsets((current) => {
+      const currentEntries = Object.entries(current);
+      const nextEntries = Object.entries(nextOffsets);
+      if (
+        currentEntries.length === nextEntries.length &&
+        nextEntries.every(([key, value]) => current[key] === value)
+      ) {
+        return current;
+      }
+      return nextOffsets;
+    });
+  }, [data.inputBindings, data.inputs, data.outputs, data.params]);
 
   return (
     <div className={`workflow-node-card${selected ? ' is-selected' : ''}`}>
@@ -136,19 +255,32 @@ function WorkflowEditorNode({
         <div className="workflow-node-port-title">{data.inputLabel}</div>
         {data.inputs.length ? (
           data.inputs.map((port) => (
-            <div key={port.key} className="workflow-node-port-row">
+            <div
+              key={port.key}
+              className="workflow-node-port-row"
+              ref={(element) => {
+                inputRowRefs.current[port.key] = element;
+              }}
+            >
               <Handle
                 type="target"
                 position={Position.Left}
                 id={port.key}
                 isConnectable={data.canManage}
                 className="workflow-handle workflow-handle-target"
-                style={{ top: '50%' }}
+                style={{ top: handleOffsets[`input:${port.key}`] }}
               />
-              <div>
+              <div className="workflow-node-port-copy">
                 <div className="workflow-node-port-label">{port.label}</div>
                 <div className="workflow-node-port-binding">
                   {formatBindingSummary(data.inputBindings[port.key]) || data.unboundLabel}
+                </div>
+                <div className="workflow-node-port-types">
+                  {getDataTypeLabels(port).map((label) => (
+                    <Tag key={label} bordered={false} className="workflow-type-tag">
+                      {label}
+                    </Tag>
+                  ))}
                 </div>
               </div>
             </div>
@@ -162,15 +294,30 @@ function WorkflowEditorNode({
         <div className="workflow-node-port-title">{data.outputLabel}</div>
         {data.outputs.length ? (
           data.outputs.map((port) => (
-            <div key={port.key} className="workflow-node-port-row workflow-node-port-row-output">
-              <div className="workflow-node-port-label">{port.label}</div>
+            <div
+              key={port.key}
+              className="workflow-node-port-row workflow-node-port-row-output"
+              ref={(element) => {
+                outputRowRefs.current[port.key] = element;
+              }}
+            >
+              <div className="workflow-node-port-copy">
+                <div className="workflow-node-port-label">{port.label}</div>
+                <div className="workflow-node-port-types">
+                  {getDataTypeLabels(port).map((label) => (
+                    <Tag key={label} bordered={false} className="workflow-type-tag">
+                      {label}
+                    </Tag>
+                  ))}
+                </div>
+              </div>
               <Handle
                 type="source"
                 position={Position.Right}
                 id={port.key}
                 isConnectable={data.canManage}
                 className="workflow-handle workflow-handle-source"
-                style={{ top: '50%' }}
+                style={{ top: handleOffsets[`output:${port.key}`] }}
               />
             </div>
           ))
@@ -317,8 +464,8 @@ function buildFlowNodes(
         selectable: true,
         data: {
           type: node.type,
-          title: t(workflowNodeLabelKey(node.type)),
-          description: t(workflowNodeDescriptionKey(node.type)),
+          title: definition?.label ?? node.type,
+          description: definition?.description ?? node.type,
           category: definition?.category ?? 'source',
           categoryLabel: t(
             workflowCategoryKey(definition?.category ?? 'source'),
@@ -384,6 +531,9 @@ function toWorkflowVersion(
         outputDefs: node.data.outputs.map((port) => ({
           key: port.key,
           label: port.label,
+          description: port.description,
+          dataTypes: port.dataTypes,
+          required: port.required,
         })),
       })),
       edges: edges.map((edge) => ({
@@ -399,16 +549,18 @@ function toWorkflowVersion(
 
 function ParameterField({
   definition,
+  nodeType,
   value,
   context,
   onChange,
 }: {
   definition: WorkflowParamDefinition;
+  nodeType: string;
   value: unknown;
   context: WorkflowEditorContext;
   onChange: (value: unknown) => void;
 }) {
-  const options = resolveParameterOptions(definition, context);
+  const options = resolveParameterOptions(definition, context, nodeType);
 
   switch (definition.fieldType) {
     case 'boolean':
@@ -434,9 +586,19 @@ function ParameterField({
     case 'modelVersion':
       return (
         <Select
+          showSearch
           value={typeof value === 'string' ? value : undefined}
           options={options}
           onChange={onChange}
+        />
+      );
+    case 'multiselect':
+      return (
+        <Select
+          mode="multiple"
+          value={Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []}
+          options={options}
+          onChange={(nextValue) => onChange(nextValue)}
         />
       );
     default:
@@ -452,19 +614,23 @@ function ParameterField({
 
 function CanvasInner({
   catalog,
+  templates,
   workflowVersion,
   canManage,
   datasets,
   datasetVersions,
   modelVersions,
+  downloadToken,
   onWorkflowChange,
 }: {
   catalog: WorkflowNodeCatalogItem[];
+  templates: WorkflowTemplateDefinition[];
   workflowVersion: WorkflowVersionDetail;
   canManage: boolean;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
   modelVersions: ModelVersionSummary[];
+  downloadToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
   const { message } = App.useApp();
@@ -480,10 +646,14 @@ function CanvasInner({
     }),
     [datasetVersions, datasets, modelVersions],
   );
-  const definitions = useMemo(() => enrichWorkflowCatalog(catalog), [catalog]);
+  const definitions = useMemo(() => catalog as WorkflowNodeDefinition[], [catalog]);
+  const availableTemplates = useMemo(() => templates, [templates]);
   const [nodes, setNodes] = useState<WorkflowFlowNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const [keyword, setKeyword] = useState('');
+  const [selectedDataType, setSelectedDataType] = useState<WorkflowPortDataType | undefined>();
+  const [selectedTask, setSelectedTask] = useState<string | undefined>();
   const nodesRef = useRef<WorkflowFlowNode[]>([]);
   const edgesRef = useRef<Edge[]>([]);
 
@@ -544,6 +714,75 @@ function CanvasInner({
       selectedNode ? getWorkflowDefinitionByType(definitions, selectedNode.data.type) : undefined,
     [definitions, selectedNode],
   );
+  const availableDataTypes = useMemo(
+    () =>
+      [
+        ...new Set(
+          definitions.flatMap((definition) =>
+            [...definition.inputs, ...definition.outputs].flatMap((port) => port.dataTypes),
+          ),
+        ),
+      ],
+    [definitions],
+  );
+  const availableTasks = useMemo(
+    () => [...new Set(definitions.flatMap((definition) => definition.supportedTasks))],
+    [definitions],
+  );
+  const filteredDefinitions = useMemo(
+    () =>
+      definitions.filter((definition) =>
+        !definition.tags.includes('legacy') &&
+        catalogMatchesFilters(definition, {
+          keyword,
+          dataType: selectedDataType,
+          task: selectedTask,
+        }),
+      ),
+    [definitions, keyword, selectedDataType, selectedTask],
+  );
+  const groupedDefinitions = useMemo(
+    () =>
+      categoryOrder
+        .map((category) => ({
+          category,
+          label: t(workflowCategoryKey(category)),
+          items: filteredDefinitions.filter((definition) => definition.category === category),
+        }))
+        .filter((group) => group.items.length > 0),
+    [filteredDefinitions, t],
+  );
+  const templateSampleMap = useMemo(
+    () =>
+      new Map(
+        availableTemplates.map((template) => [
+          template.id,
+          describeTemplateSampleInputs(template, datasets, datasetVersions, modelVersions),
+        ]),
+      ),
+    [availableTemplates, datasetVersions, datasets, modelVersions],
+  );
+  const isValidConnection = useCallback<IsValidConnection>(
+    (connection) =>
+      canConnectPorts(
+        definitions,
+        nodesRef.current.map((node) => ({
+          id: node.id,
+          type: node.data.type,
+          position: node.position,
+          params: node.data.params,
+          inputBindings: node.data.inputBindings,
+          outputDefs: node.data.outputs,
+        })),
+        {
+          source: connection.source,
+          sourceHandle: connection.sourceHandle ?? null,
+          target: connection.target,
+          targetHandle: connection.targetHandle ?? null,
+        },
+      ),
+    [definitions],
+  );
 
   const onNodesChange = (changes: NodeChange<WorkflowFlowNode>[]) => {
     const nextNodes = applyNodeChanges(changes, nodesRef.current);
@@ -571,6 +810,11 @@ function CanvasInner({
 
   const onConnect = (connection: Connection) => {
     if (!canManage) {
+      return;
+    }
+
+    if (!isValidConnection(connection)) {
+      message.warning(t('workflows.connectionTypeMismatch'));
       return;
     }
 
@@ -633,8 +877,8 @@ function CanvasInner({
       selectable: true,
       data: {
         type: definition.type,
-        title: t(workflowNodeLabelKey(definition.type)),
-        description: t(workflowNodeDescriptionKey(definition.type)),
+        title: definition.label,
+        description: definition.description,
         category: definition.category,
         categoryLabel: t(workflowCategoryKey(definition.category)),
         inputs: definition.inputs,
@@ -650,6 +894,59 @@ function CanvasInner({
 
     commitGraphState([...nodesRef.current, nextNode], edgesRef.current, true);
     setSelectedNodeId(newId);
+  };
+
+  const insertTemplate = (
+    template: WorkflowTemplateDefinition,
+    options?: { useSampleBindings?: boolean },
+  ) => {
+    if (!canManage) {
+      return;
+    }
+
+    const wrapper = canvasWrapperRef.current;
+    const anchorPosition = wrapper
+      ? screenToFlowPosition({
+          x: wrapper.clientWidth / 2 - 280,
+          y: wrapper.clientHeight / 2 - 180,
+        })
+      : {
+          x: 120,
+          y: 120,
+        };
+
+    const graph = instantiateTemplateGraph(
+      template,
+      definitions,
+      editorContext,
+      anchorPosition,
+      options,
+    );
+    const flowNodes = buildFlowNodes(
+      definitions,
+      {
+        ...workflowVersionRef.current,
+        graph,
+      },
+      editorContext,
+      canManage,
+      t,
+    );
+    const flowEdges = buildFlowEdges(definitions, {
+      ...workflowVersionRef.current,
+      graph,
+    });
+
+    commitGraphState(
+      [...nodesRef.current, ...flowNodes],
+      [...edgesRef.current, ...flowEdges],
+      true,
+    );
+    message.success(
+      `${t('workflows.insertTemplateSuccess')}: ${template.label}${
+        options?.useSampleBindings ? ` (${t('workflows.useSampleInputs')})` : ''
+      }`,
+    );
   };
 
   const updateSelectedNodeParams = (paramKey: string, value: unknown) => {
@@ -692,66 +989,227 @@ function CanvasInner({
     message.success(t('workflows.nodeRemoved'));
   };
 
+  const clearCanvas = () => {
+    if (!canManage || (nodesRef.current.length === 0 && edgesRef.current.length === 0)) {
+      return;
+    }
+
+    setSelectedNodeId(undefined);
+    commitGraphState([], [], true);
+    message.success(t('workflows.canvasCleared'));
+  };
+
+  const onDownloadTemplateSample = async (datasetVersionId: string) => {
+    if (!downloadToken) {
+      message.error(t('error.request_failed'));
+      return;
+    }
+
+    try {
+      await downloadDatasetVersion(downloadToken, datasetVersionId);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('error.request_failed'));
+    }
+  };
+
   return (
     <div className="workflow-grid">
       <Card className="workflow-palette" variant="borderless">
         <Text className="panel-kicker">{t('workflows.nodeLibrary')}</Text>
         <Paragraph className="panel-title">{t('workflows.nodeLibraryCopy')}</Paragraph>
+        <div className="workflow-library-filters">
+          <Input
+            allowClear
+            placeholder={t('workflows.searchNodes')}
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+          />
+          <Select
+            allowClear
+            placeholder={t('workflows.filterByDataType')}
+            value={selectedDataType}
+            onChange={setSelectedDataType}
+            options={availableDataTypes.map((dataType) => ({
+              value: dataType,
+              label: dataType.replace(/_/g, ' '),
+            }))}
+          />
+          <Select
+            allowClear
+            placeholder={t('workflows.filterByTask')}
+            value={selectedTask}
+            onChange={setSelectedTask}
+            options={availableTasks.map((task) => ({
+              value: task,
+              label: task.replace(/_/g, ' '),
+            }))}
+          />
+        </div>
         {!canManage ? (
           <Paragraph className="catalog-readonly-hint">{t('workflows.readOnlyHint')}</Paragraph>
         ) : null}
-        <List
-          dataSource={definitions}
-          renderItem={(item) => (
-            <List.Item
-              className={`catalog-item${canManage ? '' : ' catalog-item-disabled'}`}
-              onClick={() => addNode(item)}
-            >
-              <div>
-                <strong>{t(workflowNodeLabelKey(item.type))}</strong>
-                <Paragraph className="catalog-copy">
-                  {t(workflowNodeDescriptionKey(item.type))}
-                </Paragraph>
-              </div>
-              <Tag color={categoryColor[item.category]}>{t(workflowCategoryKey(item.category))}</Tag>
-            </List.Item>
+        <div className="workflow-library-scroll">
+          {groupedDefinitions.length ? (
+            groupedDefinitions.map((group) => (
+              <section key={group.category} className="workflow-library-group">
+                <div className="workflow-library-group-head">
+                  <div className="workflow-library-group-title">
+                    <Tag color={categoryColor[group.category]}>{group.label}</Tag>
+                  </div>
+                  <Text type="secondary">{group.items.length}</Text>
+                </div>
+                <div className="workflow-library-grid">
+                  {group.items.map((item) => (
+                    <div
+                      key={item.type}
+                      role="button"
+                      tabIndex={canManage ? 0 : -1}
+                      aria-disabled={!canManage}
+                      className={`workflow-library-item${
+                        canManage ? '' : ' workflow-library-item-disabled'
+                      }`}
+                      onClick={() => addNode(item)}
+                      onKeyDown={(event) => triggerOnEnterOrSpace(event, () => addNode(item))}
+                    >
+                      <div className="workflow-library-item-head">
+                        <div className="workflow-library-item-type">{item.type}</div>
+                        <strong className="workflow-library-item-title">{item.label}</strong>
+                      </div>
+                      <Paragraph className="workflow-library-item-copy">
+                        {item.description}
+                      </Paragraph>
+                      <div className="workflow-node-parameter-preview">
+                        {[...item.tags.slice(0, 2), ...item.supportedTasks.slice(0, 1)].map((tag) => (
+                          <Tag key={tag} bordered={false} className="workflow-type-tag">
+                            {tag}
+                          </Tag>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={t('workflows.searchNodes')}
+            />
           )}
-        />
+        </div>
       </Card>
 
-      <Card className="workflow-canvas-card" variant="borderless">
-        <div className="workflow-canvas-toolbar">
-          <Text className="panel-kicker">
-            {t('workflows.nodesLabel')}: {nodes.length}
-          </Text>
-          <Button onClick={() => void fitView({ padding: 0.12, duration: 180, maxZoom: 0.88 })}>
-            {t('workflows.centerView')}
-          </Button>
-        </div>
-        <div ref={canvasWrapperRef} className="workflow-canvas">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            nodesDraggable={canManage}
-            nodesConnectable={canManage}
-            elementsSelectable
-            fitView
-            fitViewOptions={{ padding: 0.12, maxZoom: 0.88 }}
-            minZoom={0.4}
-            maxZoom={1.2}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onPaneClick={() => setSelectedNodeId(undefined)}
-          >
-            <Background gap={20} color="#d6d3d1" />
-            <MiniMap zoomable pannable />
-            <Controls />
-          </ReactFlow>
-        </div>
-      </Card>
+      <div className="workflow-canvas-stack">
+        <Card className="workflow-canvas-card" variant="borderless">
+          <div className="workflow-canvas-toolbar">
+            <Text className="panel-kicker">
+              {t('workflows.nodesLabel')}: {nodes.length}
+            </Text>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button
+                danger
+                disabled={!canManage || (nodes.length === 0 && edges.length === 0)}
+                onClick={clearCanvas}
+              >
+                {t('workflows.clearCanvas')}
+              </Button>
+              <Button onClick={() => void fitView({ padding: 0.12, duration: 180, maxZoom: 0.88 })}>
+                {t('workflows.centerView')}
+              </Button>
+            </div>
+          </div>
+          <div ref={canvasWrapperRef} className="workflow-canvas">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              nodesDraggable={canManage}
+              nodesConnectable={canManage}
+              elementsSelectable
+              fitView
+              fitViewOptions={{ padding: 0.12, maxZoom: 0.88 }}
+              minZoom={0.4}
+              maxZoom={1.2}
+              isValidConnection={isValidConnection}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+              onPaneClick={() => setSelectedNodeId(undefined)}
+            >
+              <Background gap={20} color="#d6d3d1" />
+              <MiniMap zoomable pannable />
+              <Controls />
+            </ReactFlow>
+          </div>
+        </Card>
+
+        <Card className="workflow-template-panel" variant="borderless">
+          <div className="workflow-library-group-head">
+            <div>
+              <Text className="panel-kicker">{t('workflows.templates')}</Text>
+              <Paragraph className="panel-title">{t('workflows.templatePanelCopy')}</Paragraph>
+            </div>
+            <Text type="secondary">{availableTemplates.length}</Text>
+          </div>
+          <div className="workflow-template-grid">
+            {availableTemplates.map((item) => {
+              const sampleItems = templateSampleMap.get(item.id) ?? [];
+              return (
+                <div key={item.id} className="workflow-library-item workflow-library-template-item">
+                  <div className="workflow-library-item-head">
+                    <div className="workflow-library-item-type">{item.id}</div>
+                    <strong className="workflow-library-item-title">{item.label}</strong>
+                  </div>
+                  <Paragraph className="workflow-library-item-copy">{item.description}</Paragraph>
+                  <div className="workflow-node-parameter-preview">
+                    {item.tags.map((tag) => (
+                      <Tag key={tag} bordered={false} className="workflow-type-tag">
+                        {tag}
+                      </Tag>
+                    ))}
+                  </div>
+                  {sampleItems.length ? (
+                    <div className="workflow-template-samples">
+                      <Text className="workflow-inspector-section-title">
+                        {t('workflows.sampleInputs')}
+                      </Text>
+                      {sampleItems.map((sample) => (
+                        <div key={sample.key} className="workflow-template-sample-row">
+                          <div>
+                            <strong>{sample.kind === 'dataset' ? t('workflows.sampleDataset') : t('workflows.sampleModel')}</strong>
+                            <div className="workflow-library-item-copy">{sample.value}</div>
+                          </div>
+                          {sample.datasetVersionId ? (
+                            <Button
+                              type="link"
+                              onClick={() => void onDownloadTemplateSample(sample.datasetVersionId!)}
+                            >
+                              {t('workflows.downloadSampleInput')}
+                            </Button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="workflow-template-actions">
+                    <Button
+                      type="primary"
+                      disabled={!canManage}
+                      onClick={() => insertTemplate(item, { useSampleBindings: true })}
+                    >
+                      {t('workflows.useSampleInputs')}
+                    </Button>
+                    <Button disabled={!canManage} onClick={() => insertTemplate(item)}>
+                      {t('workflows.insertBlankTemplate')}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
 
       <Card className="workflow-inspector" variant="borderless">
         <Text className="panel-kicker">{t('workflows.inspector')}</Text>
@@ -793,8 +1251,17 @@ function CanvasInner({
               <Text className="workflow-inspector-section-title">{t('workflows.inputsLabel')}</Text>
               {selectedNode.data.inputs.length ? (
                 selectedNode.data.inputs.map((port) => (
-                  <div key={port.key} className="workflow-binding-row">
-                    <strong>{port.label}</strong>
+                  <div key={port.key} className="workflow-binding-row workflow-binding-row-detail">
+                    <div>
+                      <strong>{port.label}</strong>
+                      <div className="workflow-node-port-types">
+                        {getDataTypeLabels(port).map((label) => (
+                          <Tag key={label} bordered={false} className="workflow-type-tag">
+                            {label}
+                          </Tag>
+                        ))}
+                      </div>
+                    </div>
                     <span>
                       {formatBindingSummary(selectedNode.data.inputBindings[port.key]) ||
                         t('workflows.unbound')}
@@ -809,8 +1276,17 @@ function CanvasInner({
             <div className="workflow-inspector-section">
               <Text className="workflow-inspector-section-title">{t('workflows.outputsLabel')}</Text>
               {selectedNode.data.outputs.map((port) => (
-                <div key={port.key} className="workflow-binding-row">
-                  <strong>{port.label}</strong>
+                <div key={port.key} className="workflow-binding-row workflow-binding-row-detail">
+                  <div>
+                    <strong>{port.label}</strong>
+                    <div className="workflow-node-port-types">
+                      {getDataTypeLabels(port).map((label) => (
+                        <Tag key={label} bordered={false} className="workflow-type-tag">
+                          {label}
+                        </Tag>
+                      ))}
+                    </div>
+                  </div>
                   <span>{port.key}</span>
                 </div>
               ))}
@@ -829,6 +1305,7 @@ function CanvasInner({
                     </div>
                     <ParameterField
                       definition={field}
+                      nodeType={selectedNode.data.type}
                       value={selectedNode.data.params[field.key]}
                       context={editorContext}
                       onChange={(value) => updateSelectedNodeParams(field.key, value)}
@@ -854,11 +1331,13 @@ function CanvasInner({
 
 export function WorkflowCanvas(props: {
   catalog: WorkflowNodeCatalogItem[];
+  templates: WorkflowTemplateDefinition[];
   workflowVersion: WorkflowVersionDetail;
   canManage: boolean;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
   modelVersions: ModelVersionSummary[];
+  downloadToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
   return (

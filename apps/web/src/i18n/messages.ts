@@ -113,6 +113,7 @@ export type TranslationKey =
   | 'workflows.categoriesLabel'
   | 'workflows.categoriesDetail'
   | 'workflows.validate'
+  | 'workflows.save'
   | 'workflows.run'
   | 'workflows.validateSuccess'
   | 'workflows.validateFailure'
@@ -126,7 +127,14 @@ export type TranslationKey =
   | 'workflows.nodeLibrary'
   | 'workflows.nodeLibraryCopy'
   | 'workflows.readOnlyHint'
+  | 'workflows.searchNodes'
+  | 'workflows.filterByDataType'
+  | 'workflows.filterByTask'
+  | 'workflows.templates'
+  | 'workflows.templatePanelCopy'
   | 'workflows.centerView'
+  | 'workflows.clearCanvas'
+  | 'workflows.canvasCleared'
   | 'workflows.inspector'
   | 'workflows.inspectorCopy'
   | 'workflows.selectNode'
@@ -140,6 +148,14 @@ export type TranslationKey =
   | 'workflows.deleteNode'
   | 'workflows.nodeRemoved'
   | 'workflows.invalidConnection'
+  | 'workflows.connectionTypeMismatch'
+  | 'workflows.insertTemplateSuccess'
+  | 'workflows.useSampleInputs'
+  | 'workflows.insertBlankTemplate'
+  | 'workflows.sampleInputs'
+  | 'workflows.sampleDataset'
+  | 'workflows.sampleModel'
+  | 'workflows.downloadSampleInput'
   | 'workflows.category.source'
   | 'workflows.category.preprocess'
   | 'workflows.category.split'
@@ -323,6 +339,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.categoriesDetail':
       'Source, preprocess, split, inference, and export blocks.',
     'workflows.validate': 'Validate workflow',
+    'workflows.save': 'Save workflow',
     'workflows.run': 'Run workflow',
     'workflows.validateSuccess': 'Workflow graph is valid.',
     'workflows.validateFailure': 'Workflow validation returned errors.',
@@ -338,7 +355,15 @@ export const messages: Record<LocaleCode, TranslationMap> = {
       'Compose preprocessing, split, inference, and export jobs.',
     'workflows.readOnlyHint':
       'Your current role can view the workflow graph but cannot add or edit nodes.',
+    'workflows.searchNodes': 'Search nodes',
+    'workflows.filterByDataType': 'Filter by data type',
+    'workflows.filterByTask': 'Filter by task',
+    'workflows.templates': 'Templates',
+    'workflows.templatePanelCopy':
+      'Each template can be inserted blank or with seeded sample inputs that run out of the box.',
     'workflows.centerView': 'Center graph',
+    'workflows.clearCanvas': 'Clear canvas',
+    'workflows.canvasCleared': 'Canvas cleared.',
     'workflows.inspector': 'Node Inspector',
     'workflows.inspectorCopy':
       'Select a node to edit parameters, review port bindings, and remove it from the graph.',
@@ -354,6 +379,15 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.nodeRemoved': 'Node removed.',
     'workflows.invalidConnection':
       'Connect from an output port to an input port to create a binding.',
+    'workflows.connectionTypeMismatch':
+      'This connection is not compatible with the selected port types.',
+    'workflows.insertTemplateSuccess': 'Inserted template',
+    'workflows.useSampleInputs': 'Use sample inputs',
+    'workflows.insertBlankTemplate': 'Insert blank',
+    'workflows.sampleInputs': 'Sample inputs',
+    'workflows.sampleDataset': 'Dataset',
+    'workflows.sampleModel': 'Model',
+    'workflows.downloadSampleInput': 'Download',
     'workflows.category.source': 'Source',
     'workflows.category.preprocess': 'Preprocess',
     'workflows.category.split': 'Split',
@@ -531,6 +565,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.categoriesLabel': '节点类别',
     'workflows.categoriesDetail': '来源、预处理、切分、推理与导出等类别。',
     'workflows.validate': '校验工作流',
+    'workflows.save': '保存工作流',
     'workflows.run': '运行工作流',
     'workflows.validateSuccess': '工作流校验通过。',
     'workflows.validateFailure': '工作流校验返回错误。',
@@ -545,6 +580,8 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.nodeLibraryCopy': '组合预处理、切分、推理和导出节点。',
     'workflows.readOnlyHint': '当前账号只能查看工作流图，不能新增或编辑节点。',
     'workflows.centerView': '定位到流程图',
+    'workflows.clearCanvas': '清空画布',
+    'workflows.canvasCleared': '画布已清空。',
     'workflows.inspector': '节点配置',
     'workflows.inspectorCopy': '选中节点后可编辑参数、查看端口绑定，并可删除该节点。',
     'workflows.selectNode': '请先在画布中选中一个节点。',
@@ -608,5 +645,18 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'map.tilejson': '瓦片配置',
     'workspace.loadFailedTitle': '工作区加载失败',
     'workspace.loadFailedBody': '无法加载当前工作区快照，请检查后端服务后重试。',
+    'workflows.searchNodes': '搜索节点',
+    'workflows.filterByDataType': '按数据类型筛选',
+    'workflows.filterByTask': '按任务筛选',
+    'workflows.templates': '模板',
+    'workflows.templatePanelCopy': '每个模板都可以插入空模板，或直接带入示例输入。',
+    'workflows.connectionTypeMismatch': '所选端口的数据类型不兼容，无法连接。',
+    'workflows.insertTemplateSuccess': '已插入模板',
+    'workflows.useSampleInputs': '使用示例输入',
+    'workflows.insertBlankTemplate': '插入空模板',
+    'workflows.sampleInputs': '示例输入',
+    'workflows.sampleDataset': '数据集',
+    'workflows.sampleModel': '模型',
+    'workflows.downloadSampleInput': '下载',
   },
 };

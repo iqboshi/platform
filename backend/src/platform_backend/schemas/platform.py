@@ -54,6 +54,7 @@ class DatasetSummary(BaseModel):
     name: str
     kind: DatasetKind
     status: DatasetStatus
+    is_private: bool = False
     bands: int | None = None
     projection: str | None = None
     footprint: str | None = None
@@ -71,6 +72,7 @@ class DatasetVersionSummary(BaseModel):
     preview_url: str | None = None
     bbox: list[float] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    is_private: bool = False
     created_at: datetime
 
 
@@ -127,10 +129,16 @@ class ModelSummary(BaseModel):
 class ModelVersionSummary(BaseModel):
     id: str
     model_id: str
+    model_name: str | None = None
+    algorithm_key: str | None = None
     version: str
     framework: str
     task_type: str
     weights_path: str
+    feature_names: list[str] = Field(default_factory=list)
+    default_parameters: dict[str, Any] = Field(default_factory=dict)
+    artifact_format: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -156,8 +164,21 @@ class WorkflowRunSummary(BaseModel):
     workflow_version_id: str
     status: WorkflowRunStatus
     submitted_by: str
+    result_dataset_version_id: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class ModelUploadRequest(BaseModel):
+    workspace_id: str
+    model_name: str
+    version: str
+    algorithm_key: str
+    task_type: str
+    framework: str = "json"
+    feature_names: list[str] = Field(default_factory=list)
+    default_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 TokenResponse.model_rebuild()

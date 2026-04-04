@@ -12,6 +12,7 @@ from platform_backend.schemas.platform import (
     DatasetUploadRequest,
     DatasetVersionSummary,
     UploadSessionResponse,
+    UserProfile,
 )
 from platform_backend.services.platform_store import (
     confirm_upload,
@@ -23,24 +24,30 @@ from platform_backend.services.platform_store import (
 
 router = APIRouter()
 DatabaseDep = Annotated[Session, Depends(get_db)]
+DatasetViewUserDep = Annotated[UserProfile, Depends(require_permission("dataset.view"))]
 
 
 @router.get(
     "",
     response_model=list[DatasetSummary],
-    dependencies=[Depends(require_permission("dataset.view"))],
 )
-def list_datasets_route(db: DatabaseDep) -> list[DatasetSummary]:
-    return list_datasets(db)
+def list_datasets_route(
+    db: DatabaseDep,
+    current_user: DatasetViewUserDep,
+) -> list[DatasetSummary]:
+    return list_datasets(db, current_user)
 
 
 @router.get(
     "/{dataset_id}",
     response_model=DatasetSummary,
-    dependencies=[Depends(require_permission("dataset.view"))],
 )
-def get_dataset_route(dataset_id: str, db: DatabaseDep) -> DatasetSummary:
-    dataset = get_dataset(db, dataset_id)
+def get_dataset_route(
+    dataset_id: str,
+    db: DatabaseDep,
+    current_user: DatasetViewUserDep,
+) -> DatasetSummary:
+    dataset = get_dataset(db, dataset_id, current_user)
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found.")
     return dataset

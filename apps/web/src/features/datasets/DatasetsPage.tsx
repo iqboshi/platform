@@ -7,10 +7,63 @@ import { isApiError } from '@/auth/errors';
 import { useAuth } from '@/auth/useAuth';
 import { MapPreview } from '@/components/MapPreview';
 import { useI18n } from '@/i18n/useI18n';
-import { getDatasetDownloadUrl, uploadDataset } from '@/lib/api';
+import { downloadDatasetVersion, uploadDataset } from '@/lib/api';
 import { datasetKindKey, datasetStatusKey } from '@/lib/i18n-helpers';
 
 const { Paragraph } = Typography;
+
+function downloadUploadTemplate(kind: PlatformDataSnapshot['datasets'][number]['kind']): void {
+  let fileName = 'dataset-template.csv';
+  let content = 'feature_a,feature_b,target\n1,2,2.1\n2,3,3.4\n';
+  let mimeType = 'text/csv;charset=utf-8';
+
+  if (kind === 'vector') {
+    fileName = 'dataset-template.geojson';
+    mimeType = 'application/geo+json;charset=utf-8';
+    content = JSON.stringify(
+      {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: { id: 1, class_name: 'sample' },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [116.38, 39.9],
+                  [116.4, 39.9],
+                  [116.4, 39.92],
+                  [116.38, 39.92],
+                  [116.38, 39.9],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    );
+  }
+
+  if (kind === 'raster' || kind === 'artifact') {
+    fileName = `${kind}-upload-template.txt`;
+    mimeType = 'text/plain;charset=utf-8';
+    content =
+      kind === 'raster'
+        ? 'Upload a raster file such as .tif/.tiff. This template is a reminder file and is not meant for direct preview.'
+        : 'Upload a derived artifact such as .csv/.json/.zip depending on your workflow output.';
+  }
+
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 export function DatasetsPage({
   snapshot,
@@ -27,6 +80,7 @@ export function DatasetsPage({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const selectedUploadKind = Form.useWatch('kind', form) ?? 'table';
 
   const selectedDataset = useMemo(
     () => snapshot.datasets.find((item) => item.id === selectedDatasetId) ?? snapshot.datasets[0],
@@ -64,6 +118,18 @@ export function DatasetsPage({
       message.error(isApiError(error) ? error.message : t('error.request_failed'));
     } finally {
       setUploading(false);
+    }
+  };
+
+  const onDownloadSelectedVersion = async () => {
+    if (!token || !selectedVersion) {
+      return;
+    }
+
+    try {
+      await downloadDatasetVersion(token, selectedVersion.id);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
     }
   };
 
@@ -136,7 +202,7 @@ export function DatasetsPage({
           <Descriptions.Item label={t('datasets.tileEndpoint')}>{selectedVersion?.previewUrl ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('datasets.uploadSession')}>
             {selectedVersion ? (
-              <Button type="link" href={getDatasetDownloadUrl(selectedVersion.id)} target="_blank">
+              <Button type="link" onClick={() => void onDownloadSelectedVersion()}>
                 {t('datasets.downloadAsset')}
               </Button>
             ) : (
@@ -161,9 +227,18 @@ export function DatasetsPage({
           layout="vertical"
           initialValues={{
             datasetName: selectedFile?.name ? selectedFile.name.replace(/\.[^.]+$/, '') : '',
-            kind: 'raster',
+            kind: 'table',
           }}
         >
+          <div className="section-actions">
+            <Button onClick={() => downloadUploadTemplate(selectedUploadKind)}>
+              {selectedUploadKind === 'vector'
+                ? 'Download GeoJSON template'
+                : selectedUploadKind === 'table'
+                  ? 'Download CSV template'
+                  : 'Download upload note'}
+            </Button>
+          </div>
           <Form.Item name="datasetName" label={t('datasets.table.dataset')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>

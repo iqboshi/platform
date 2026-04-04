@@ -12,7 +12,11 @@ import type {
   RoleKey,
   WorkspaceSummary,
   WorkflowNodeCatalogItem,
+  WorkflowParamDefinition,
+  WorkflowParamOption,
+  WorkflowPortDefinition,
   WorkflowRunSummary,
+  WorkflowTemplateDefinition,
   WorkflowVersionDetail,
 } from '@platform/types';
 
@@ -21,6 +25,7 @@ export interface PlatformDataSnapshot {
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
   workflowCatalog: WorkflowNodeCatalogItem[];
+  workflowTemplates: WorkflowTemplateDefinition[];
   workflowVersion: WorkflowVersionDetail;
   workflowRuns: WorkflowRunSummary[];
   modelVersions: ModelVersionSummary[];
@@ -38,7 +43,7 @@ export class ApiError extends Error {
   }
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8002/api/v1';
 
 type ApiRecord = Record<string, unknown>;
 
@@ -56,6 +61,23 @@ function buildHeaders(options: RequestOptions): HeadersInit {
   };
 }
 
+async function buildApiError(response: Response, path: string): Promise<ApiError> {
+  let message = `Request failed: ${path}`;
+  let code = 'request_failed';
+  try {
+    const payload = (await response.json()) as { detail?: string | { code?: string; message?: string } };
+    if (typeof payload.detail === 'string') {
+      message = payload.detail;
+    } else if (payload.detail) {
+      message = payload.detail.message ?? message;
+      code = payload.detail.code ?? code;
+    }
+  } catch {
+    // Keep the default message when the response body is not JSON.
+  }
+  return new ApiError(message, { status: response.status, code });
+}
+
 async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: options.method ?? 'GET',
@@ -69,23 +91,29 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   });
 
   if (!response.ok) {
-    let message = `Request failed: ${path}`;
-    let code = 'request_failed';
-    try {
-      const payload = (await response.json()) as { detail?: string | { code?: string; message?: string } };
-      if (typeof payload.detail === 'string') {
-        message = payload.detail;
-      } else if (payload.detail) {
-        message = payload.detail.message ?? message;
-        code = payload.detail.code ?? code;
-      }
-    } catch {
-      // Keep the default message when the response body is not JSON.
-    }
-    throw new ApiError(message, { status: response.status, code });
+    throw await buildApiError(response, path);
   }
 
   return (await response.json()) as T;
+}
+
+function extractDownloadFileName(response: Response, fallbackFileName: string): string {
+  const disposition = response.headers.get('content-disposition');
+  if (!disposition) {
+    return fallbackFileName;
+  }
+
+  const utf8Match = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const plainMatch = disposition.match(/filename\s*=\s*"([^"]+)"/i) ?? disposition.match(/filename\s*=\s*([^;]+)/i);
+  return plainMatch?.[1]?.trim() || fallbackFileName;
 }
 
 function getString(record: ApiRecord, key: string): string {
@@ -101,6 +129,21 @@ function getOptionalString(record: ApiRecord, key: string): string | undefined {
 function getOptionalNumber(record: ApiRecord, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function getOptionalBoolean(record: ApiRecord, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function getPrimitiveValue(
+  value: unknown,
+): string | number | boolean | string[] | undefined {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? value
+    : Array.isArray(value) && value.every((item) => typeof item === 'string')
+      ? (value as string[])
+    : undefined;
 }
 
 function getStringArray<T extends string>(record: ApiRecord, key: string): T[] {
@@ -137,6 +180,7 @@ function normalizeDatasetSummary(input: ApiRecord): DatasetSummary {
     name: getString(input, 'name'),
     kind: getString(input, 'kind') as DatasetSummary['kind'],
     status: getString(input, 'status') as DatasetSummary['status'],
+    isPrivate: getOptionalBoolean(input, 'isPrivate') ?? getOptionalBoolean(input, 'is_private'),
     bands: getOptionalNumber(input, 'bands'),
     projection: getOptionalString(input, 'projection'),
     footprint: getOptionalString(input, 'footprint'),
@@ -154,7 +198,73 @@ function normalizeDatasetVersionSummary(input: ApiRecord): DatasetVersionSummary
     previewUrl: getOptionalString(input, 'previewUrl') ?? getOptionalString(input, 'preview_url'),
     bbox: getBBox(input),
     metadata: (input.metadata as Record<string, unknown> | undefined) ?? {},
+    isPrivate: getOptionalBoolean(input, 'isPrivate') ?? getOptionalBoolean(input, 'is_private'),
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
+function normalizeWorkflowPort(input: ApiRecord): WorkflowPortDefinition {
+  return {
+    key: getString(input, 'key'),
+    label: getString(input, 'label'),
+    description: getOptionalString(input, 'description'),
+    dataTypes:
+      getStringArray<WorkflowPortDefinition['dataTypes'][number]>(input, 'dataTypes').length > 0
+        ? getStringArray<WorkflowPortDefinition['dataTypes'][number]>(input, 'dataTypes')
+        : getStringArray<WorkflowPortDefinition['dataTypes'][number]>(input, 'data_types'),
+    required: Boolean(input.required),
+  };
+}
+
+function normalizeWorkflowParamOption(input: ApiRecord): WorkflowParamOption {
+  return {
+    label: getString(input, 'label'),
+    value: getString(input, 'value'),
+  };
+}
+
+function normalizeWorkflowParamDefinition(input: ApiRecord): WorkflowParamDefinition {
+  const rawOptions = Array.isArray(input.options) ? (input.options as ApiRecord[]) : [];
+
+  return {
+    key: getString(input, 'key'),
+    label: getString(input, 'label'),
+    fieldType:
+      (getString(input, 'fieldType') ||
+        getString(input, 'field_type')) as WorkflowParamDefinition['fieldType'],
+    description: getOptionalString(input, 'description'),
+    defaultValue: getPrimitiveValue(input.defaultValue ?? input.default_value),
+    placeholder: getOptionalString(input, 'placeholder'),
+    min: getOptionalNumber(input, 'min'),
+    max: getOptionalNumber(input, 'max'),
+    step: getOptionalNumber(input, 'step'),
+    required: Boolean(input.required),
+    options: rawOptions.map(normalizeWorkflowParamOption),
+  };
+}
+
+function normalizeWorkflowCatalogItem(input: ApiRecord): WorkflowNodeCatalogItem {
+  const rawInputs = Array.isArray(input.inputs) ? (input.inputs as ApiRecord[]) : [];
+  const rawOutputs = Array.isArray(input.outputs) ? (input.outputs as ApiRecord[]) : [];
+  const rawParams = Array.isArray(input.params) ? (input.params as ApiRecord[]) : [];
+
+  return {
+    type: getString(input, 'type'),
+    label: getString(input, 'label'),
+    category: getString(input, 'category') as WorkflowNodeCatalogItem['category'],
+    description: getString(input, 'description'),
+    runtimeKind:
+      (getString(input, 'runtimeKind') ||
+        getString(input, 'runtime_kind')) as WorkflowNodeCatalogItem['runtimeKind'],
+    supportedTasks:
+      getStringArray<WorkflowNodeCatalogItem['supportedTasks'][number]>(input, 'supportedTasks')
+        .length > 0
+        ? getStringArray<WorkflowNodeCatalogItem['supportedTasks'][number]>(input, 'supportedTasks')
+        : getStringArray<WorkflowNodeCatalogItem['supportedTasks'][number]>(input, 'supported_tasks'),
+    tags: getStringArray<string>(input, 'tags'),
+    inputs: rawInputs.map(normalizeWorkflowPort),
+    outputs: rawOutputs.map(normalizeWorkflowPort),
+    params: rawParams.map(normalizeWorkflowParamDefinition),
   };
 }
 
@@ -177,10 +287,11 @@ function normalizeWorkflowVersion(input: ApiRecord): WorkflowVersionDetail {
           (node.inputBindings as Record<string, string> | undefined) ??
           (node.input_bindings as Record<string, string> | undefined) ??
           {},
-        outputDefs:
-          (node.outputDefs as WorkflowVersionDetail['graph']['nodes'][number]['outputDefs']) ??
-          (node.output_defs as WorkflowVersionDetail['graph']['nodes'][number]['outputDefs']) ??
-          [],
+        outputDefs: Array.isArray(node.outputDefs)
+          ? (node.outputDefs as ApiRecord[]).map(normalizeWorkflowPort)
+          : Array.isArray(node.output_defs)
+            ? (node.output_defs as ApiRecord[]).map(normalizeWorkflowPort)
+            : [],
       })),
       edges: rawEdges.map((edge) => ({
         id: getString(edge, 'id'),
@@ -196,6 +307,37 @@ function normalizeWorkflowVersion(input: ApiRecord): WorkflowVersionDetail {
   };
 }
 
+function normalizeWorkflowTemplate(input: ApiRecord): WorkflowTemplateDefinition {
+  const graph = normalizeWorkflowVersion({
+    ...input,
+    id: getString(input, 'id') || 'template-graph',
+    workflowId: getString(input, 'id') || 'template',
+    version: 1,
+    createdAt: new Date().toISOString(),
+  }).graph;
+  const sampleBindingsRaw = Array.isArray(input.sampleBindings)
+    ? (input.sampleBindings as ApiRecord[])
+    : Array.isArray(input.sample_bindings)
+      ? (input.sample_bindings as ApiRecord[])
+      : [];
+
+  return {
+    id: getString(input, 'id'),
+    label: getString(input, 'label'),
+    description: getString(input, 'description'),
+    tags: getStringArray<string>(input, 'tags'),
+    supportedTasks:
+      getStringArray<string>(input, 'supportedTasks').length > 0
+        ? getStringArray<string>(input, 'supportedTasks')
+        : getStringArray<string>(input, 'supported_tasks'),
+    sampleBindings: sampleBindingsRaw.map((item) => ({
+      nodeId: getString(item, 'nodeId') || getString(item, 'node_id'),
+      params: (item.params as Record<string, unknown> | undefined) ?? {},
+    })),
+    graph,
+  };
+}
+
 function normalizeWorkflowRun(input: ApiRecord): WorkflowRunSummary {
   return {
     id: getString(input, 'id'),
@@ -205,6 +347,10 @@ function normalizeWorkflowRun(input: ApiRecord): WorkflowRunSummary {
     startedAt: getOptionalString(input, 'startedAt') ?? getOptionalString(input, 'started_at'),
     finishedAt: getOptionalString(input, 'finishedAt') ?? getOptionalString(input, 'finished_at'),
     submittedBy: getString(input, 'submittedBy') || getString(input, 'submitted_by'),
+    resultDatasetVersionId:
+      getOptionalString(input, 'resultDatasetVersionId') ??
+      getOptionalString(input, 'result_dataset_version_id'),
+    metrics: (input.metrics as Record<string, unknown> | undefined) ?? {},
   };
 }
 
@@ -212,9 +358,23 @@ function normalizeModelVersion(input: ApiRecord): ModelVersionSummary {
   return {
     id: getString(input, 'id'),
     modelId: getString(input, 'modelId') || getString(input, 'model_id'),
+    modelName: getOptionalString(input, 'modelName') ?? getOptionalString(input, 'model_name'),
+    algorithmKey:
+      getOptionalString(input, 'algorithmKey') ?? getOptionalString(input, 'algorithm_key'),
     version: getString(input, 'version'),
     framework: getString(input, 'framework'),
     taskType: getString(input, 'taskType') || getString(input, 'task_type'),
+    featureNames:
+      getStringArray<string>(input, 'featureNames').length > 0
+        ? getStringArray<string>(input, 'featureNames')
+        : getStringArray<string>(input, 'feature_names'),
+    defaultParameters:
+      (input.defaultParameters as Record<string, unknown> | undefined) ??
+      (input.default_parameters as Record<string, unknown> | undefined) ??
+      {},
+    artifactFormat:
+      getOptionalString(input, 'artifactFormat') ?? getOptionalString(input, 'artifact_format'),
+    metadata: (input.metadata as Record<string, unknown> | undefined) ?? {},
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
   };
 }
@@ -273,7 +433,13 @@ function toWorkflowValidationPayload(workflowVersion: WorkflowVersionDetail): Re
       position: node.position,
       params: node.params,
       input_bindings: node.inputBindings,
-      output_defs: node.outputDefs,
+      output_defs: node.outputDefs.map((port) => ({
+        key: port.key,
+        label: port.label,
+        description: port.description,
+        data_types: port.dataTypes,
+        required: port.required,
+      })),
     })),
     edges: workflowVersion.graph.edges.map((edge) => ({
       id: edge.id,
@@ -392,6 +558,42 @@ export async function uploadDataset(
   return normalizeDatasetVersionSummary(response);
 }
 
+export async function uploadModelPackage(
+  token: string,
+  payload: {
+    workspaceId: string;
+    modelName: string;
+    version: string;
+    algorithmKey: string;
+    taskType: string;
+    framework?: string;
+    featureNames?: string[];
+    defaultParameters?: Record<string, unknown>;
+    file: File;
+  },
+): Promise<ModelVersionSummary> {
+  const formData = new FormData();
+  formData.append('workspace_id', payload.workspaceId);
+  formData.append('model_name', payload.modelName);
+  formData.append('version', payload.version);
+  formData.append('algorithm_key', payload.algorithmKey);
+  formData.append('task_type', payload.taskType);
+  formData.append('framework', payload.framework ?? '');
+  formData.append('feature_names_json', JSON.stringify(payload.featureNames ?? []));
+  formData.append(
+    'default_parameters_json',
+    JSON.stringify(payload.defaultParameters ?? {}),
+  );
+  formData.append('file', payload.file);
+
+  const response = await requestJson<ApiRecord>('/models/upload', {
+    method: 'POST',
+    token,
+    body: formData,
+  });
+  return normalizeModelVersion(response);
+}
+
 export async function saveWorkflowVersion(
   token: string,
   workflowVersion: WorkflowVersionDetail,
@@ -406,6 +608,32 @@ export async function saveWorkflowVersion(
 
 export function getDatasetDownloadUrl(datasetVersionId: string): string {
   return `${apiBaseUrl}/dataset-versions/${datasetVersionId}/download`;
+}
+
+export async function downloadDatasetVersion(
+  token: string,
+  datasetVersionId: string,
+  fallbackFileName = `dataset-${datasetVersionId}`,
+): Promise<void> {
+  const path = `/dataset-versions/${datasetVersionId}/download`;
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response, path);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = extractDownloadFileName(response, fallbackFileName);
+  anchor.click();
+  window.URL.revokeObjectURL(objectUrl);
 }
 
 export async function validateWorkflow(
@@ -427,8 +655,6 @@ export async function validateWorkflow(
 export async function createWorkflowRun(
   token: string,
   workflowVersion: WorkflowVersionDetail,
-  datasetVersionId: string,
-  modelVersionId: string,
   workspaceId: string,
 ): Promise<WorkflowRunSummary> {
   const payload = await requestJson<ApiRecord>('/workflow-runs', {
@@ -437,8 +663,6 @@ export async function createWorkflowRun(
     body: {
       workflow_version_id: workflowVersion.id,
       workspace_id: workspaceId,
-      model_version_id: modelVersionId,
-      input_dataset_version_id: datasetVersionId,
       priority: 5,
     },
   });
@@ -453,7 +677,8 @@ export async function loadPlatformData(
     requestJson<ApiRecord[]>('/workspaces', { token }),
     requestJson<ApiRecord[]>('/datasets', { token }),
     requestJson<ApiRecord[]>('/dataset-versions', { token }),
-    requestJson<WorkflowNodeCatalogItem[]>('/workflows/catalog', { token }),
+    requestJson<ApiRecord[]>('/workflows/catalog', { token }),
+    requestJson<ApiRecord[]>('/workflows/templates', { token }),
     requestJson<ApiRecord>('/workflows/versions/current', { token }),
     requestJson<ApiRecord[]>('/workflow-runs', { token }),
   ] as const;
@@ -463,6 +688,7 @@ export async function loadPlatformData(
     datasets,
     datasetVersions,
     workflowCatalog,
+    workflowTemplates,
     workflowVersion,
     workflowRuns,
   ] = await Promise.all(baseRequests);
@@ -475,7 +701,8 @@ export async function loadPlatformData(
     workspace: normalizeWorkspaceSummary(workspaces[0]),
     datasets: datasets.map(normalizeDatasetSummary),
     datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
-    workflowCatalog,
+    workflowCatalog: workflowCatalog.map(normalizeWorkflowCatalogItem),
+    workflowTemplates: workflowTemplates.map(normalizeWorkflowTemplate),
     workflowVersion: normalizeWorkflowVersion(workflowVersion),
     workflowRuns: workflowRuns.map(normalizeWorkflowRun),
     modelVersions: modelVersions.map(normalizeModelVersion),

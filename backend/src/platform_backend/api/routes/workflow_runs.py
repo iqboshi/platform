@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from platform_backend.api.deps import get_current_user, require_permission
+from platform_backend.api.deps import require_permission
 from platform_backend.db.session import get_db
 from platform_backend.schemas.platform import UserProfile, WorkflowRunSummary
 from platform_backend.schemas.workflow import WorkflowRunAccepted, WorkflowRunRequest
@@ -11,7 +11,7 @@ from platform_backend.services.auth import get_user_by_id
 from platform_backend.services.platform_store import create_workflow_run, list_workflow_runs
 
 router = APIRouter()
-CurrentUserDep = Annotated[UserProfile, Depends(get_current_user)]
+WorkflowRunUserDep = Annotated[UserProfile, Depends(require_permission("workflow.run"))]
 DatabaseDep = Annotated[Session, Depends(get_db)]
 
 
@@ -27,11 +27,10 @@ def list_workflow_runs_route(db: DatabaseDep) -> list[WorkflowRunSummary]:
 @router.post(
     "",
     response_model=WorkflowRunAccepted,
-    dependencies=[Depends(require_permission("workflow.run"))],
 )
 def create_workflow_run_route(
     request: WorkflowRunRequest,
-    current_user: CurrentUserDep,
+    current_user: WorkflowRunUserDep,
     db: DatabaseDep,
 ) -> WorkflowRunAccepted:
     user = get_user_by_id(db, current_user.id)
@@ -41,3 +40,5 @@ def create_workflow_run_route(
         return create_workflow_run(db, request, user)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
