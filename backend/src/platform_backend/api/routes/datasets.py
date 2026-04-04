@@ -9,9 +9,9 @@ from platform_backend.domain_enums import DatasetKind
 from platform_backend.schemas.platform import (
     ApiMessage,
     DatasetSummary,
+    DatasetUpdateRequest,
     DatasetUploadConfirmRequest,
     DatasetUploadRequest,
-    DatasetUpdateRequest,
     DatasetVersionSummary,
     UploadSessionResponse,
     UserProfile,

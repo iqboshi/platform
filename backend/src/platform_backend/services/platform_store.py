@@ -168,7 +168,9 @@ def _workflow_owner_user_id(row: WorkflowVersion) -> str | None:
 
 
 def _workflow_owner_display_name(row: WorkflowVersion) -> str | None:
-    owner_display_name = str(_workflow_metadata(row.graph_json).get("owner_display_name", "")).strip()
+    owner_display_name = str(
+        _workflow_metadata(row.graph_json).get("owner_display_name", "")
+    ).strip()
     return owner_display_name or None
 
 
@@ -992,7 +994,11 @@ def get_workflow_version(
     row = db.get(WorkflowVersion, workflow_version_id)
     if row is None:
         return None
-    if not _can_access_workflow_version(row, current_user, scope="all" if _is_admin_user(current_user) else "mine"):
+    if not _can_access_workflow_version(
+        row,
+        current_user,
+        scope="all" if _is_admin_user(current_user) else "mine",
+    ):
         return None
     return _workflow_version_summary(row)
 
@@ -1038,7 +1044,9 @@ def delete_workflow_version(
         current_user,
         scope="all" if _is_admin_user(current_user) else "mine",
     ):
-        raise PermissionError("Only the owner or an administrator can delete this workflow version.")
+        raise PermissionError(
+            "Only the owner or an administrator can delete this workflow version."
+        )
     db.delete(row)
     db.commit()
 

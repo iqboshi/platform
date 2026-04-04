@@ -613,7 +613,10 @@ def test_workflow_versions_are_user_scoped_and_downloadable(client: TestClient) 
     )
     assert member_versions.status_code == 200
     assert forbidden_all_scope.status_code == 403
-    assert all(item["owner_user_id"] == member_current.json()["owner_user_id"] for item in member_versions.json())
+    assert all(
+        item["owner_user_id"] == member_current.json()["owner_user_id"]
+        for item in member_versions.json()
+    )
 
     download = client.get(
         f"/api/v1/workflows/versions/{member_current.json()['id']}/download",
