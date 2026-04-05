@@ -270,7 +270,7 @@ function AppShell({
         <Content className="app-content">
           <Suspense fallback={<RouteSpinner />}>
             <Routes>
-              <Route path="/" element={<DashboardPage snapshot={snapshot} />} />
+              <Route path="/" element={<DashboardPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/datasets" element={<DatasetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/assets" element={<PersonalAssetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/workflows" element={<WorkflowsPage snapshot={snapshot} onRefresh={onRefresh} />} />
@@ -319,6 +319,7 @@ function ProtectedWorkspace() {
     try {
       const nextSnapshot = await loadPlatformData(token, {
         includeModels: hasPermission('model.view'),
+        includeAdminData: hasPermission('system.configure'),
       });
       setSnapshot(nextSnapshot);
       setLoadError(null);

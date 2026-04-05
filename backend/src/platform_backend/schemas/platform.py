@@ -9,6 +9,9 @@ from platform_backend.domain_enums import (
     ApprovalStatus,
     DatasetKind,
     DatasetStatus,
+    FeedbackTicketCategory,
+    FeedbackTicketPriority,
+    FeedbackTicketStatus,
     JobStatus,
     LocaleCode,
     RoleKey,
@@ -191,8 +194,31 @@ class WorkflowRunSummary(BaseModel):
     submitted_by: str
     result_dataset_version_id: str | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class GeeCredentialSummary(BaseModel):
+    id: str
+    workspace_id: str
+    owner_user_id: str
+    owner_display_name: str | None = None
+    name: str
+    provider: str = "gee"
+    description: str = ""
+    project_id: str | None = None
+    service_account_email: str | None = None
+    is_platform_default: bool = False
+    created_at: datetime
+
+
+class GeeCredentialCreateRequest(BaseModel):
+    workspace_id: str
+    name: str
+    description: str = ""
+    project_id: str | None = None
+    service_account_json: str
 
 
 class ModelUploadRequest(BaseModel):
@@ -220,6 +246,85 @@ class CustomApiModelCreateRequest(BaseModel):
     response_mode: Literal["prediction_values", "table_rows"] = "prediction_values"
     default_prediction_column: str = "prediction"
     default_parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardFeatureItem(BaseModel):
+    id: str
+    title_zh: str
+    title_en: str
+    summary_zh: str
+    summary_en: str
+    button_label_zh: str
+    button_label_en: str
+    href: str
+    icon_key: str = "overview"
+    enabled: bool = True
+
+
+class DashboardAnnouncementItem(BaseModel):
+    id: str
+    title_zh: str
+    title_en: str
+    summary_zh: str
+    summary_en: str
+    content_zh: str
+    content_en: str
+    tag_zh: str = ""
+    tag_en: str = ""
+    published_at: str
+    pinned: bool = False
+    published: bool = True
+
+
+class DashboardConfig(BaseModel):
+    feature_sections: list[DashboardFeatureItem] = Field(default_factory=list)
+    announcements: list[DashboardAnnouncementItem] = Field(default_factory=list)
+
+
+class DashboardConfigUpdateRequest(DashboardConfig):
+    pass
+
+
+class FeedbackTicketSummary(BaseModel):
+    id: str
+    workspace_id: str
+    created_by: str
+    created_by_display_name: str | None = None
+    title: str
+    category: FeedbackTicketCategory
+    priority: FeedbackTicketPriority
+    status: FeedbackTicketStatus
+    content: str
+    contact: str = ""
+    admin_reply: str = ""
+    created_at: datetime
+    updated_at: datetime
+
+
+class FeedbackTicketCreateRequest(BaseModel):
+    workspace_id: str
+    title: str
+    category: FeedbackTicketCategory
+    priority: FeedbackTicketPriority = FeedbackTicketPriority.MEDIUM
+    content: str
+    contact: str = ""
+
+
+class FeedbackTicketUpdateRequest(BaseModel):
+    title: str | None = None
+    category: FeedbackTicketCategory | None = None
+    priority: FeedbackTicketPriority | None = None
+    status: FeedbackTicketStatus | None = None
+    content: str | None = None
+    contact: str | None = None
+    admin_reply: str | None = None
+
+
+class FeedbackTicketSummaryCounts(BaseModel):
+    my_open_count: int = 0
+    my_active_count: int = 0
+    admin_open_count: int = 0
+    admin_in_progress_count: int = 0
 
 
 TokenResponse.model_rebuild()

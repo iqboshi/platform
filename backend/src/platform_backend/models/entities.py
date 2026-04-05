@@ -11,6 +11,9 @@ from platform_backend.domain_enums import (
     ApprovalStatus,
     DatasetKind,
     DatasetStatus,
+    FeedbackTicketCategory,
+    FeedbackTicketPriority,
+    FeedbackTicketStatus,
     JobStatus,
     LocaleCode,
     RoleKey,
@@ -130,6 +133,50 @@ class WorkflowRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GeeCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "gee_credentials"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False, default="gee")
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    service_account_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class PlatformSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    value_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class FeedbackTicket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "feedback_tickets"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[FeedbackTicketCategory] = mapped_column(
+        Enum(FeedbackTicketCategory),
+        nullable=False,
+    )
+    priority: Mapped[FeedbackTicketPriority] = mapped_column(
+        Enum(FeedbackTicketPriority),
+        nullable=False,
+        default=FeedbackTicketPriority.MEDIUM,
+    )
+    status: Mapped[FeedbackTicketStatus] = mapped_column(
+        Enum(FeedbackTicketStatus),
+        nullable=False,
+        default=FeedbackTicketStatus.OPEN,
+    )
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    contact: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    admin_reply: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
 
 class Model(UUIDPrimaryKeyMixin, TimestampMixin, Base):

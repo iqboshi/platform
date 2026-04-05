@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     tile_base_url: str = "http://localhost:8000/tiles"
     storage_root: str = "./data/storage"
     allow_sqlite_fallback: bool = True
+    sqlite_busy_timeout_ms: int = 30_000
+    http_proxy: str = ""
+    https_proxy: str = ""
+    all_proxy: str = ""
+    gee_enabled: bool = False
+    gee_service_account_json: str = ""
+    gee_project: str = ""
+    gee_request_timeout_seconds: int = 20
+    gee_max_retries: int = 1
+    gee_download_max_pixels: int = 100_000_000
+    gee_download_max_estimated_mb: int = 2048
+    gee_single_request_max_bytes: int = 48 * 1024 * 1024
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 

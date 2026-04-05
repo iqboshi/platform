@@ -10,6 +10,7 @@ from platform_backend.schemas.workflow import (
     WorkflowValidationResult,
 )
 from platform_backend.workflows.catalog import BUILTIN_NODE_CATALOG, supported_node_types
+from platform_backend.workflows.gee_runtime import parse_sentinel_download_params
 
 
 def _definition_map() -> dict[str, WorkflowCatalogItem]:
@@ -93,6 +94,12 @@ def validate_workflow_graph(graph: WorkflowGraph) -> WorkflowValidationResult:
         for param in definition.params:
             if param.required and _coerce_required_param_missing(node.params.get(param.key)):
                 errors.append(f"Node {node.id} is missing required parameter: {param.key}")
+
+        if node.type == "source.sentinel2_gee_download":
+            try:
+                parse_sentinel_download_params(node.params)
+            except ValueError as exc:
+                errors.append(f"Node {node.id} has invalid Sentinel-2 parameters: {exc}")
 
         for target_handle, binding in node.input_bindings.items():
             if target_handle not in input_keys:
@@ -179,7 +186,7 @@ def validate_workflow_graph(graph: WorkflowGraph) -> WorkflowValidationResult:
     if visited != len(graph.nodes):
         errors.append("Workflow graph must be acyclic.")
 
-    if graph.nodes and not any(node.type == "source.dataset_version" for node in graph.nodes):
-        warnings.append("No dataset version source node is defined.")
+    if graph.nodes and not any(node.type.startswith("source.") for node in graph.nodes):
+        warnings.append("No source runtime node is defined.")
 
     return WorkflowValidationResult(valid=not errors, errors=errors, warnings=warnings)

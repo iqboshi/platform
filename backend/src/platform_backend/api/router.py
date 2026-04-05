@@ -4,8 +4,11 @@ from platform_backend.api.routes import (
     auth,
     dataset_versions,
     datasets,
+    feedback_tickets,
+    integrations,
     jobs,
     models,
+    platform_settings,
     splits,
     workflow_runs,
     workflows,
@@ -16,6 +19,11 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(workspaces.router, prefix="/workspaces", tags=["workspaces"])
 api_router.include_router(datasets.router, prefix="/datasets", tags=["datasets"])
+api_router.include_router(
+    integrations.router,
+    prefix="/integrations",
+    tags=["integrations"],
+)
 api_router.include_router(
     dataset_versions.router,
     prefix="/dataset-versions",
@@ -30,3 +38,13 @@ api_router.include_router(
 )
 api_router.include_router(models.router, prefix="/models", tags=["models"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+api_router.include_router(
+    platform_settings.router,
+    prefix="/platform-settings",
+    tags=["platform-settings"],
+)
+api_router.include_router(
+    feedback_tickets.router,
+    prefix="/feedback-tickets",
+    tags=["feedback-tickets"],
+)

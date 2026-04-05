@@ -16,10 +16,17 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "PLATFORM_ENV=development"
-set "PLATFORM_TILE_BASE_URL=http://127.0.0.1:8002/tiles"
+set "PLATFORM_TILE_BASE_URL=http://127.0.0.1:8010/tiles"
+set "PLATFORM_GEE_REQUEST_TIMEOUT_SECONDS=20"
+set "PLATFORM_GEE_MAX_RETRIES=1"
 
-echo Starting backend on http://127.0.0.1:8002
-".venv\Scripts\python.exe" -m uvicorn platform_backend.main:app --app-dir ".\backend\src" --reload --host 127.0.0.1 --port 8002
+if not defined HTTP_PROXY set "HTTP_PROXY=http://127.0.0.1:7897"
+if not defined HTTPS_PROXY set "HTTPS_PROXY=http://127.0.0.1:7897"
+if not defined PLATFORM_HTTP_PROXY set "PLATFORM_HTTP_PROXY=%HTTP_PROXY%"
+if not defined PLATFORM_HTTPS_PROXY set "PLATFORM_HTTPS_PROXY=%HTTPS_PROXY%"
+
+echo Starting backend on http://127.0.0.1:8010
+".venv\Scripts\python.exe" -m uvicorn platform_backend.main:app --app-dir ".\backend\src" --host 127.0.0.1 --port 8010
 
 if errorlevel 1 (
   echo.

@@ -1,6 +1,7 @@
 import type {
   DatasetSummary,
   DatasetVersionSummary,
+  GeeCredentialSummary,
   ModelAlgorithmKey,
   ModelVersionSummary,
   WorkflowEdge,
@@ -20,6 +21,7 @@ export type WorkflowTemplate = WorkflowTemplateDefinition;
 export interface WorkflowEditorContext {
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
 }
 
@@ -77,8 +79,24 @@ export function createDefaultParams(
 ): Record<string, unknown> {
   const defaults: Record<string, unknown> = {};
   const matchingModels = compatibleModelVersions(context, definition.type);
+  const hasPlatformDefaultGeeCredential = context.geeCredentials.some(
+    (item) => item.isPlatformDefault,
+  );
 
   for (const field of definition.params) {
+    if (
+      definition.type === 'source.sentinel2_gee_download' &&
+      field.key === 'credentialMode'
+    ) {
+      defaults[field.key] =
+        hasPlatformDefaultGeeCredential
+          ? 'platform_default'
+          : context.geeCredentials.length > 0
+          ? 'personal'
+          : field.defaultValue ?? 'platform_default';
+      continue;
+    }
+
     if (field.fieldType === 'datasetVersion') {
       defaults[field.key] = context.datasetVersions[0]?.id ?? '';
       continue;
@@ -86,6 +104,14 @@ export function createDefaultParams(
 
     if (field.fieldType === 'modelVersion') {
       defaults[field.key] = matchingModels[0]?.id ?? '';
+      continue;
+    }
+
+    if (
+      definition.type === 'source.sentinel2_gee_download' &&
+      field.key === 'personalCredentialId'
+    ) {
+      defaults[field.key] = context.geeCredentials[0]?.id ?? '';
       continue;
     }
 
@@ -102,6 +128,13 @@ export function resolveParameterOptions(
   context: WorkflowEditorContext,
   nodeType?: string,
 ): WorkflowParamOption[] {
+  if (nodeType === 'source.sentinel2_gee_download' && definition.key === 'personalCredentialId') {
+    return context.geeCredentials.map((item) => ({
+      value: item.id,
+      label: `${item.name}${item.projectId ? ` / ${item.projectId}` : ''}`,
+    }));
+  }
+
   if (definition.fieldType === 'datasetVersion') {
     const datasetNames = new Map(context.datasets.map((item) => [item.id, item.name]));
     return context.datasetVersions.map((item) => ({
@@ -218,6 +251,36 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function applySentinelCredentialDefaults(
+  params: Record<string, unknown>,
+  context: WorkflowEditorContext,
+): Record<string, unknown> {
+  if (!context.geeCredentials.length) {
+    return params;
+  }
+
+  const credentialMode =
+    typeof params.credentialMode === 'string' ? params.credentialMode : 'platform_default';
+  const personalCredentialId =
+    typeof params.personalCredentialId === 'string' ? params.personalCredentialId : '';
+
+  if (credentialMode === 'personal' && !personalCredentialId) {
+    return {
+      ...params,
+      personalCredentialId: context.geeCredentials[0]?.id ?? '',
+    };
+  }
+
+  if (credentialMode === 'platform_default' && personalCredentialId) {
+    return {
+      ...params,
+      personalCredentialId: '',
+    };
+  }
+
+  return params;
+}
+
 export function instantiateTemplateGraph(
   template: WorkflowTemplate,
   definitions: WorkflowNodeDefinition[],
@@ -239,6 +302,11 @@ export function instantiateTemplateGraph(
   const nodes = template.graph.nodes.map((node) => {
     const definition = getWorkflowDefinitionByType(definitions, node.type);
     const nextId = nodeIdMap.get(node.id) ?? node.id;
+    const mergedParams = {
+      ...(definition ? createDefaultParams(definition, context) : {}),
+      ...node.params,
+      ...(options?.useSampleBindings ? sampleBindings.get(node.id) ?? {} : {}),
+    };
 
     return {
       id: nextId,
@@ -247,11 +315,10 @@ export function instantiateTemplateGraph(
         x: anchorPosition.x + (node.position.x - minX),
         y: anchorPosition.y + (node.position.y - minY),
       },
-      params: {
-        ...(definition ? createDefaultParams(definition, context) : {}),
-        ...node.params,
-        ...(options?.useSampleBindings ? sampleBindings.get(node.id) ?? {} : {}),
-      },
+      params:
+        node.type === 'source.sentinel2_gee_download'
+          ? applySentinelCredentialDefaults(mergedParams, context)
+          : mergedParams,
       inputBindings: Object.fromEntries(
         Object.entries(node.inputBindings).map(([key, binding]) => {
           const [sourceNodeId, sourceHandle] = binding.split(':');

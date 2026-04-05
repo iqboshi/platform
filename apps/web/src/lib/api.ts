@@ -2,10 +2,19 @@ import type {
   AssetScope,
   AuthTokenResponse,
   AuthUser,
+  DashboardAnnouncementItem,
+  DashboardConfig,
+  DashboardFeatureItem,
   DatasetKind,
   DatasetSummary,
   DatasetVisibility,
   DatasetVersionSummary,
+  FeedbackTicketCategory,
+  FeedbackTicketPriority,
+  FeedbackTicketStatus,
+  FeedbackTicketSummary,
+  FeedbackTicketSummaryCounts,
+  GeeCredentialSummary,
   LocaleCode,
   ModelVersionSummary,
   PendingUserSummary,
@@ -31,11 +40,15 @@ export interface PlatformDataSnapshot {
   workspace: WorkspaceSummary;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  geeCredentials: GeeCredentialSummary[];
   workflowCatalog: WorkflowNodeCatalogItem[];
   workflowTemplates: WorkflowTemplateDefinition[];
   workflowVersion: WorkflowVersionDetail;
   workflowRuns: WorkflowRunSummary[];
   modelVersions: ModelVersionSummary[];
+  dashboardConfig: DashboardConfig;
+  feedbackTickets: FeedbackTicketSummary[];
+  feedbackSummary: FeedbackTicketSummaryCounts;
   source: 'api' | 'mock';
 }
 
@@ -43,6 +56,7 @@ export interface AssetOverview {
   scope: AssetScope;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  geeCredentials: GeeCredentialSummary[];
   workflowVersions: WorkflowVersionSummary[];
   workflowRuns: WorkflowRunSummary[];
   modelVersions: ModelVersionSummary[];
@@ -59,7 +73,7 @@ export class ApiError extends Error {
   }
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8002/api/v1';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8010/api/v1';
 
 type ApiRecord = Record<string, unknown>;
 
@@ -67,6 +81,110 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: Record<string, unknown> | FormData;
   token?: string;
+}
+
+function createFallbackDashboardConfig(): DashboardConfig {
+  return {
+    featureSections: [
+      {
+        id: 'public-datasets',
+        titleZh: '公开数据集浏览',
+        titleEn: 'Public Dataset Catalog',
+        summaryZh: '集中浏览公开数据集、查看简介并快速下载可用版本。',
+        summaryEn:
+          'Browse published datasets, review curated descriptions, and download usable versions quickly.',
+        buttonLabelZh: '进入数据集',
+        buttonLabelEn: 'Open catalog',
+        href: '/datasets',
+        iconKey: 'datasets',
+        enabled: true,
+      },
+      {
+        id: 'visual-workflows',
+        titleZh: '可视化工作流编排',
+        titleEn: 'Visual Workflow Builder',
+        summaryZh: '用节点化方式组织数据处理、模型推理和结果导出流程。',
+        summaryEn:
+          'Compose data preparation, model inference, and export steps through a visual node graph.',
+        buttonLabelZh: '打开工作流',
+        buttonLabelEn: 'Open workflows',
+        href: '/workflows',
+        iconKey: 'workflows',
+        enabled: true,
+      },
+      {
+        id: 'model-assets',
+        titleZh: '模型资产中心',
+        titleEn: 'Model Asset Center',
+        summaryZh: '统一管理平台模型、训练产物和外部 API 模型接入信息。',
+        summaryEn:
+          'Manage packaged models, trained weights, and external API model registrations in one place.',
+        buttonLabelZh: '查看模型',
+        buttonLabelEn: 'View models',
+        href: '/models',
+        iconKey: 'models',
+        enabled: true,
+      },
+      {
+        id: 'personal-assets',
+        titleZh: '个人资产管理',
+        titleEn: 'Personal Asset Control',
+        summaryZh: '统一查看和维护个人数据集、结果、工作流与凭证资产。',
+        summaryEn:
+          'Review and manage your datasets, results, workflows, and credentials from a single workspace view.',
+        buttonLabelZh: '进入个人资产',
+        buttonLabelEn: 'Open my assets',
+        href: '/assets',
+        iconKey: 'assets',
+        enabled: true,
+      },
+    ],
+    announcements: [
+      {
+        id: 'ops-portal-upgrade',
+        titleZh: '总览页升级为运营门户',
+        titleEn: 'Overview Upgraded to an Operations Portal',
+        summaryZh: '新的首页聚合了能力介绍、更新公告、快速入口和反馈工作台。',
+        summaryEn:
+          'The new landing page brings together product highlights, updates, quick actions, and a feedback workbench.',
+        contentZh:
+          '总览页已经升级为更适合团队协作的运营门户，可直接查看平台能力、更新公告与反馈工单。',
+        contentEn:
+          'The overview page now acts as an operations-style portal with product highlights, updates, and feedback workflows.',
+        tagZh: '平台更新',
+        tagEn: 'Platform Update',
+        publishedAt: '2026-04-05',
+        pinned: true,
+        published: true,
+      },
+      {
+        id: 'feedback-workbench-live',
+        titleZh: '意见反馈工作台已启用',
+        titleEn: 'Feedback Workbench is Live',
+        summaryZh: '成员可以提交问题、需求和体验建议，管理员可统一跟进处理。',
+        summaryEn:
+          'Members can file bugs, requests, and UX notes while administrators triage and respond.',
+        contentZh:
+          '首页新增完整反馈工单入口，支持提交问题、查看状态以及管理员回复。',
+        contentEn:
+          'The dashboard now includes a full feedback ticket workflow for submission, tracking, and administrator responses.',
+        tagZh: '协作',
+        tagEn: 'Collaboration',
+        publishedAt: '2026-04-05',
+        pinned: false,
+        published: true,
+      },
+    ],
+  };
+}
+
+function emptyFeedbackSummary(): FeedbackTicketSummaryCounts {
+  return {
+    myOpenCount: 0,
+    myActiveCount: 0,
+    adminOpenCount: 0,
+    adminInProgressCount: 0,
+  };
 }
 
 function buildHeaders(options: RequestOptions): HeadersInit {
@@ -236,6 +354,29 @@ function normalizeDatasetVersionSummary(input: ApiRecord): DatasetVersionSummary
     ownerDisplayName:
       getOptionalString(input, 'ownerDisplayName') ??
       getOptionalString(input, 'owner_display_name'),
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
+function normalizeGeeCredentialSummary(input: ApiRecord): GeeCredentialSummary {
+  return {
+    id: getString(input, 'id'),
+    workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id') ?? '',
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
+    name: getString(input, 'name'),
+    provider: getString(input, 'provider') || 'gee',
+    description: getOptionalString(input, 'description'),
+    projectId: getOptionalString(input, 'projectId') ?? getOptionalString(input, 'project_id'),
+    serviceAccountEmail:
+      getOptionalString(input, 'serviceAccountEmail') ??
+      getOptionalString(input, 'service_account_email'),
+    isPlatformDefault:
+      getOptionalBoolean(input, 'isPlatformDefault') ??
+      getOptionalBoolean(input, 'is_platform_default'),
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
   };
 }
@@ -497,18 +638,116 @@ function normalizeWorkflowTemplate(input: ApiRecord): WorkflowTemplateDefinition
 }
 
 function normalizeWorkflowRun(input: ApiRecord): WorkflowRunSummary {
+  const rawMetrics =
+    (input.metrics as Record<string, unknown> | undefined) ??
+    (input.metrics_json as Record<string, unknown> | undefined) ??
+    {};
+  const errorMessage =
+    getOptionalString(input, 'errorMessage') ??
+    getOptionalString(input, 'error_message') ??
+    (typeof rawMetrics.error === 'string' ? rawMetrics.error : undefined);
+
   return {
     id: getString(input, 'id'),
     workflowVersionId:
       getString(input, 'workflowVersionId') || getString(input, 'workflow_version_id'),
     status: getString(input, 'status') as WorkflowRunSummary['status'],
     startedAt: getOptionalString(input, 'startedAt') ?? getOptionalString(input, 'started_at'),
-    finishedAt: getOptionalString(input, 'finishedAt') ?? getOptionalString(input, 'finished_at'),
+    finishedAt:
+      getOptionalString(input, 'finishedAt') ?? getOptionalString(input, 'finished_at'),
     submittedBy: getString(input, 'submittedBy') || getString(input, 'submitted_by'),
     resultDatasetVersionId:
       getOptionalString(input, 'resultDatasetVersionId') ??
       getOptionalString(input, 'result_dataset_version_id'),
-    metrics: (input.metrics as Record<string, unknown> | undefined) ?? {},
+    metrics: rawMetrics,
+    errorMessage,
+  };
+}
+
+function normalizeDashboardFeatureItem(input: ApiRecord): DashboardFeatureItem {
+  return {
+    id: getString(input, 'id'),
+    titleZh: getString(input, 'titleZh') || getString(input, 'title_zh'),
+    titleEn: getString(input, 'titleEn') || getString(input, 'title_en'),
+    summaryZh: getString(input, 'summaryZh') || getString(input, 'summary_zh'),
+    summaryEn: getString(input, 'summaryEn') || getString(input, 'summary_en'),
+    buttonLabelZh:
+      getString(input, 'buttonLabelZh') || getString(input, 'button_label_zh'),
+    buttonLabelEn:
+      getString(input, 'buttonLabelEn') || getString(input, 'button_label_en'),
+    href: getString(input, 'href'),
+    iconKey: getString(input, 'iconKey') || getString(input, 'icon_key') || 'overview',
+    enabled: getOptionalBoolean(input, 'enabled') ?? true,
+  };
+}
+
+function normalizeDashboardAnnouncementItem(input: ApiRecord): DashboardAnnouncementItem {
+  return {
+    id: getString(input, 'id'),
+    titleZh: getString(input, 'titleZh') || getString(input, 'title_zh'),
+    titleEn: getString(input, 'titleEn') || getString(input, 'title_en'),
+    summaryZh: getString(input, 'summaryZh') || getString(input, 'summary_zh'),
+    summaryEn: getString(input, 'summaryEn') || getString(input, 'summary_en'),
+    contentZh: getString(input, 'contentZh') || getString(input, 'content_zh'),
+    contentEn: getString(input, 'contentEn') || getString(input, 'content_en'),
+    tagZh: getOptionalString(input, 'tagZh') ?? getOptionalString(input, 'tag_zh'),
+    tagEn: getOptionalString(input, 'tagEn') ?? getOptionalString(input, 'tag_en'),
+    publishedAt: getString(input, 'publishedAt') || getString(input, 'published_at'),
+    pinned: getOptionalBoolean(input, 'pinned') ?? false,
+    published: getOptionalBoolean(input, 'published') ?? true,
+  };
+}
+
+function normalizeDashboardConfig(input: ApiRecord): DashboardConfig {
+  const rawFeatures = Array.isArray(input.featureSections)
+    ? (input.featureSections as ApiRecord[])
+    : Array.isArray(input.feature_sections)
+      ? (input.feature_sections as ApiRecord[])
+      : [];
+  const rawAnnouncements = Array.isArray(input.announcements)
+    ? (input.announcements as ApiRecord[])
+    : [];
+
+  return {
+    featureSections: rawFeatures.map(normalizeDashboardFeatureItem),
+    announcements: rawAnnouncements.map(normalizeDashboardAnnouncementItem),
+  };
+}
+
+function normalizeFeedbackTicketSummary(input: ApiRecord): FeedbackTicketSummary {
+  return {
+    id: getString(input, 'id'),
+    workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
+    createdBy: getString(input, 'createdBy') || getString(input, 'created_by'),
+    createdByDisplayName:
+      getOptionalString(input, 'createdByDisplayName') ??
+      getOptionalString(input, 'created_by_display_name'),
+    title: getString(input, 'title'),
+    category: (getString(input, 'category') as FeedbackTicketCategory) || 'other',
+    priority: (getString(input, 'priority') as FeedbackTicketPriority) || 'medium',
+    status: (getString(input, 'status') as FeedbackTicketStatus) || 'open',
+    content: getString(input, 'content'),
+    contact: getOptionalString(input, 'contact'),
+    adminReply: getOptionalString(input, 'adminReply') ?? getOptionalString(input, 'admin_reply'),
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+    updatedAt: getString(input, 'updatedAt') || getString(input, 'updated_at'),
+  };
+}
+
+function normalizeFeedbackTicketSummaryCounts(input: ApiRecord): FeedbackTicketSummaryCounts {
+  return {
+    myOpenCount:
+      getOptionalNumber(input, 'myOpenCount') ?? getOptionalNumber(input, 'my_open_count') ?? 0,
+    myActiveCount:
+      getOptionalNumber(input, 'myActiveCount') ?? getOptionalNumber(input, 'my_active_count') ?? 0,
+    adminOpenCount:
+      getOptionalNumber(input, 'adminOpenCount') ??
+      getOptionalNumber(input, 'admin_open_count') ??
+      0,
+    adminInProgressCount:
+      getOptionalNumber(input, 'adminInProgressCount') ??
+      getOptionalNumber(input, 'admin_in_progress_count') ??
+      0,
   };
 }
 
@@ -952,6 +1191,190 @@ export async function deleteModelVersion(token: string, modelVersionId: string):
   });
 }
 
+export async function listGeeCredentials(
+  token: string,
+  scope: AssetScope = 'mine',
+): Promise<GeeCredentialSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/integrations/gee-credentials', { scope }),
+    { token },
+  );
+  return payload.map(normalizeGeeCredentialSummary);
+}
+
+export async function createGeeCredential(
+  token: string,
+  payload: {
+    workspaceId: string;
+    name: string;
+    description?: string;
+    projectId?: string;
+    serviceAccountJson: string;
+  },
+): Promise<GeeCredentialSummary> {
+  const response = await requestJson<ApiRecord>('/integrations/gee-credentials', {
+    method: 'POST',
+    token,
+    body: {
+      workspace_id: payload.workspaceId,
+      name: payload.name,
+      description: payload.description ?? '',
+      project_id: payload.projectId ?? '',
+      service_account_json: payload.serviceAccountJson,
+    },
+  });
+  return normalizeGeeCredentialSummary(response);
+}
+
+export async function deleteGeeCredential(token: string, credentialId: string): Promise<void> {
+  await requestJson<ApiRecord>(`/integrations/gee-credentials/${credentialId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function setPlatformDefaultGeeCredential(
+  token: string,
+  credentialId: string,
+): Promise<GeeCredentialSummary> {
+  const response = await requestJson<ApiRecord>(
+    `/integrations/gee-credentials/${credentialId}/set-platform-default`,
+    {
+      method: 'POST',
+      token,
+    },
+  );
+  return normalizeGeeCredentialSummary(response);
+}
+
+export async function getDashboardConfig(token: string): Promise<DashboardConfig> {
+  const payload = await requestJson<ApiRecord>('/platform-settings/dashboard', { token });
+  return normalizeDashboardConfig(payload);
+}
+
+export async function updateDashboardConfig(
+  token: string,
+  payload: DashboardConfig,
+): Promise<DashboardConfig> {
+  const response = await requestJson<ApiRecord>('/platform-settings/dashboard', {
+    method: 'PUT',
+    token,
+    body: {
+      feature_sections: payload.featureSections.map((item) => ({
+        id: item.id,
+        title_zh: item.titleZh,
+        title_en: item.titleEn,
+        summary_zh: item.summaryZh,
+        summary_en: item.summaryEn,
+        button_label_zh: item.buttonLabelZh,
+        button_label_en: item.buttonLabelEn,
+        href: item.href,
+        icon_key: item.iconKey,
+        enabled: item.enabled,
+      })),
+      announcements: payload.announcements.map((item) => ({
+        id: item.id,
+        title_zh: item.titleZh,
+        title_en: item.titleEn,
+        summary_zh: item.summaryZh,
+        summary_en: item.summaryEn,
+        content_zh: item.contentZh,
+        content_en: item.contentEn,
+        tag_zh: item.tagZh ?? '',
+        tag_en: item.tagEn ?? '',
+        published_at: item.publishedAt,
+        pinned: item.pinned,
+        published: item.published,
+      })),
+    },
+  });
+  return normalizeDashboardConfig(response);
+}
+
+export async function listFeedbackTickets(
+  token: string,
+  options: { scope?: 'mine' | 'all'; limit?: number } = {},
+): Promise<FeedbackTicketSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/feedback-tickets', {
+      scope: options.scope ?? 'mine',
+      limit: options.limit ? String(options.limit) : undefined,
+    }),
+    { token },
+  );
+  return payload.map(normalizeFeedbackTicketSummary);
+}
+
+export async function getFeedbackTicket(
+  token: string,
+  ticketId: string,
+): Promise<FeedbackTicketSummary> {
+  const payload = await requestJson<ApiRecord>(`/feedback-tickets/${ticketId}`, { token });
+  return normalizeFeedbackTicketSummary(payload);
+}
+
+export async function createFeedbackTicket(
+  token: string,
+  payload: {
+    workspaceId: string;
+    title: string;
+    category: FeedbackTicketCategory;
+    priority: FeedbackTicketPriority;
+    content: string;
+    contact?: string;
+  },
+): Promise<FeedbackTicketSummary> {
+  const response = await requestJson<ApiRecord>('/feedback-tickets', {
+    method: 'POST',
+    token,
+    body: {
+      workspace_id: payload.workspaceId,
+      title: payload.title,
+      category: payload.category,
+      priority: payload.priority,
+      content: payload.content,
+      contact: payload.contact ?? '',
+    },
+  });
+  return normalizeFeedbackTicketSummary(response);
+}
+
+export async function updateFeedbackTicket(
+  token: string,
+  ticketId: string,
+  payload: {
+    title?: string;
+    category?: FeedbackTicketCategory;
+    priority?: FeedbackTicketPriority;
+    status?: FeedbackTicketStatus;
+    content?: string;
+    contact?: string;
+    adminReply?: string;
+  },
+): Promise<FeedbackTicketSummary> {
+  const response = await requestJson<ApiRecord>(`/feedback-tickets/${ticketId}`, {
+    method: 'PATCH',
+    token,
+    body: {
+      title: payload.title,
+      category: payload.category,
+      priority: payload.priority,
+      status: payload.status,
+      content: payload.content,
+      contact: payload.contact,
+      admin_reply: payload.adminReply,
+    },
+  });
+  return normalizeFeedbackTicketSummary(response);
+}
+
+export async function getFeedbackTicketSummary(
+  token: string,
+): Promise<FeedbackTicketSummaryCounts> {
+  const payload = await requestJson<ApiRecord>('/feedback-tickets/summary', { token });
+  return normalizeFeedbackTicketSummaryCounts(payload);
+}
+
 export async function saveWorkflowVersion(
   token: string,
   workflowVersion: WorkflowVersionDetail,
@@ -1128,18 +1551,21 @@ export async function loadAssetOverview(
   token: string,
   scope: AssetScope = 'mine',
 ): Promise<AssetOverview> {
-  const [datasets, datasetVersions, workflowVersions, workflowRuns, modelVersions] = await Promise.all([
-    requestJson<ApiRecord[]>(withQuery('/datasets', { scope }), { token }),
-    requestJson<ApiRecord[]>(withQuery('/dataset-versions', { scope }), { token }),
-    requestJson<ApiRecord[]>(withQuery('/workflows/versions', { scope }), { token }),
-    requestJson<ApiRecord[]>(withQuery('/workflow-runs', { scope }), { token }),
-    requestJson<ApiRecord[]>(withQuery('/models/versions', { scope }), { token }),
-  ]);
+  const [datasets, datasetVersions, geeCredentials, workflowVersions, workflowRuns, modelVersions] =
+    await Promise.all([
+      requestJson<ApiRecord[]>(withQuery('/datasets', { scope }), { token }),
+      requestJson<ApiRecord[]>(withQuery('/dataset-versions', { scope }), { token }),
+      requestJson<ApiRecord[]>(withQuery('/integrations/gee-credentials', { scope }), { token }),
+      requestJson<ApiRecord[]>(withQuery('/workflows/versions', { scope }), { token }),
+      requestJson<ApiRecord[]>(withQuery('/workflow-runs', { scope }), { token }),
+      requestJson<ApiRecord[]>(withQuery('/models/versions', { scope }), { token }),
+    ]);
 
   return {
     scope,
     datasets: datasets.map(normalizeDatasetSummary),
     datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
+    geeCredentials: geeCredentials.map(normalizeGeeCredentialSummary),
     workflowVersions: workflowVersions.map(normalizeWorkflowVersionSummary),
     workflowRuns: workflowRuns.map(normalizeWorkflowRun),
     modelVersions: modelVersions.map(normalizeModelVersion),
@@ -1148,12 +1574,13 @@ export async function loadAssetOverview(
 
 export async function loadPlatformData(
   token: string,
-  options: { includeModels: boolean },
+  options: { includeModels: boolean; includeAdminData: boolean },
 ): Promise<PlatformDataSnapshot> {
   const baseRequests = [
     requestJson<ApiRecord[]>('/workspaces', { token }),
     requestJson<ApiRecord[]>('/datasets', { token }),
     requestJson<ApiRecord[]>('/dataset-versions', { token }),
+    requestJson<ApiRecord[]>('/integrations/gee-credentials?scope=mine', { token }),
     requestJson<ApiRecord[]>('/workflows/catalog', { token }),
     requestJson<ApiRecord[]>('/workflows/templates', { token }),
     requestJson<ApiRecord>('/workflows/versions/current', { token }),
@@ -1164,25 +1591,59 @@ export async function loadPlatformData(
     workspaces,
     datasets,
     datasetVersions,
+    geeCredentials,
     workflowCatalog,
     workflowTemplates,
     workflowVersion,
     workflowRuns,
   ] = await Promise.all(baseRequests);
 
-  const modelVersions = options.includeModels
-    ? await requestJson<ApiRecord[]>('/models/versions', { token })
-    : [];
+  const [modelVersionsResult, dashboardConfigResult, feedbackTicketsResult, feedbackSummaryResult] =
+    await Promise.allSettled([
+      options.includeModels
+        ? requestJson<ApiRecord[]>('/models/versions', { token })
+        : Promise.resolve([] as ApiRecord[]),
+      requestJson<ApiRecord>('/platform-settings/dashboard', { token }),
+      requestJson<ApiRecord[]>(
+        withQuery('/feedback-tickets', {
+          scope: options.includeAdminData ? 'all' : 'mine',
+          limit: '6',
+        }),
+        { token },
+      ),
+      requestJson<ApiRecord>('/feedback-tickets/summary', { token }),
+    ]);
+
+  const modelVersions =
+    modelVersionsResult.status === 'fulfilled'
+      ? modelVersionsResult.value
+      : [];
+  const dashboardConfig =
+    dashboardConfigResult.status === 'fulfilled'
+      ? normalizeDashboardConfig(dashboardConfigResult.value)
+      : createFallbackDashboardConfig();
+  const feedbackTickets =
+    feedbackTicketsResult.status === 'fulfilled'
+      ? feedbackTicketsResult.value.map(normalizeFeedbackTicketSummary)
+      : [];
+  const feedbackSummary =
+    feedbackSummaryResult.status === 'fulfilled'
+      ? normalizeFeedbackTicketSummaryCounts(feedbackSummaryResult.value)
+      : emptyFeedbackSummary();
 
   return {
     workspace: normalizeWorkspaceSummary(workspaces[0]),
     datasets: datasets.map(normalizeDatasetSummary),
     datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
+    geeCredentials: geeCredentials.map(normalizeGeeCredentialSummary),
     workflowCatalog: workflowCatalog.map(normalizeWorkflowCatalogItem),
     workflowTemplates: workflowTemplates.map(normalizeWorkflowTemplate),
     workflowVersion: normalizeWorkflowVersion(workflowVersion),
     workflowRuns: workflowRuns.map(normalizeWorkflowRun),
     modelVersions: modelVersions.map(normalizeModelVersion),
+    dashboardConfig,
+    feedbackTickets,
+    feedbackSummary,
     source: 'api',
   };
 }

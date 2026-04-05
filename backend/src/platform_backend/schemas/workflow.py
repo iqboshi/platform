@@ -208,6 +208,7 @@ class WorkflowRunAccepted(BaseModel):
     workflow_version_id: str
     status: WorkflowRunStatus = WorkflowRunStatus.QUEUED
     submitted_by: str
+    error_message: str | None = None
 
 
 WorkflowNodeTestStatus = Literal["succeeded", "failed", "not_supported"]

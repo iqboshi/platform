@@ -177,6 +177,6 @@ def validate_workflow(request: WorkflowGraph) -> WorkflowValidationResult:
 def test_workflow_node_route(
     request: WorkflowNodeTestRequest,
     db: DatabaseDep,
-    _: WorkflowRunUserDep,
+    current_user: WorkflowRunUserDep,
 ) -> WorkflowNodeTestResponse:
-    return test_workflow_node(db, request.graph, request.node_id)
+    return test_workflow_node(db, request.graph, request.node_id, current_user)

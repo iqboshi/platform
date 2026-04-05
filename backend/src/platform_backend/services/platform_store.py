@@ -14,6 +14,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+import platform_backend.workflows.gee_runtime as gee_runtime
 from platform_backend.core.settings import get_settings
 from platform_backend.domain_enums import (
     DatasetKind,
@@ -25,9 +26,11 @@ from platform_backend.domain_enums import (
 from platform_backend.models.entities import (
     Dataset,
     DatasetVersion,
+    GeeCredential,
     JobLog,
     Model,
     ModelVersion,
+    PlatformSetting,
     SplitJob,
     User,
     Workflow,
@@ -41,6 +44,8 @@ from platform_backend.schemas.platform import (
     DatasetSummary,
     DatasetUploadConfirmRequest,
     DatasetVersionSummary,
+    GeeCredentialCreateRequest,
+    GeeCredentialSummary,
     JobSummary,
     ModelSummary,
     ModelVersionSummary,
@@ -71,6 +76,8 @@ from platform_backend.workflows.tabular_runtime import (
     summarize_csv_file,
     test_tabular_node,
 )
+
+PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY = "integration.gee.default_credential"
 
 
 def _storage_root() -> Path:
@@ -233,6 +240,62 @@ def _workflow_owner_display_name(row: WorkflowVersion) -> str | None:
     return owner_display_name or None
 
 
+def _gee_service_account_email(service_account_json: str) -> str | None:
+    try:
+        payload = json.loads(service_account_json)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    service_account_email = str(payload.get("client_email", "")).strip()
+    return service_account_email or None
+
+
+def _gee_credential_summary(
+    row: GeeCredential,
+    owner_display_name: str | None,
+    *,
+    is_platform_default: bool = False,
+) -> GeeCredentialSummary:
+    return GeeCredentialSummary(
+        id=row.id,
+        workspace_id=row.workspace_id,
+        owner_user_id=row.owner_user_id,
+        owner_display_name=owner_display_name,
+        name=row.name,
+        provider=row.provider,
+        description=row.description,
+        project_id=row.project_id,
+        service_account_email=_gee_service_account_email(row.service_account_json),
+        is_platform_default=is_platform_default,
+        created_at=row.created_at,
+    )
+
+
+def _can_access_gee_credential(
+    row: GeeCredential,
+    current_user: UserProfile | User | None,
+) -> bool:
+    if current_user is None:
+        return False
+    if _is_admin_user(current_user):
+        return True
+    return row.owner_user_id == current_user.id
+
+
+def _platform_setting(db: Session, key: str) -> PlatformSetting | None:
+    return db.scalar(select(PlatformSetting).where(PlatformSetting.key == key))
+
+
+def _platform_default_gee_credential_id(db: Session) -> str | None:
+    setting = _platform_setting(db, PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY)
+    if setting is None or not isinstance(setting.value_json, dict):
+        return None
+    credential_id = str(setting.value_json.get("credential_id", "")).strip()
+    return credential_id or None
+
+
 def _can_access_workflow_version(
     row: WorkflowVersion,
     current_user: UserProfile | User,
@@ -296,6 +359,11 @@ def _workflow_run_summary(row: WorkflowRun, submitted_by: str) -> WorkflowRunSum
         status=row.status,
         submitted_by=submitted_by,
         result_dataset_version_id=row.result_dataset_version_id,
+        error_message=(
+            str(metrics_payload.get("error", "")).strip()
+            if isinstance(metrics_payload.get("error"), str)
+            else None
+        ),
         metrics=(
             metrics_payload.get("metrics", metrics_payload)
             if isinstance(metrics_payload.get("metrics", metrics_payload), dict)
@@ -368,6 +436,188 @@ def _workspace_summary(db: Session, row: Workspace) -> WorkspaceSummary:
 def list_workspaces(db: Session) -> list[WorkspaceSummary]:
     rows = db.scalars(select(Workspace).order_by(Workspace.created_at.asc())).all()
     return [_workspace_summary(db, row) for row in rows]
+
+
+def list_gee_credentials(
+    db: Session,
+    current_user: UserProfile | User,
+    *,
+    scope: str = "mine",
+) -> list[GeeCredentialSummary]:
+    rows = db.scalars(select(GeeCredential).order_by(GeeCredential.created_at.desc())).all()
+    platform_default_credential_id = _platform_default_gee_credential_id(db)
+    if scope == "all":
+        if not _is_admin_user(current_user):
+            raise PermissionError("Only administrators can list all GEE credentials.")
+    elif scope == "mine":
+        rows = [row for row in rows if row.owner_user_id == current_user.id]
+    else:
+        rows = [row for row in rows if _can_access_gee_credential(row, current_user)]
+
+    owner_ids = {row.owner_user_id for row in rows}
+    owner_names = {
+        row.id: row.display_name
+        for row in db.scalars(select(User).where(User.id.in_(owner_ids))).all()
+    }
+    return [
+        _gee_credential_summary(
+            row,
+            owner_names.get(row.owner_user_id),
+            is_platform_default=row.id == platform_default_credential_id,
+        )
+        for row in rows
+    ]
+
+
+def create_gee_credential(
+    db: Session,
+    *,
+    request: GeeCredentialCreateRequest,
+    current_user: UserProfile | User,
+) -> GeeCredentialSummary:
+    name = request.name.strip()
+    if not name:
+        raise ValueError("Credential name is required.")
+
+    try:
+        payload = json.loads(request.service_account_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("service_account_json must be valid JSON.") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("service_account_json must be a JSON object.")
+
+    service_account_email = str(payload.get("client_email", "")).strip()
+    private_key = str(payload.get("private_key", "")).strip()
+    if not service_account_email or not private_key:
+        raise ValueError(
+            "service_account_json must include client_email and private_key fields."
+        )
+
+    credential = GeeCredential(
+        workspace_id=request.workspace_id,
+        owner_user_id=current_user.id,
+        name=name,
+        provider="gee",
+        description=request.description.strip(),
+        project_id=(
+            request.project_id.strip()
+            if isinstance(request.project_id, str) and request.project_id.strip()
+            else str(payload.get("project_id", "")).strip() or None
+        ),
+        service_account_json=json.dumps(payload, indent=2),
+    )
+    db.add(credential)
+    db.commit()
+    db.refresh(credential)
+    return _gee_credential_summary(
+        credential,
+        current_user.display_name,
+        is_platform_default=False,
+    )
+
+
+def delete_gee_credential(
+    db: Session,
+    credential_id: str,
+    *,
+    current_user: UserProfile | User,
+) -> None:
+    row = db.get(GeeCredential, credential_id)
+    if row is None:
+        raise LookupError("GEE credential not found.")
+    if not _can_access_gee_credential(row, current_user):
+        raise PermissionError("You do not have access to this GEE credential.")
+    if not _is_admin_user(current_user) and row.owner_user_id != current_user.id:
+        raise PermissionError(
+            "Only the owner or an administrator can delete this GEE credential."
+        )
+    platform_default_setting = _platform_setting(db, PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY)
+    if platform_default_setting and _platform_default_gee_credential_id(db) == row.id:
+        db.delete(platform_default_setting)
+    db.delete(row)
+    db.commit()
+
+
+def set_platform_default_gee_credential(
+    db: Session,
+    credential_id: str,
+    *,
+    current_user: UserProfile | User,
+) -> GeeCredentialSummary:
+    if not _is_admin_user(current_user):
+        raise PermissionError("Only administrators can set the platform default GEE credential.")
+
+    row = db.get(GeeCredential, credential_id)
+    if row is None:
+        raise LookupError("GEE credential not found.")
+
+    setting = _platform_setting(db, PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY)
+    if setting is None:
+        setting = PlatformSetting(
+            key=PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY,
+            value_json={"credential_id": row.id},
+        )
+        db.add(setting)
+    else:
+        setting.value_json = {"credential_id": row.id}
+
+    db.commit()
+    owner = db.get(User, row.owner_user_id)
+    return _gee_credential_summary(
+        row,
+        owner.display_name if owner is not None else None,
+        is_platform_default=True,
+    )
+
+
+def resolve_gee_credential_config(
+    db: Session,
+    *,
+    current_user: UserProfile | User,
+    credential_mode: str,
+    personal_credential_id: str | None,
+) -> gee_runtime.GeeCredentialConfig:
+    settings = get_settings()
+    if credential_mode == "platform_default":
+        default_credential_id = _platform_default_gee_credential_id(db)
+        if default_credential_id:
+            row = db.get(GeeCredential, default_credential_id)
+            if row is not None:
+                return gee_runtime.GeeCredentialConfig(
+                    source="platform_default",
+                    name=row.name,
+                    service_account_json=row.service_account_json,
+                    project_id=row.project_id,
+                )
+
+        if settings.gee_service_account_json.strip():
+            return gee_runtime.GeeCredentialConfig(
+                source="platform_default",
+                name="Platform Default GEE Credential",
+                service_account_json=settings.gee_service_account_json,
+                project_id=settings.gee_project.strip() or None,
+            )
+        if not settings.gee_enabled:
+            raise ValueError("Platform GEE integration is disabled.")
+        raise ValueError("The platform default GEE credential is not configured.")
+
+    if credential_mode != "personal":
+        raise ValueError("Unsupported GEE credential mode.")
+    if not personal_credential_id:
+        raise ValueError("personalCredentialId is required for personal GEE credentials.")
+
+    row = db.get(GeeCredential, personal_credential_id)
+    if row is None:
+        raise LookupError("The selected personal GEE credential was not found.")
+    if not _can_access_gee_credential(row, current_user):
+        raise PermissionError("You do not have access to the selected GEE credential.")
+    return gee_runtime.GeeCredentialConfig(
+        source="personal",
+        name=row.name,
+        service_account_json=row.service_account_json,
+        project_id=row.project_id,
+    )
 
 
 def list_datasets(
@@ -837,6 +1087,8 @@ def create_private_dataset_version(
     kind: DatasetKind,
     source_path: Path,
     content_type: str,
+    bbox: list[float] | None = None,
+    dataset_description: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> DatasetVersionSummary:
     dataset = Dataset(
@@ -844,7 +1096,7 @@ def create_private_dataset_version(
         name=dataset_name,
         kind=kind,
         status=DatasetStatus.READY,
-        description="Workflow-generated private output.",
+        description=dataset_description or "Workflow-generated private output.",
     )
     db.add(dataset)
     db.flush()
@@ -880,6 +1132,7 @@ def create_private_dataset_version(
         original_file_name=source_path.name,
         content_type=content_type,
         size_bytes=size_bytes,
+        bbox=bbox,
         metadata_json=version_metadata,
     )
     db.add(version)
@@ -1323,15 +1576,38 @@ def test_workflow_node(
     db: Session,
     graph: WorkflowGraph,
     node_id: str,
+    current_user: UserProfile | User,
 ) -> WorkflowNodeTestResponse:
     started = perf_counter()
-    try:
-        result = test_tabular_node(
-            db=db,
-            graph_json=graph.model_dump(mode="json"),
-            target_node_id=node_id,
-            storage_root=_storage_root(),
+    graph_json = graph.model_dump(mode="json")
+    target_node = next((node for node in graph.nodes if node.id == node_id), None)
+    target_node_type = target_node.type if target_node is not None else ""
+
+    def resolve_credential(
+        mode: str,
+        personal_credential_id: str | None,
+    ) -> gee_runtime.GeeCredentialConfig:
+        return resolve_gee_credential_config(
+            db,
+            current_user=current_user,
+            credential_mode=mode,
+            personal_credential_id=personal_credential_id,
         )
+
+    try:
+        if gee_runtime.supports_gee_node(target_node_type):
+            result = gee_runtime.test_gee_node(
+                graph_json=graph_json,
+                target_node_id=node_id,
+                resolve_credential=resolve_credential,
+            )
+        else:
+            result = test_tabular_node(
+                db=db,
+                graph_json=graph_json,
+                target_node_id=node_id,
+                storage_root=_storage_root(),
+            )
     except NotImplementedError as exc:
         return WorkflowNodeTestResponse(
             status="not_supported",
@@ -1448,6 +1724,10 @@ def _extract_run_references(graph_json: dict[str, object]) -> tuple[str | None, 
     return dataset_version_id, model_version_id
 
 
+def _fallback_dataset_version(db: Session) -> DatasetVersion | None:
+    return db.scalar(select(DatasetVersion).order_by(DatasetVersion.created_at.asc()))
+
+
 def _fallback_model_version(db: Session) -> ModelVersion | None:
     return db.scalar(select(ModelVersion).order_by(ModelVersion.created_at.asc()))
 
@@ -1546,13 +1826,19 @@ def create_workflow_run(
     graph_json = (
         workflow_version.graph_json if isinstance(workflow_version.graph_json, dict) else {}
     )
+    gee_graph_supported = gee_runtime.is_supported_gee_graph(graph_json)
     dataset_version_id, model_version_id = _extract_run_references(graph_json)
-    if not dataset_version_id:
+    if not dataset_version_id and not gee_graph_supported:
         raise LookupError("Workflow graph does not declare an input dataset version.")
 
-    dataset_version = db.get(DatasetVersion, dataset_version_id)
-    if dataset_version is None:
+    dataset_version = db.get(DatasetVersion, dataset_version_id) if dataset_version_id else None
+    if dataset_version_id and dataset_version is None:
         raise LookupError(f"Dataset version not found: {dataset_version_id}")
+    fallback_dataset_version = dataset_version or _fallback_dataset_version(db)
+    if fallback_dataset_version is None:
+        raise LookupError(
+            "No dataset version is available to associate with this workflow run."
+        )
 
     model_version = db.get(ModelVersion, model_version_id) if model_version_id else None
     if model_version_id and model_version is None:
@@ -1562,9 +1848,20 @@ def create_workflow_run(
     if fallback_model_version is None:
         raise LookupError("No model version is available to associate with this workflow run.")
 
+    def resolve_credential(
+        mode: str,
+        personal_credential_id: str | None,
+    ) -> gee_runtime.GeeCredentialConfig:
+        return resolve_gee_credential_config(
+            db,
+            current_user=current_user,
+            credential_mode=mode,
+            personal_credential_id=personal_credential_id,
+        )
+
     run = WorkflowRun(
         workflow_version_id=workflow_version.id,
-        input_dataset_version_id=dataset_version.id,
+        input_dataset_version_id=fallback_dataset_version.id,
         model_version_id=fallback_model_version.id,
         status=WorkflowRunStatus.QUEUED,
         submitted_by=current_user.id,
@@ -1572,13 +1869,21 @@ def create_workflow_run(
         metrics_json={
             "priority": request.priority,
             "references": {
-                "input_dataset_version_id": dataset_version.id,
+                "input_dataset_version_id": dataset_version.id if dataset_version else None,
                 "model_version_id": model_version.id if model_version else None,
+                "workflow_runtime": (
+                    "gee"
+                    if gee_graph_supported
+                    else "tabular"
+                    if is_supported_tabular_graph(graph_json)
+                    else "placeholder"
+                ),
             },
         },
     )
     db.add(run)
     db.flush()
+    error_message: str | None = None
 
     try:
         ensure_workflow_run_transition(run.status, WorkflowRunStatus.RUNNING)
@@ -1614,6 +1919,37 @@ def create_workflow_run(
                     message=f"Executed tabular workflow run {run.id}.",
                 )
             )
+        elif gee_graph_supported:
+            runtime_result = gee_runtime.execute_gee_graph(
+                db=db,
+                workflow_version=workflow_version,
+                current_user=current_user,
+                workspace_id=request.workspace_id,
+                run_id=run.id,
+                storage_root=_storage_root(),
+                resolve_credential=resolve_credential,
+                create_private_dataset_version=create_private_dataset_version,
+            )
+            ensure_workflow_run_transition(run.status, WorkflowRunStatus.SUCCEEDED)
+            run.status = WorkflowRunStatus.SUCCEEDED
+            run.finished_at = datetime.now(UTC)
+            run.result_dataset_version_id = runtime_result["result_dataset_version_id"]
+            run.metrics_json = {
+                **run.metrics_json,
+                "metrics": runtime_result["metrics"],
+                "saved_dataset_version_ids": runtime_result["saved_dataset_version_ids"],
+                "saved_model_version_ids": runtime_result["saved_model_version_ids"],
+                "result_model_version_id": runtime_result["result_model_version_id"],
+                "artifact_path": runtime_result["artifact_path"],
+            }
+            db.add(
+                JobLog(
+                    job_type="workflow_run",
+                    reference_id=run.id,
+                    status=JobStatus.SUCCEEDED,
+                    message=f"Executed Sentinel GEE workflow run {run.id}.",
+                )
+            )
         else:
             _complete_placeholder_workflow_run(
                 db=db,
@@ -1621,7 +1957,7 @@ def create_workflow_run(
                 current_user=current_user,
                 workspace_id=request.workspace_id,
                 workflow_version=workflow_version,
-                dataset_version=dataset_version,
+                dataset_version=dataset_version or fallback_dataset_version,
                 model_version=model_version,
             )
         db.commit()
@@ -1629,26 +1965,27 @@ def create_workflow_run(
         ensure_workflow_run_transition(run.status, WorkflowRunStatus.FAILED)
         run.status = WorkflowRunStatus.FAILED
         run.finished_at = datetime.now(UTC)
+        error_message = str(exc).strip() or "Workflow execution failed."
         run.metrics_json = {
             **run.metrics_json,
-            "error": str(exc),
+            "error": error_message,
         }
         db.add(
             JobLog(
                 job_type="workflow_run",
                 reference_id=run.id,
                 status=JobStatus.FAILED,
-                message=f"Workflow run {run.id} failed: {exc}",
+                message=f"Workflow run {run.id} failed: {error_message}",
             )
         )
         db.commit()
-        raise
 
     return WorkflowRunAccepted(
         id=run.id,
         workflow_version_id=run.workflow_version_id,
         status=run.status,
         submitted_by=current_user.display_name,
+        error_message=error_message,
     )
 
 

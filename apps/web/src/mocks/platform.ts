@@ -1,6 +1,10 @@
 import type {
+  DashboardConfig,
   DatasetSummary,
   DatasetVersionSummary,
+  FeedbackTicketSummary,
+  FeedbackTicketSummaryCounts,
+  GeeCredentialSummary,
   ModelVersionSummary,
   WorkspaceSummary,
   WorkflowNodeCatalogItem,
@@ -509,13 +513,92 @@ const modelVersions: ModelVersionSummary[] = [
   },
 ];
 
+const geeCredentials: GeeCredentialSummary[] = [];
+
+const dashboardConfig: DashboardConfig = {
+  featureSections: [
+    {
+      id: 'public-datasets',
+      titleZh: '公开数据集浏览',
+      titleEn: 'Public Dataset Catalog',
+      summaryZh: '集中浏览公开数据集、查看简介并快速下载可用版本。',
+      summaryEn:
+        'Browse published datasets, review curated descriptions, and download usable versions quickly.',
+      buttonLabelZh: '进入数据集',
+      buttonLabelEn: 'Open catalog',
+      href: '/datasets',
+      iconKey: 'datasets',
+      enabled: true,
+    },
+    {
+      id: 'visual-workflows',
+      titleZh: '可视化工作流编排',
+      titleEn: 'Visual Workflow Builder',
+      summaryZh: '用节点化方式组织数据处理、模型推理和结果导出流程。',
+      summaryEn:
+        'Compose data preparation, model inference, and export steps through a visual node graph.',
+      buttonLabelZh: '打开工作流',
+      buttonLabelEn: 'Open workflows',
+      href: '/workflows',
+      iconKey: 'workflows',
+      enabled: true,
+    },
+  ],
+  announcements: [
+    {
+      id: 'portal-upgrade',
+      titleZh: '总览页升级为运营门户',
+      titleEn: 'Overview Upgraded to an Operations Portal',
+      summaryZh: '首页现在聚合了功能介绍、更新公告和反馈入口。',
+      summaryEn:
+        'The homepage now combines product highlights, release notes, and feedback entry points.',
+      contentZh: '这是一个用于本地演示的首页公告示例。',
+      contentEn: 'This is a sample dashboard announcement used by the local mock data.',
+      tagZh: '平台更新',
+      tagEn: 'Platform Update',
+      publishedAt: '2026-04-05',
+      pinned: true,
+      published: true,
+    },
+  ],
+};
+
+const feedbackTickets: FeedbackTicketSummary[] = [
+  {
+    id: 'ticket-001',
+    workspaceId: 'ws-earth-lab',
+    createdBy: 'user-member',
+    createdByDisplayName: 'Team Member',
+    title: '希望增加批量下载提示',
+    category: 'feature_request',
+    priority: 'medium',
+    status: 'in_progress',
+    content: '下载较大结果时，希望在首页就能看到更明确的提示。',
+    contact: 'member@platform.local',
+    adminReply: '已纳入下一轮可用性优化。',
+    createdAt: '2026-04-04T10:00:00Z',
+    updatedAt: '2026-04-05T08:30:00Z',
+  },
+];
+
+const feedbackSummary: FeedbackTicketSummaryCounts = {
+  myOpenCount: 0,
+  myActiveCount: 1,
+  adminOpenCount: 1,
+  adminInProgressCount: 1,
+};
+
 export const platformMock = {
   workspace,
   datasets,
   datasetVersions,
+  geeCredentials,
   workflowCatalog,
   workflowTemplates,
   workflowVersion,
   workflowRuns,
   modelVersions,
+  dashboardConfig,
+  feedbackTickets,
+  feedbackSummary,
 };

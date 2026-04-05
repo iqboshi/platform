@@ -23,11 +23,14 @@ import { useAuth } from '@/auth/useAuth';
 import { useI18n } from '@/i18n/useI18n';
 import {
   deleteDataset,
+  deleteGeeCredential,
   deleteModelVersion,
   deleteWorkflowVersion,
+  setPlatformDefaultGeeCredential,
   downloadDatasetVersion,
   downloadModelVersion,
   downloadWorkflowVersion,
+  createGeeCredential,
   importWorkflowVersion,
   loadAssetOverview,
   updateDataset,
@@ -89,6 +92,13 @@ interface RenameFormValues {
   sampleRecordJson?: string;
 }
 
+interface GeeCredentialFormValues {
+  name: string;
+  description?: string;
+  projectId?: string;
+  serviceAccountJson: string;
+}
+
 export function PersonalAssetsPage({
   snapshot,
   onRefresh,
@@ -98,20 +108,66 @@ export function PersonalAssetsPage({
 }) {
   const { message, modal } = App.useApp();
   const { currentUser, token } = useAuth();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [scope, setScope] = useState<AssetScope>('mine');
   const [overview, setOverview] = useState<AssetOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [credentialOpen, setCredentialOpen] = useState(false);
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadForm] = Form.useForm<UploadFormValues>();
+  const [credentialForm] = Form.useForm<GeeCredentialFormValues>();
   const [renameForm] = Form.useForm<RenameFormValues>();
   const selectedUploadKind = Form.useWatch('kind', uploadForm) ?? 'table';
 
   const isAdmin = currentUser?.role === 'ADMIN';
+  const geeCopy =
+    locale === 'zh-CN'
+      ? {
+          tab: 'GEE 凭据',
+          add: '新增 GEE 凭据',
+          name: '名称',
+          project: '项目 ID',
+          email: '服务账号',
+          description: '说明',
+          serviceAccountJson: 'Service Account JSON',
+          createTitle: '新增 GEE 凭据',
+          createSuccess: 'GEE 凭据已保存。',
+          deleteTitle: '删除 GEE 凭据',
+          deleteBody: '删除后，该凭据将不能再被工作流节点引用。',
+          deleteSuccess: 'GEE 凭据已删除。',
+          empty: '当前范围下没有 GEE 凭据。',
+        }
+      : {
+          tab: 'GEE Credentials',
+          add: 'Add GEE Credential',
+          name: 'Name',
+          project: 'Project ID',
+          email: 'Service Account',
+          description: 'Description',
+          serviceAccountJson: 'Service Account JSON',
+          createTitle: 'Create GEE Credential',
+          createSuccess: 'GEE credential saved.',
+          deleteTitle: 'Delete GEE credential',
+          deleteBody: 'After deletion, workflow nodes can no longer use this credential.',
+          deleteSuccess: 'GEE credential deleted.',
+          empty: 'No GEE credentials found for the current scope.',
+        };
+  const geePlatformCopy =
+    locale === 'zh-CN'
+      ? {
+          platformDefault: '平台默认',
+          setPlatformDefault: '设为平台默认',
+          platformDefaultSet: '已设为平台默认凭据。',
+        }
+      : {
+          platformDefault: 'Platform Default',
+          setPlatformDefault: 'Set As Platform Default',
+          platformDefaultSet: 'Platform default GEE credential updated.',
+        };
 
   const refreshAssets = useCallback(
     async (nextScope: AssetScope = scope) => {
@@ -216,6 +272,32 @@ export function PersonalAssetsPage({
     }
   };
 
+  const handleCreateGeeCredential = async () => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const values = await credentialForm.validateFields();
+      await createGeeCredential(token, {
+        workspaceId: snapshot.workspace.id,
+        name: values.name,
+        description: values.description,
+        projectId: values.projectId,
+        serviceAccountJson: values.serviceAccountJson,
+      });
+      message.success(geeCopy.createSuccess);
+      setCredentialOpen(false);
+      credentialForm.resetFields();
+      await Promise.all([refreshAssets(), onRefresh()]);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleRename = async () => {
     if (!token || !renameTargetId) {
       return;
@@ -286,6 +368,37 @@ export function PersonalAssetsPage({
         await Promise.all([refreshAssets(), onRefresh()]);
       },
     });
+  };
+
+  const handleDeleteGeeCredential = async (credentialId: string) => {
+    if (!token) {
+      return;
+    }
+
+    modal.confirm({
+      title: geeCopy.deleteTitle,
+      content: geeCopy.deleteBody,
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await deleteGeeCredential(token, credentialId);
+        message.success(geeCopy.deleteSuccess);
+        await Promise.all([refreshAssets(), onRefresh()]);
+      },
+    });
+  };
+
+  const handleSetPlatformDefaultGeeCredential = async (credentialId: string) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      await setPlatformDefaultGeeCredential(token, credentialId);
+      message.success(geePlatformCopy.platformDefaultSet);
+      await Promise.all([refreshAssets(), onRefresh()]);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    }
   };
 
   const handleToggleVisibility = async (datasetId: string, nextVisibility: 'public' | 'private') => {
@@ -522,6 +635,60 @@ export function PersonalAssetsPage({
     },
   ];
 
+  const geeCredentialColumns = [
+    {
+      title: geeCopy.name,
+      dataIndex: 'name',
+      render: (
+        value: string,
+        record: NonNullable<typeof overview>['geeCredentials'][number],
+      ) => (
+        <Space wrap size={[8, 8]}>
+          <span>{value}</span>
+          {record.isPlatformDefault ? (
+            <Tag color="gold">{geePlatformCopy.platformDefault}</Tag>
+          ) : null}
+        </Space>
+      ),
+    },
+    { title: geeCopy.project, dataIndex: 'projectId', render: (value: string | undefined) => value ?? '-' },
+    {
+      title: geeCopy.email,
+      dataIndex: 'serviceAccountEmail',
+      render: (value: string | undefined) => value ?? '-',
+    },
+    ...(isAdmin || scope === 'all'
+      ? [
+          {
+            title: t('assets.owner'),
+            dataIndex: 'ownerDisplayName',
+            render: (value: string | undefined) => value ?? '-',
+          },
+        ]
+      : []),
+    { title: t('common.createdAt'), dataIndex: 'createdAt' },
+    {
+      title: t('common.actions'),
+      key: 'actions',
+      render: (_: unknown, record: NonNullable<typeof overview>['geeCredentials'][number]) => (
+        <Space wrap>
+          {isAdmin ? (
+            <Button
+              type="link"
+              disabled={record.isPlatformDefault}
+              onClick={() => void handleSetPlatformDefaultGeeCredential(record.id)}
+            >
+              {geePlatformCopy.setPlatformDefault}
+            </Button>
+          ) : null}
+          <Button danger type="link" onClick={() => void handleDeleteGeeCredential(record.id)}>
+            {t('common.delete')}
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <div className="page-stack">
       <div className="section-header">
@@ -544,6 +711,7 @@ export function PersonalAssetsPage({
               />
             ) : null}
             <Button onClick={() => setUploadOpen(true)}>{t('common.upload')}</Button>
+            <Button onClick={() => setCredentialOpen(true)}>{geeCopy.add}</Button>
             <Button onClick={() => importInputRef.current?.click()}>{t('assets.importWorkflow')}</Button>
             <Button onClick={() => void refreshAssets()}>{t('common.refresh')}</Button>
           </Space>
@@ -622,6 +790,21 @@ export function PersonalAssetsPage({
                   <Empty description={t('assets.empty')} />
                 ),
               },
+              {
+                key: 'gee-credentials',
+                label: geeCopy.tab,
+                children: overview.geeCredentials.length ? (
+                  <Table
+                    rowKey="id"
+                    loading={loading}
+                    pagination={false}
+                    columns={geeCredentialColumns}
+                    dataSource={overview.geeCredentials}
+                  />
+                ) : (
+                  <Empty description={geeCopy.empty} />
+                ),
+              },
             ]}
           />
         ) : (
@@ -677,6 +860,37 @@ export function PersonalAssetsPage({
                 }
               }}
             />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={geeCopy.createTitle}
+        open={credentialOpen}
+        onCancel={() => setCredentialOpen(false)}
+        onOk={() => void handleCreateGeeCredential()}
+        confirmLoading={submitting}
+      >
+        <Form
+          form={credentialForm}
+          layout="vertical"
+          initialValues={{ name: '', description: '', projectId: '', serviceAccountJson: '' }}
+        >
+          <Form.Item name="name" label={geeCopy.name} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="description" label={geeCopy.description}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item name="projectId" label={geeCopy.project}>
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="serviceAccountJson"
+            label={geeCopy.serviceAccountJson}
+            rules={[{ required: true }]}
+          >
+            <Input.TextArea rows={12} />
           </Form.Item>
         </Form>
       </Modal>

@@ -21,11 +21,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-set "VITE_API_BASE_URL=http://127.0.0.1:8002/api/v1"
-set "VITE_TILE_BASE_URL=http://127.0.0.1:8002/tiles"
+set "VITE_API_BASE_URL=http://127.0.0.1:8010/api/v1"
+set "VITE_TILE_BASE_URL=http://127.0.0.1:8010/tiles"
 
-echo Starting frontend on http://127.0.0.1:5178
-call npm run dev --workspace @platform/web -- --host 127.0.0.1 --port 5178
+echo Starting frontend on http://127.0.0.1:5180
+call npm run dev --workspace @platform/web -- --host 127.0.0.1 --port 5180
 
 if errorlevel 1 (
   echo.

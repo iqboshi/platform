@@ -1,7 +1,7 @@
 import type { PlatformDataSnapshot } from '@/lib/api';
 
-import { App, Button, Card, Col, Modal, Row, Table, Tag, Typography } from 'antd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { App, Button, Card, Col, Modal, Progress, Row, Table, Tag, Typography } from 'antd';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { isApiError } from '@/auth/errors';
 import { useAuth } from '@/auth/useAuth';
@@ -39,6 +39,10 @@ export function WorkflowsPage({
     Awaited<ReturnType<typeof listWorkflowVersions>>
   >([]);
   const [selectedAssetWorkflowId, setSelectedAssetWorkflowId] = useState<string | null>(null);
+  const [runProgressOpen, setRunProgressOpen] = useState(false);
+  const [runProgressPercent, setRunProgressPercent] = useState(0);
+  const [runProgressMessage, setRunProgressMessage] = useState('');
+  const runProgressTimerRef = useRef<number | null>(null);
   const stats = useMemo(
     () => buildWorkflowStats(snapshot.workflowCatalog, draftWorkflowVersion),
     [draftWorkflowVersion, snapshot.workflowCatalog],
@@ -60,10 +64,101 @@ export function WorkflowsPage({
           },
     [locale],
   );
+  const runProgressCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            title: 'Sentinel 下载进行中',
+            preparing: '正在准备工作流...',
+            authenticating: '正在连接 Google Earth Engine...',
+            searching: '正在检索 Sentinel 场景...',
+            downloading: '正在下载栅格数据...',
+            finalizing: '正在保存结果到平台...',
+            completed: '下载完成。',
+            failed: '下载失败。',
+          }
+        : {
+            title: 'Sentinel Download In Progress',
+            preparing: 'Preparing workflow...',
+            authenticating: 'Connecting to Google Earth Engine...',
+            searching: 'Searching Sentinel scenes...',
+            downloading: 'Downloading raster data...',
+            finalizing: 'Saving result to the platform...',
+            completed: 'Download completed.',
+            failed: 'Download failed.',
+          },
+    [locale],
+  );
+  const hasSentinelDownload = useMemo(
+    () =>
+      draftWorkflowVersion.graph.nodes.some((node) => node.type === 'source.sentinel2_gee_download'),
+    [draftWorkflowVersion.graph.nodes],
+  );
 
   useEffect(() => {
     setDraftWorkflowVersion(snapshot.workflowVersion);
   }, [snapshot.workflowVersion]);
+
+  const stopRunProgressTimer = useCallback(() => {
+    if (runProgressTimerRef.current !== null) {
+      window.clearInterval(runProgressTimerRef.current);
+      runProgressTimerRef.current = null;
+    }
+  }, []);
+
+  const startRunProgress = useCallback(() => {
+    if (!hasSentinelDownload) {
+      return;
+    }
+
+    stopRunProgressTimer();
+    setRunProgressPercent(6);
+    setRunProgressMessage(runProgressCopy.preparing);
+    setRunProgressOpen(true);
+
+    const startedAt = Date.now();
+    runProgressTimerRef.current = window.setInterval(() => {
+      const elapsedSeconds = (Date.now() - startedAt) / 1000;
+      if (elapsedSeconds < 2) {
+        setRunProgressPercent((current) => Math.max(current, 18));
+        setRunProgressMessage(runProgressCopy.authenticating);
+        return;
+      }
+      if (elapsedSeconds < 8) {
+        setRunProgressPercent((current) => Math.max(current, 46));
+        setRunProgressMessage(runProgressCopy.searching);
+        return;
+      }
+      if (elapsedSeconds < 15) {
+        setRunProgressPercent((current) => Math.max(current, 78));
+        setRunProgressMessage(runProgressCopy.downloading);
+        return;
+      }
+      setRunProgressPercent((current) => Math.min(Math.max(current, 90), 94));
+      setRunProgressMessage(runProgressCopy.finalizing);
+    }, 700);
+  }, [hasSentinelDownload, runProgressCopy, stopRunProgressTimer]);
+
+  const finishRunProgress = useCallback(
+    (nextMessage: string) => {
+      if (!hasSentinelDownload) {
+        return;
+      }
+
+      stopRunProgressTimer();
+      setRunProgressPercent(100);
+      setRunProgressMessage(nextMessage);
+      window.setTimeout(() => setRunProgressOpen(false), 450);
+    },
+    [hasSentinelDownload, stopRunProgressTimer],
+  );
+
+  useEffect(
+    () => () => {
+      stopRunProgressTimer();
+    },
+    [stopRunProgressTimer],
+  );
 
   const onValidate = async () => {
     if (!token) {
@@ -100,6 +195,7 @@ export function WorkflowsPage({
       return;
     }
     try {
+      startRunProgress();
       let workflowVersionToRun = draftWorkflowVersion;
 
       if (hasPermission('workflow.manage') && hasUnsavedChanges) {
@@ -107,10 +203,20 @@ export function WorkflowsPage({
         setDraftWorkflowVersion(workflowVersionToRun);
       }
 
-      await createWorkflowRun(token, workflowVersionToRun, snapshot.workspace.id);
-      message.success(t('workflows.runCompleted'));
+      const run = await createWorkflowRun(token, workflowVersionToRun, snapshot.workspace.id);
+      if (run.status === 'failed') {
+        finishRunProgress(runProgressCopy.failed);
+        message.error(run.errorMessage ?? t('workflows.runFailed'));
+      } else if (run.status === 'queued' || run.status === 'running') {
+        finishRunProgress(runProgressCopy.completed);
+        message.success(t('workflows.runQueued'));
+      } else {
+        finishRunProgress(runProgressCopy.completed);
+        message.success(t('workflows.runCompleted'));
+      }
       await onRefresh();
     } catch (error) {
+      finishRunProgress(runProgressCopy.failed);
       message.error(isApiError(error) ? error.message : t('error.request_failed'));
     }
   };
@@ -301,6 +407,7 @@ export function WorkflowsPage({
         canTest={hasPermission('workflow.run')}
         datasets={snapshot.datasets}
         datasetVersions={snapshot.datasetVersions}
+        geeCredentials={snapshot.geeCredentials}
         modelVersions={snapshot.modelVersions}
         authToken={token}
         onWorkflowChange={setDraftWorkflowVersion}
@@ -382,6 +489,17 @@ export function WorkflowsPage({
             },
           ]}
         />
+      </Modal>
+
+      <Modal
+        title={runProgressCopy.title}
+        open={runProgressOpen}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+      >
+        <Progress percent={runProgressPercent} status="active" />
+        <Paragraph style={{ marginBottom: 0 }}>{runProgressMessage}</Paragraph>
       </Modal>
     </div>
   );

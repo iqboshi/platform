@@ -45,3 +45,24 @@ class WorkflowRunStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+class FeedbackTicketCategory(StrEnum):
+    BUG = "bug"
+    FEATURE_REQUEST = "feature_request"
+    UX = "ux"
+    QUESTION = "question"
+    OTHER = "other"
+
+
+class FeedbackTicketPriority(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class FeedbackTicketStatus(StrEnum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    CLOSED = "closed"

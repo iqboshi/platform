@@ -12,7 +12,6 @@ from platform_backend.tiler.routes import router as tiles_router
 
 def create_app() -> FastAPI:
     configure_logging()
-    init_platform()
     settings = get_settings()
 
     app = FastAPI(
@@ -28,6 +27,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.on_event("startup")
+    def startup() -> None:
+        init_platform()
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

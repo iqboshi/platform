@@ -2,6 +2,7 @@ import type {
   DatasetKind,
   DatasetSummary,
   DatasetVersionSummary,
+  GeeCredentialSummary,
   ModelAlgorithmKey,
   ModelVersionSummary,
   WorkflowNode,
@@ -14,6 +15,7 @@ import type {
 export interface WorkflowEditorContext {
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
 }
 
@@ -60,6 +62,27 @@ function parseCsvColumns(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function parseBBoxText(value: unknown): number[] | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+
+  const parts = value
+    .split(/[,\s]+/)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item));
+  return parts.length === 4 ? parts : undefined;
+}
+
+function parseIsoDateText(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function hasRequiredValue(value: unknown, fieldType: WorkflowNodeCatalogItem['params'][number]['fieldType']): boolean {
   if (fieldType === 'boolean') {
     return typeof value === 'boolean';
@@ -88,7 +111,12 @@ function resolveDatasetMaps(context: WorkflowEditorContext) {
     datasetVersionsById: new Map(
       context.datasetVersions.map((datasetVersion) => [datasetVersion.id, datasetVersion]),
     ),
-    modelsById: new Map(context.modelVersions.map((modelVersion) => [modelVersion.id, modelVersion])),
+    geeCredentialsById: new Map(
+      context.geeCredentials.map((credential) => [credential.id, credential]),
+    ),
+    modelsById: new Map(
+      context.modelVersions.map((modelVersion) => [modelVersion.id, modelVersion]),
+    ),
   };
 }
 
@@ -109,6 +137,8 @@ function compactSummaryForNode(definition: WorkflowNodeCatalogItem): string {
   switch (definition.type) {
     case 'source.dataset_version':
       return 'Select a dataset version';
+    case 'source.sentinel2_gee_download':
+      return 'BBox + date range -> Sentinel-2 raster dataset';
     case 'table.load_csv':
       return 'CSV dataset version -> table';
     case 'table.train_test_split':
@@ -144,6 +174,7 @@ export function getTemplateContractHints(
   const preferredNodeTypes = [
     'metrics.validate_regression',
     'custom.api_predict',
+    'source.sentinel2_gee_download',
     'tabular.linear_regression_train',
     'tabular.svm_regression_train',
     'tabular.random_forest_regression_train',
@@ -214,7 +245,8 @@ export function analyzeWorkflowGraph(
   workflowVersion: WorkflowVersionDetail,
   context: WorkflowEditorContext,
 ): Record<string, WorkflowNodeAnalysis> {
-  const { datasetsById, datasetVersionsById, modelsById } = resolveDatasetMaps(context);
+  const { datasetsById, datasetVersionsById, geeCredentialsById, modelsById } =
+    resolveDatasetMaps(context);
   const nodesById = new Map(workflowVersion.graph.nodes.map((node) => [node.id, node]));
   const definitionsByType = new Map(definitions.map((definition) => [definition.type, definition]));
   const datasetRefMemo = new Map<string, ResolvedDatasetRef | null>();
@@ -351,6 +383,72 @@ export function analyzeWorkflowGraph(
         issues.push({
           state: 'invalid_params',
           message: 'The selected dataset version does not exist.',
+        });
+      }
+    }
+
+    if (node.type === 'source.sentinel2_gee_download') {
+      const bbox = parseBBoxText(node.params.bbox);
+      const startDate = parseIsoDateText(node.params.startDate);
+      const endDate = parseIsoDateText(node.params.endDate);
+      const maxCloudCover =
+        typeof node.params.maxCloudCover === 'number'
+          ? node.params.maxCloudCover
+          : Number(node.params.maxCloudCover);
+      const bands = Array.isArray(node.params.bands)
+        ? node.params.bands.filter((item): item is string => typeof item === 'string')
+        : [];
+      const credentialMode =
+        typeof node.params.credentialMode === 'string' ? node.params.credentialMode : '';
+      const personalCredentialId =
+        typeof node.params.personalCredentialId === 'string'
+          ? node.params.personalCredentialId
+          : '';
+
+      if (!bbox) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'bbox must contain four coordinates in minLon,minLat,maxLon,maxLat order.',
+        });
+      }
+
+      if (!startDate || !endDate) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'startDate and endDate must use YYYY-MM-DD format.',
+        });
+      } else if (endDate < startDate) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'endDate must be on or after startDate.',
+        });
+      }
+
+      if (!Number.isFinite(maxCloudCover) || maxCloudCover < 0 || maxCloudCover > 100) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'maxCloudCover must be between 0 and 100.',
+        });
+      }
+
+      if (!bands.length) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'Select at least one Sentinel-2 band.',
+        });
+      }
+
+      if (credentialMode === 'personal' && !personalCredentialId) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'Select a personal GEE credential when using personal mode.',
+        });
+      }
+
+      if (credentialMode === 'personal' && personalCredentialId && !geeCredentialsById.has(personalCredentialId)) {
+        issues.push({
+          state: 'invalid_params',
+          message: 'The selected personal GEE credential does not exist.',
         });
       }
     }

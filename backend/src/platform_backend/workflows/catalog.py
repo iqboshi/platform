@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from platform_backend.schemas.workflow import (
@@ -164,6 +165,53 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
             "common_errors": [
                 "No dataset version is selected.",
                 "The selected dataset version does not belong to a table dataset.",
+            ],
+        }
+
+    if node_type == "source.sentinel2_gee_download":
+        return {
+            "input_contracts": [],
+            "output_contracts": [
+                _contract(
+                    "dataset",
+                    "Downloads one Sentinel-2 L2A scene and outputs a raster dataset version.",
+                    dataset_kinds=["raster"],
+                    file_formats=["GeoTIFF"],
+                    notes=[
+                        "bbox must use EPSG:4326 coordinates in minLon,minLat,maxLon,maxLat order.",
+                        "The node picks the lowest-cloud scene, then prefers the newest acquisition.",
+                    ],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Example bbox and filters",
+                    "json",
+                    content=json.dumps(
+                        {
+                            "bbox": "116.10,39.70,116.65,40.10",
+                            "startDate": "2025-06-01",
+                            "endDate": "2025-06-30",
+                            "maxCloudCover": 20,
+                            "bands": ["B4", "B3", "B2"],
+                            "scale": 10,
+                        },
+                        indent=2,
+                    ),
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Downloaded raster handle",
+                    "text",
+                    port_key="dataset",
+                    content="dataset_version: Sentinel-2 L2A scene clipped to bbox",
+                )
+            ],
+            "common_errors": [
+                "bbox is missing or malformed.",
+                "No Sentinel-2 scene matched the date and cloud filters.",
+                "The selected GEE credential is missing or invalid.",
             ],
         }
 
@@ -646,6 +694,101 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
                 description="Choose the CSV dataset version bound to this source node.",
                 required=True,
             )
+        ],
+    ),
+    WorkflowCatalogItem(
+        type="source.sentinel2_gee_download",
+        label="Sentinel-2 Download",
+        category="source",
+        description="Download one Sentinel-2 L2A scene from Google Earth Engine by bbox and date range.",
+        runtime_kind="source",
+        supported_tasks=["sentinel_download"],
+        tags=["sentinel", "gee", "download", "raster"],
+        outputs=[_port("dataset", "Raster Dataset", "dataset_version")],
+        params=[
+            _param(
+                "bbox",
+                "BBox",
+                "text",
+                description="Use minLon,minLat,maxLon,maxLat in EPSG:4326.",
+                placeholder="116.10,39.70,116.65,40.10",
+                required=True,
+            ),
+            _param(
+                "startDate",
+                "Start Date",
+                "text",
+                default_value="2025-06-01",
+                placeholder="YYYY-MM-DD",
+                required=True,
+            ),
+            _param(
+                "endDate",
+                "End Date",
+                "text",
+                default_value="2025-06-30",
+                placeholder="YYYY-MM-DD",
+                required=True,
+            ),
+            _param(
+                "maxCloudCover",
+                "Max Cloud Cover (%)",
+                "number",
+                default_value=20,
+                min=0,
+                max=100,
+                step=1,
+                required=True,
+            ),
+            _param(
+                "bands",
+                "Bands",
+                "multiselect",
+                default_value=["B4", "B3", "B2"],
+                required=True,
+                options=[
+                    ("B2", "B2 Blue"),
+                    ("B3", "B3 Green"),
+                    ("B4", "B4 Red"),
+                    ("B8", "B8 NIR"),
+                    ("B11", "B11 SWIR1"),
+                    ("B12", "B12 SWIR2"),
+                    ("SCL", "SCL Scene Classification"),
+                ],
+            ),
+            _param(
+                "scale",
+                "Scale (m)",
+                "number",
+                default_value=10,
+                min=10,
+                step=10,
+                required=True,
+            ),
+            _param(
+                "credentialMode",
+                "Credential Mode",
+                "select",
+                default_value="platform_default",
+                required=True,
+                options=[
+                    ("platform_default", "Platform Default"),
+                    ("personal", "Personal Credential"),
+                ],
+            ),
+            _param(
+                "personalCredentialId",
+                "Personal Credential",
+                "select",
+                description="Used only when Credential Mode is Personal.",
+            ),
+            _param(
+                "outputDatasetName",
+                "Output Dataset Name",
+                "text",
+                default_value="Sentinel-2 Download",
+                placeholder="Sentinel-2 Download",
+            ),
         ],
     ),
     WorkflowCatalogItem(
@@ -1686,6 +1829,33 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                     target_handle="input",
                 ),
             ],
+        ),
+    ),
+    WorkflowTemplateDefinition(
+        id="sentinel2.single_scene_download",
+        label="Sentinel-2 Single Scene Download",
+        description="Download a Sentinel-2 L2A scene from Google Earth Engine and save it as a private raster dataset.",
+        tags=["sentinel", "gee", "download", "raster"],
+        supported_tasks=["sentinel_download"],
+        graph=WorkflowGraph(
+            nodes=[
+                _node(
+                    "sentinel-source",
+                    "source.sentinel2_gee_download",
+                    160,
+                    180,
+                    params={
+                        "bbox": "116.10,39.70,116.65,40.10",
+                        "startDate": "2025-06-01",
+                        "endDate": "2025-06-30",
+                        "maxCloudCover": 20,
+                        "bands": ["B4", "B3", "B2"],
+                        "scale": 10,
+                        "outputDatasetName": "Sentinel-2 Download",
+                    },
+                ),
+            ],
+            edges=[],
         ),
     ),
 ]

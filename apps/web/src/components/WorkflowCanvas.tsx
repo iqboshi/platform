@@ -1,6 +1,7 @@
 import type {
   DatasetSummary,
   DatasetVersionSummary,
+  GeeCredentialSummary,
   ModelVersionSummary,
   WorkflowNodeCatalogItem,
   WorkflowNodeExample,
@@ -22,7 +23,21 @@ import type {
   NodeProps,
 } from '@xyflow/react';
 
-import { App, Button, Card, Collapse, Empty, Input, InputNumber, Modal, Select, Switch, Tag, Typography } from 'antd';
+import {
+  App,
+  Button,
+  Card,
+  Collapse,
+  Empty,
+  Input,
+  InputNumber,
+  Modal,
+  Progress,
+  Select,
+  Switch,
+  Tag,
+  Typography,
+} from 'antd';
 import type { CollapseProps } from 'antd';
 import {
   addEdge,
@@ -48,6 +63,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { isApiError } from '@/auth/errors';
 import {
   canConnectPorts,
   catalogMatchesFilters,
@@ -938,6 +954,7 @@ function CanvasInner({
   canTest,
   datasets,
   datasetVersions,
+  geeCredentials,
   modelVersions,
   authToken,
   onWorkflowChange,
@@ -949,12 +966,13 @@ function CanvasInner({
   canTest: boolean;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
   authToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
   const { message } = App.useApp();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const { fitView, screenToFlowPosition } = useReactFlow();
   const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const workflowVersionRef = useRef(workflowVersion);
@@ -962,9 +980,10 @@ function CanvasInner({
     () => ({
       datasets,
       datasetVersions,
+      geeCredentials,
       modelVersions,
     }),
-    [datasetVersions, datasets, modelVersions],
+    [datasetVersions, datasets, geeCredentials, modelVersions],
   );
   const definitions = useMemo(() => catalog as WorkflowNodeDefinition[], [catalog]);
   const availableTemplates = useMemo(() => templates, [templates]);
@@ -978,6 +997,10 @@ function CanvasInner({
   const [nodeTestLoading, setNodeTestLoading] = useState(false);
   const [nodeTestResults, setNodeTestResults] = useState<Record<string, NodeTestResultState>>({});
   const [nodeTestModalOpen, setNodeTestModalOpen] = useState(false);
+  const [nodeTestProgressOpen, setNodeTestProgressOpen] = useState(false);
+  const [nodeTestProgressPercent, setNodeTestProgressPercent] = useState(0);
+  const [nodeTestProgressMessage, setNodeTestProgressMessage] = useState('');
+  const nodeTestProgressTimerRef = useRef<number | null>(null);
   const nodesRef = useRef<WorkflowFlowNode[]>([]);
   const edgesRef = useRef<Edge[]>([]);
 
@@ -1071,6 +1094,81 @@ function CanvasInner({
   const selectedNodeTest = selectedNodeId ? nodeTestResults[selectedNodeId] : undefined;
   const selectedNodeTestIsStale = Boolean(
     selectedNodeTest && selectedNodeTest.graphSignature !== currentGraphSignature,
+  );
+  const selectedNodeType = selectedNode?.data.type;
+  const nodeTestProgressCopy =
+    locale === 'zh-CN'
+      ? {
+          title: '节点测试进行中',
+          authenticating: '正在连接 Google Earth Engine...',
+          searching: '正在检索 Sentinel 场景...',
+          preparing: '正在生成节点输出预览...',
+          completed: '节点测试完成。',
+          failed: '节点测试失败。',
+        }
+      : {
+          title: 'Node Test In Progress',
+          authenticating: 'Connecting to Google Earth Engine...',
+          searching: 'Searching Sentinel scenes...',
+          preparing: 'Preparing node output preview...',
+          completed: 'Node test completed.',
+          failed: 'Node test failed.',
+        };
+
+  const stopNodeTestProgressTimer = useCallback(() => {
+    if (nodeTestProgressTimerRef.current !== null) {
+      window.clearInterval(nodeTestProgressTimerRef.current);
+      nodeTestProgressTimerRef.current = null;
+    }
+  }, []);
+
+  const startNodeTestProgress = useCallback(() => {
+    if (selectedNodeType !== 'source.sentinel2_gee_download') {
+      return;
+    }
+
+    stopNodeTestProgressTimer();
+    setNodeTestProgressPercent(8);
+    setNodeTestProgressMessage(nodeTestProgressCopy.authenticating);
+    setNodeTestProgressOpen(true);
+
+    const startedAt = Date.now();
+    nodeTestProgressTimerRef.current = window.setInterval(() => {
+      const elapsedSeconds = (Date.now() - startedAt) / 1000;
+      if (elapsedSeconds < 4) {
+        setNodeTestProgressPercent((current) => Math.max(current, 34));
+        setNodeTestProgressMessage(nodeTestProgressCopy.authenticating);
+        return;
+      }
+      if (elapsedSeconds < 12) {
+        setNodeTestProgressPercent((current) => Math.max(current, 68));
+        setNodeTestProgressMessage(nodeTestProgressCopy.searching);
+        return;
+      }
+      setNodeTestProgressPercent((current) => Math.min(Math.max(current, 88), 94));
+      setNodeTestProgressMessage(nodeTestProgressCopy.preparing);
+    }, 700);
+  }, [nodeTestProgressCopy, selectedNodeType, stopNodeTestProgressTimer]);
+
+  const finishNodeTestProgress = useCallback(
+    (nextMessage: string) => {
+      if (selectedNodeType !== 'source.sentinel2_gee_download') {
+        return;
+      }
+
+      stopNodeTestProgressTimer();
+      setNodeTestProgressPercent(100);
+      setNodeTestProgressMessage(nextMessage);
+      window.setTimeout(() => setNodeTestProgressOpen(false), 450);
+    },
+    [selectedNodeType, stopNodeTestProgressTimer],
+  );
+
+  useEffect(
+    () => () => {
+      stopNodeTestProgressTimer();
+    },
+    [stopNodeTestProgressTimer],
   );
   const availableDataTypes = useMemo(
     () =>
@@ -1360,6 +1458,7 @@ function CanvasInner({
 
     setNodeTestLoading(true);
     try {
+      startNodeTestProgress();
       const result = await testWorkflowNode(authToken, currentWorkflow, selectedNodeId);
       setNodeTestResults((current) => ({
         ...current,
@@ -1368,9 +1467,24 @@ function CanvasInner({
           graphSignature: currentGraphSignature,
         },
       }));
+      if (result.status === 'failed') {
+        finishNodeTestProgress(nodeTestProgressCopy.failed);
+        if (result.errors[0]) {
+          message.error(result.errors[0]);
+        }
+      } else {
+        finishNodeTestProgress(nodeTestProgressCopy.completed);
+      }
       setNodeTestModalOpen(true);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : t('error.request_failed'));
+      finishNodeTestProgress(nodeTestProgressCopy.failed);
+      message.error(
+        isApiError(error)
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : t('error.request_failed'),
+      );
     } finally {
       setNodeTestLoading(false);
     }
@@ -1410,7 +1524,13 @@ function CanvasInner({
     try {
       await downloadDatasetVersion(authToken, datasetVersionId);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : t('error.request_failed'));
+      message.error(
+        isApiError(error)
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : t('error.request_failed'),
+      );
     }
   };
 
@@ -2168,6 +2288,17 @@ function CanvasInner({
           <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>
         )}
       </Modal>
+
+      <Modal
+        title={nodeTestProgressCopy.title}
+        open={nodeTestProgressOpen}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+      >
+        <Progress percent={nodeTestProgressPercent} status="active" />
+        <Text>{nodeTestProgressMessage}</Text>
+      </Modal>
     </div>
   );
 }
@@ -2180,6 +2311,7 @@ export function WorkflowCanvas(props: {
   canTest: boolean;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
   authToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;

@@ -1,11 +1,20 @@
 import io
 import json
+import tempfile
+from pathlib import Path
 
 import joblib
 import pytest
 from fastapi.testclient import TestClient
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
+
+from platform_backend.core.settings import get_settings
+from platform_backend.workflows.gee_runtime import (
+    _build_download_plan,
+    _download_image,
+    parse_sentinel_download_params,
+)
 
 
 def _login(client: TestClient, email: str, password: str) -> str:
@@ -171,6 +180,54 @@ def _create_custom_api_model(
     return response.json()
 
 
+def _create_gee_credential(
+    client: TestClient,
+    token: str,
+    workspace_id: str,
+    name: str = "Engineer GEE Credential",
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/integrations/gee-credentials",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "workspace_id": workspace_id,
+            "name": name,
+            "description": "Personal GEE credential for workflow tests.",
+            "project_id": "platform-gee-test",
+            "service_account_json": json.dumps(
+                {
+                    "type": "service_account",
+                    "project_id": "platform-gee-test",
+                    "private_key_id": "dummy-key-id",
+                    "private_key": (
+                        "-----BEGIN PRIVATE KEY-----\n"
+                        "MIIBVwIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEAu\n"
+                        "-----END PRIVATE KEY-----\n"
+                    ),
+                    "client_email": "gee-test@platform-gee-test.iam.gserviceaccount.com",
+                    "client_id": "1234567890",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                }
+            ),
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def _set_platform_default_gee_credential(
+    client: TestClient,
+    token: str,
+    credential_id: str,
+) -> dict[str, object]:
+    response = client.post(
+        f"/api/v1/integrations/gee-credentials/{credential_id}/set-platform-default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 def _template_graph(client: TestClient, token: str, template_id: str) -> dict[str, object]:
     response = client.get(
         "/api/v1/workflows/templates",
@@ -330,6 +387,80 @@ def test_workflow_catalog_endpoint_exposes_contract_metadata(
     assert validate_regression["output_contracts"][0]["port_key"] == "report"
     assert validate_regression["example_outputs"][0]["kind"] == "table"
 
+    sentinel_download = next(
+        item for item in payload if item["type"] == "source.sentinel2_gee_download"
+    )
+    assert sentinel_download["output_contracts"][0]["dataset_kinds"] == ["raster"]
+    assert sentinel_download["params"]
+
+
+def test_workflow_templates_endpoint_includes_sentinel_template(
+    client: TestClient,
+    admin_token: str,
+) -> None:
+    response = client.get(
+        "/api/v1/workflows/templates",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    sentinel_template = next(
+        item for item in response.json() if item["id"] == "sentinel2.single_scene_download"
+    )
+    assert sentinel_template["graph"]["nodes"][0]["type"] == "source.sentinel2_gee_download"
+
+
+def test_gee_credentials_are_user_scoped_private_assets(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    created = _create_gee_credential(client, engineer_token, workspace_id)
+
+    engineer_credentials = client.get(
+        "/api/v1/integrations/gee-credentials?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_all_credentials = client.get(
+        "/api/v1/integrations/gee-credentials?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_forbidden = client.get(
+        "/api/v1/integrations/gee-credentials?scope=all",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_credentials.status_code == 200
+    assert admin_all_credentials.status_code == 200
+    assert member_forbidden.status_code == 403
+    assert any(item["id"] == created["id"] for item in engineer_credentials.json())
+    assert any(item["id"] == created["id"] for item in admin_all_credentials.json())
+
+
+def test_admin_can_set_platform_default_gee_credential(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    created = _create_gee_credential(client, engineer_token, workspace_id)
+    configured = _set_platform_default_gee_credential(client, admin_token, created["id"])
+    assert configured["is_platform_default"] is True
+
+    visible = client.get(
+        "/api/v1/integrations/gee-credentials?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    forbidden = client.post(
+        f"/api/v1/integrations/gee-credentials/{created['id']}/set-platform-default",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert visible.status_code == 200
+    assert forbidden.status_code == 403
+    assert any(
+        item["id"] == created["id"] and item["is_platform_default"] is True
+        for item in visible.json()
+    )
+
 
 def test_workflow_node_test_returns_table_preview(client: TestClient) -> None:
     engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
@@ -472,6 +603,252 @@ def test_workflow_node_test_reports_binding_errors(client: TestClient) -> None:
     assert payload["status"] == "failed"
     assert "Missing required input binding: dataset" in payload["errors"][0]
 
+
+def test_workflow_node_test_returns_sentinel_preview(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    credential = _create_gee_credential(client, engineer_token, workspace_id)
+
+    def fake_preview(params, resolved_credential):
+        assert resolved_credential.name == credential["name"]
+        return {
+            "scene_id": "S2A_TEST_SCENE",
+            "cloud_cover": 4.2,
+            "acquired_at": "2025-06-21T02:31:00+00:00",
+            "bbox": list(params.bbox),
+            "bands": list(params.bands),
+            "scale": params.scale,
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.preview_sentinel_scene",
+        fake_preview,
+    )
+
+    graph = _template_graph(client, engineer_token, "sentinel2.single_scene_download")
+    target_node_id = graph["nodes"][0]["id"]
+    graph["nodes"][0]["params"]["credentialMode"] = "personal"
+    graph["nodes"][0]["params"]["personalCredentialId"] = credential["id"]
+
+    payload = _test_workflow_node(client, engineer_token, graph, target_node_id)
+    assert payload["status"] == "succeeded"
+    assert payload["output_preview"]["dataset"]["kind"] == "dataset_version"
+    assert payload["output_preview"]["dataset"]["scene_id"] == "S2A_TEST_SCENE"
+
+
+def test_workflow_node_test_uses_platform_default_gee_credential(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, admin_token)
+    credential = _create_gee_credential(client, admin_token, workspace_id, "Admin Default GEE")
+    _set_platform_default_gee_credential(client, admin_token, credential["id"])
+
+    def fake_preview(params, resolved_credential):
+        assert resolved_credential.source == "platform_default"
+        assert resolved_credential.name == credential["name"]
+        return {
+            "scene_id": "S2A_PLATFORM_DEFAULT",
+            "cloud_cover": 1.8,
+            "acquired_at": "2025-06-22T01:11:00+00:00",
+            "bbox": list(params.bbox),
+            "bands": list(params.bands),
+            "scale": params.scale,
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.preview_sentinel_scene",
+        fake_preview,
+    )
+
+    graph = _template_graph(client, admin_token, "sentinel2.single_scene_download")
+    target_node_id = graph["nodes"][0]["id"]
+    graph["nodes"][0]["params"]["credentialMode"] = "platform_default"
+    graph["nodes"][0]["params"].pop("personalCredentialId", None)
+
+    payload = _test_workflow_node(client, admin_token, graph, target_node_id)
+    assert payload["status"] == "succeeded"
+    assert payload["output_preview"]["dataset"]["scene_id"] == "S2A_PLATFORM_DEFAULT"
+
+
+def test_workflow_node_test_reports_gee_connectivity_errors_clearly(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, admin_token)
+    credential = _create_gee_credential(client, admin_token, workspace_id, "Admin Default GEE")
+    _set_platform_default_gee_credential(client, admin_token, credential["id"])
+
+    monkeypatch.setenv("PLATFORM_HTTPS_PROXY", "http://127.0.0.1:7897")
+    monkeypatch.setenv("PLATFORM_GEE_REQUEST_TIMEOUT_SECONDS", "20")
+    get_settings.cache_clear()
+
+    def fake_resolve_scene(_params, _credential):
+        raise TimeoutError(
+            "HTTPSConnectionPool(host='oauth2.googleapis.com', port=443): "
+            "Max retries exceeded with url: /token"
+        )
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime._resolve_scene",
+        fake_resolve_scene,
+    )
+
+    graph = _template_graph(client, admin_token, "sentinel2.single_scene_download")
+    graph["nodes"][0]["params"]["credentialMode"] = "platform_default"
+    graph["nodes"][0]["params"].pop("personalCredentialId", None)
+
+    payload = _test_workflow_node(client, admin_token, graph, graph["nodes"][0]["id"])
+    assert payload["status"] == "failed"
+    assert "oauth2.googleapis.com" in payload["errors"][0]
+    assert "127.0.0.1:7897" in payload["errors"][0]
+    get_settings.cache_clear()
+
+
+def test_sentinel_band_aliases_are_normalized_for_gee_runtime(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, admin_token)
+    credential = _create_gee_credential(client, admin_token, workspace_id, "Admin Default GEE")
+    _set_platform_default_gee_credential(client, admin_token, credential["id"])
+
+    def fake_preview(params, resolved_credential):
+        assert resolved_credential.name == credential["name"]
+        assert list(params.bands) == ["B4", "B3", "B2"]
+        return {
+            "scene_id": "S2A_ALIAS_TEST",
+            "cloud_cover": 2.1,
+            "acquired_at": "2025-06-22T01:11:00+00:00",
+            "bbox": list(params.bbox),
+            "bands": list(params.bands),
+            "scale": params.scale,
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.preview_sentinel_scene",
+        fake_preview,
+    )
+
+    graph = _template_graph(client, admin_token, "sentinel2.single_scene_download")
+    graph["nodes"][0]["params"]["credentialMode"] = "platform_default"
+    graph["nodes"][0]["params"]["bands"] = ["B04", "B03", "B02"]
+    graph["nodes"][0]["params"].pop("personalCredentialId", None)
+
+    payload = _test_workflow_node(client, admin_token, graph, graph["nodes"][0]["id"])
+    assert payload["status"] == "succeeded"
+    assert payload["output_preview"]["dataset"]["bands"] == ["B4", "B3", "B2"]
+
+
+def test_sentinel_download_plan_auto_adjusts_scale_for_large_requests() -> None:
+    params = parse_sentinel_download_params(
+        {
+            "bbox": "116.10,39.70,116.65,40.10",
+            "startDate": "2025-06-01",
+            "endDate": "2025-06-30",
+            "maxCloudCover": 20,
+            "bands": ["B4", "B3", "B2"],
+            "scale": 10,
+            "credentialMode": "platform_default",
+        }
+    )
+
+    plan = _build_download_plan(params)
+
+    assert plan.effective_scale > params.scale
+    assert plan.download_estimated_bytes <= get_settings().gee_single_request_max_bytes
+    assert plan.download_pixel_width < plan.requested_pixel_width
+    assert plan.download_pixel_height < plan.requested_pixel_height
+
+
+def test_sentinel_download_retries_with_larger_scale_after_size_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    params = parse_sentinel_download_params(
+        {
+            "bbox": "116.10,39.70,116.65,40.10",
+            "startDate": "2025-06-01",
+            "endDate": "2025-06-30",
+            "maxCloudCover": 20,
+            "bands": ["B4", "B3", "B2"],
+            "scale": 10,
+            "credentialMode": "platform_default",
+        }
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int):
+            del chunk_size
+            yield b"FAKE-GEOTIFF-DATA"
+
+    class FakeSession:
+        def get(self, url: str, *, stream: bool, timeout: float) -> FakeResponse:
+            assert url == "https://example.com/fake-download.tif"
+            assert stream is True
+            assert timeout == float(get_settings().gee_request_timeout_seconds)
+            return FakeResponse()
+
+    class FakeRegion:
+        def getInfo(self) -> dict[str, object]:
+            return {"coordinates": [[[116.1, 39.7], [116.65, 39.7], [116.65, 40.1]]]}
+
+    class FakeImage:
+        def __init__(self) -> None:
+            self.scales: list[int] = []
+
+        def select(self, bands: list[str]):
+            assert bands == ["B4", "B3", "B2"]
+            return self
+
+        def clip(self, region: FakeRegion):
+            assert isinstance(region, FakeRegion)
+            return self
+
+        def getDownloadURL(self, payload: dict[str, object]) -> str:
+            scale = int(payload["scale"])
+            self.scales.append(scale)
+            if len(self.scales) == 1:
+                raise RuntimeError(
+                    "Total request size (245446578 bytes) "
+                    "must be less than or equal to 50331648 bytes"
+                )
+            return "https://example.com/fake-download.tif"
+
+    image = FakeImage()
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime._build_requests_session",
+        lambda: FakeSession(),
+    )
+    with tempfile.TemporaryDirectory(dir="backend") as temp_dir:
+        output_path = Path(temp_dir) / "sentinel-scene.tif"
+        details = _download_image(
+            None,
+            image,
+            FakeRegion(),
+            params,
+            output_path,
+        )
+
+        assert output_path.read_bytes() == b"FAKE-GEOTIFF-DATA"
+        assert len(image.scales) == 2
+        assert image.scales[1] > image.scales[0]
+        assert details["scale"] == image.scales[1]
+        assert details["scale_adjusted"] is True
 
 def test_models_endpoint_allows_members_with_model_view_permission(
     client: TestClient,
@@ -825,6 +1202,98 @@ def test_validation_workflow_exports_metrics_and_keeps_output_private(client: Te
     assert set(metrics_payload["metrics"]) == {"r2", "mae", "rmse"}
 
 
+def test_sentinel_workflow_run_creates_private_raster_output(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    credential = _create_gee_credential(client, engineer_token, workspace_id)
+
+    def fake_download(params, resolved_credential, output_path):
+        assert resolved_credential.name == credential["name"]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"FAKE-GEOTIFF-DATA")
+        return {
+            "scene_id": "S2B_FAKE_SCENE",
+            "cloud_cover": 3.5,
+            "acquired_at": "2025-06-19T02:11:00+00:00",
+            "bbox": list(params.bbox),
+            "bands": list(params.bands),
+            "scale": params.scale,
+            "size_bytes": output_path.stat().st_size,
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.download_sentinel_scene",
+        fake_download,
+    )
+
+    graph = _template_graph(client, engineer_token, "sentinel2.single_scene_download")
+    graph["nodes"][0]["params"]["credentialMode"] = "personal"
+    graph["nodes"][0]["params"]["personalCredentialId"] = credential["id"]
+    graph["nodes"][0]["params"]["outputDatasetName"] = "Engineer Sentinel Raster"
+
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+    assert run["metrics"]["scene_id"] == "S2B_FAKE_SCENE"
+
+    engineer_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_download.status_code == 200
+    assert admin_download.status_code == 200
+    assert member_download.status_code == 404
+    assert engineer_download.content == b"FAKE-GEOTIFF-DATA"
+
+
+def test_sentinel_platform_default_workflow_run_returns_failed_status_not_500(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, admin_token)
+    credential = _create_gee_credential(client, admin_token, workspace_id, "Admin Default GEE")
+    _set_platform_default_gee_credential(client, admin_token, credential["id"])
+
+    def fake_download(params, resolved_credential, output_path):
+        assert resolved_credential.source == "platform_default"
+        assert resolved_credential.name == credential["name"]
+        raise RuntimeError("Synthetic Sentinel download failure.")
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.download_sentinel_scene",
+        fake_download,
+    )
+
+    graph = _template_graph(client, admin_token, "sentinel2.single_scene_download")
+    workflow_version = _save_workflow_graph(client, admin_token, graph)
+    failed_run = _run_workflow(client, admin_token, workflow_version["id"], workspace_id)
+
+    assert failed_run["status"] == "failed"
+    assert failed_run["error_message"] == "Synthetic Sentinel download failure."
+
+    run = _workflow_run_details(client, admin_token, failed_run["id"])
+    assert run["status"] == "failed"
+    assert run["metrics"]["error"] == "Synthetic Sentinel download failure."
+
+
 def test_private_dataset_can_be_published_by_admin(client: TestClient) -> None:
     engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
     admin_token = _login(client, "admin@platform.local", "Admin123!")
@@ -1138,3 +1607,149 @@ def test_trained_model_assets_can_power_prediction_workflows(client: TestClient)
     assert admin_download.status_code == 200
     assert member_download.status_code == 404
     assert "prediction" in engineer_download.text
+
+
+def test_dashboard_config_requires_admin_for_updates(client: TestClient) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+
+    default_config = client.get(
+        "/api/v1/platform-settings/dashboard",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert default_config.status_code == 200
+    assert default_config.json()["feature_sections"]
+
+    update_payload = {
+        "feature_sections": [
+            {
+                "id": "workspace-entry",
+                "title_zh": "工作空间入口",
+                "title_en": "Workspace Entry",
+                "summary_zh": "统一进入工作流与资产模块。",
+                "summary_en": "One place to enter workflows and asset modules.",
+                "button_label_zh": "进入",
+                "button_label_en": "Open",
+                "href": "/workflows",
+                "icon_key": "workflows",
+                "enabled": True,
+            }
+        ],
+        "announcements": [
+            {
+                "id": "release-001",
+                "title_zh": "首页已升级",
+                "title_en": "Homepage upgraded",
+                "summary_zh": "新的门户页已启用。",
+                "summary_en": "The new portal page is now live.",
+                "content_zh": "管理员可以直接在平台内维护首页内容。",
+                "content_en": "Administrators can now manage homepage content in-platform.",
+                "tag_zh": "更新",
+                "tag_en": "Update",
+                "published_at": "2026-04-05",
+                "pinned": True,
+                "published": True,
+            }
+        ],
+    }
+
+    forbidden = client.put(
+        "/api/v1/platform-settings/dashboard",
+        headers={"Authorization": f"Bearer {member_token}"},
+        json=update_payload,
+    )
+    assert forbidden.status_code == 403
+
+    updated = client.put(
+        "/api/v1/platform-settings/dashboard",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json=update_payload,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["feature_sections"][0]["title_en"] == "Workspace Entry"
+
+    refreshed = client.get(
+        "/api/v1/platform-settings/dashboard",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["announcements"][0]["id"] == "release-001"
+
+
+def test_feedback_tickets_support_member_submission_and_admin_triage(
+    client: TestClient,
+) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, member_token)
+
+    created = client.post(
+        "/api/v1/feedback-tickets",
+        headers={"Authorization": f"Bearer {member_token}"},
+        json={
+            "workspace_id": workspace_id,
+            "title": "Need clearer workflow onboarding",
+            "category": "feature_request",
+            "priority": "high",
+            "content": "Please add more guidance for first-time workflow users.",
+            "contact": "member@platform.local",
+        },
+    )
+    assert created.status_code == 201
+    ticket_id = created.json()["id"]
+
+    member_list = client.get(
+        "/api/v1/feedback-tickets?scope=mine&limit=10",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    admin_list = client.get(
+        "/api/v1/feedback-tickets?scope=all&limit=10",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    forbidden_all_scope = client.get(
+        "/api/v1/feedback-tickets?scope=all&limit=10",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_list.status_code == 200
+    assert admin_list.status_code == 200
+    assert forbidden_all_scope.status_code == 403
+    assert any(item["id"] == ticket_id for item in member_list.json())
+    assert any(item["id"] == ticket_id for item in admin_list.json())
+
+    member_status_update = client.patch(
+        f"/api/v1/feedback-tickets/{ticket_id}",
+        headers={"Authorization": f"Bearer {member_token}"},
+        json={"status": "resolved"},
+    )
+    assert member_status_update.status_code == 403
+
+    admin_update = client.patch(
+        f"/api/v1/feedback-tickets/{ticket_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "status": "in_progress",
+            "admin_reply": "Acknowledged. We will add onboarding guidance to the dashboard.",
+        },
+    )
+    assert admin_update.status_code == 200
+    assert admin_update.json()["status"] == "in_progress"
+    assert admin_update.json()["admin_reply"].startswith("Acknowledged.")
+
+    member_detail = client.get(
+        f"/api/v1/feedback-tickets/{ticket_id}",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    admin_summary = client.get(
+        "/api/v1/feedback-tickets/summary",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_summary = client.get(
+        "/api/v1/feedback-tickets/summary",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_detail.status_code == 200
+    assert member_detail.json()["admin_reply"].startswith("Acknowledged.")
+    assert admin_summary.status_code == 200
+    assert member_summary.status_code == 200
+    assert admin_summary.json()["admin_in_progress_count"] >= 1
+    assert member_summary.json()["my_active_count"] >= 1

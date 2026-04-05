@@ -199,6 +199,7 @@ export type TranslationKey =
   | 'workflows.saveSuccess'
   | 'workflows.runQueued'
   | 'workflows.runCompleted'
+  | 'workflows.runFailed'
   | 'workflows.runHistory'
   | 'workflows.runId'
   | 'workflows.workflowVersion'
@@ -545,6 +546,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.saveSuccess': 'Workflow version saved.',
     'workflows.runQueued': 'Workflow run was queued.',
     'workflows.runCompleted': 'Workflow run completed and produced a result dataset.',
+    'workflows.runFailed': 'Workflow run failed. Check run history for details.',
     'workflows.runHistory': 'Run History',
     'workflows.runId': 'Run ID',
     'workflows.workflowVersion': 'Workflow Version',
@@ -1006,5 +1008,6 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.commonErrorsTitle': '常见错误',
     'workflows.contractHighlights': '模板输入要求',
     'workflows.downloadContractTemplate': '下载模板 CSV',
+    'workflows.runFailed': '工作流运行失败，请到运行历史中查看详情。',
   },
 };

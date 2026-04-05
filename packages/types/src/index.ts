@@ -21,6 +21,9 @@ export type DatasetStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
 export type DatasetVisibility = 'public' | 'private' | 'workspace';
 export type AssetScope = 'visible' | 'mine' | 'all';
 export type WorkflowRunStatus = 'draft' | 'queued' | 'running' | 'succeeded' | 'failed';
+export type FeedbackTicketCategory = 'bug' | 'feature_request' | 'ux' | 'question' | 'other';
+export type FeedbackTicketPriority = 'low' | 'medium' | 'high';
+export type FeedbackTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type WorkflowNodeCategory = 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
 export type WorkflowNodeTestStatus = 'succeeded' | 'failed' | 'not_supported';
 export type WorkflowPortDataType =
@@ -269,6 +272,63 @@ export interface WorkflowRunSummary {
   submittedBy: string;
   resultDatasetVersionId?: string;
   metrics?: Record<string, unknown>;
+  errorMessage?: string;
+}
+
+export interface DashboardFeatureItem {
+  id: string;
+  titleZh: string;
+  titleEn: string;
+  summaryZh: string;
+  summaryEn: string;
+  buttonLabelZh: string;
+  buttonLabelEn: string;
+  href: string;
+  iconKey: string;
+  enabled: boolean;
+}
+
+export interface DashboardAnnouncementItem {
+  id: string;
+  titleZh: string;
+  titleEn: string;
+  summaryZh: string;
+  summaryEn: string;
+  contentZh: string;
+  contentEn: string;
+  tagZh?: string;
+  tagEn?: string;
+  publishedAt: string;
+  pinned: boolean;
+  published: boolean;
+}
+
+export interface DashboardConfig {
+  featureSections: DashboardFeatureItem[];
+  announcements: DashboardAnnouncementItem[];
+}
+
+export interface FeedbackTicketSummary {
+  id: string;
+  workspaceId: string;
+  createdBy: string;
+  createdByDisplayName?: string;
+  title: string;
+  category: FeedbackTicketCategory;
+  priority: FeedbackTicketPriority;
+  status: FeedbackTicketStatus;
+  content: string;
+  contact?: string;
+  adminReply?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeedbackTicketSummaryCounts {
+  myOpenCount: number;
+  myActiveCount: number;
+  adminOpenCount: number;
+  adminInProgressCount: number;
 }
 
 export interface WorkflowNodePreviewValue {
@@ -292,6 +352,20 @@ export interface WorkflowNodeTestResult {
   inputPreview: Record<string, WorkflowNodePreviewValue>;
   outputPreview: Record<string, WorkflowNodePreviewValue>;
   errors: string[];
+}
+
+export interface GeeCredentialSummary {
+  id: string;
+  workspaceId: string;
+  ownerUserId: string;
+  ownerDisplayName?: string;
+  name: string;
+  provider: string;
+  description?: string;
+  projectId?: string;
+  serviceAccountEmail?: string;
+  isPlatformDefault?: boolean;
+  createdAt: string;
 }
 
 export interface ModelVersionSummary {
