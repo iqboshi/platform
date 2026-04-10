@@ -67,6 +67,7 @@ from platform_backend.schemas.workflow import (
     WorkflowTemplateDefinition,
     WorkflowVersionSummary,
 )
+from platform_backend.services.spatial_store import resolve_saved_rois_in_workflow_graph
 from platform_backend.services.state_machine import ensure_workflow_run_transition
 from platform_backend.workflows.catalog import BUILTIN_NODE_CATALOG, workflow_templates
 from platform_backend.workflows.tabular_runtime import (
@@ -1579,8 +1580,13 @@ def test_workflow_node(
     current_user: UserProfile | User,
 ) -> WorkflowNodeTestResponse:
     started = perf_counter()
-    graph_json = graph.model_dump(mode="json")
-    target_node = next((node for node in graph.nodes if node.id == node_id), None)
+    resolved_graph = resolve_saved_rois_in_workflow_graph(
+        db,
+        graph,
+        current_user=current_user,
+    )
+    graph_json = resolved_graph.model_dump(mode="json")
+    target_node = next((node for node in resolved_graph.nodes if node.id == node_id), None)
     target_node_type = target_node.type if target_node is not None else ""
 
     def resolve_credential(
@@ -1826,6 +1832,12 @@ def create_workflow_run(
     graph_json = (
         workflow_version.graph_json if isinstance(workflow_version.graph_json, dict) else {}
     )
+    resolved_graph = resolve_saved_rois_in_workflow_graph(
+        db,
+        WorkflowGraph.model_validate(graph_json),
+        current_user=current_user,
+    )
+    graph_json = resolved_graph.model_dump(mode="json")
     gee_graph_supported = gee_runtime.is_supported_gee_graph(graph_json)
     dataset_version_id, model_version_id = _extract_run_references(graph_json)
     if not dataset_version_id and not gee_graph_supported:
@@ -1923,6 +1935,7 @@ def create_workflow_run(
             runtime_result = gee_runtime.execute_gee_graph(
                 db=db,
                 workflow_version=workflow_version,
+                graph_json=graph_json,
                 current_user=current_user,
                 workspace_id=request.workspace_id,
                 run_id=run.id,

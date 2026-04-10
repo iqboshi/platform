@@ -4,6 +4,7 @@ import type {
   GeeCredentialSummary,
   ModelAlgorithmKey,
   ModelVersionSummary,
+  SpatialRoiSummary,
   WorkflowEdge,
   WorkflowNode,
   WorkflowNodeCatalogItem,
@@ -23,6 +24,7 @@ export interface WorkflowEditorContext {
   datasetVersions: DatasetVersionSummary[];
   geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
+  spatialRois: SpatialRoiSummary[];
 }
 
 function algorithmForNodeType(nodeType: string): ModelAlgorithmKey | undefined {
@@ -115,6 +117,14 @@ export function createDefaultParams(
       continue;
     }
 
+    if (
+      definition.type === 'source.sentinel2_gee_download' &&
+      field.key === 'roiId'
+    ) {
+      defaults[field.key] = context.spatialRois[0]?.id ?? '';
+      continue;
+    }
+
     if (field.defaultValue !== undefined) {
       defaults[field.key] = field.defaultValue;
     }
@@ -132,6 +142,13 @@ export function resolveParameterOptions(
     return context.geeCredentials.map((item) => ({
       value: item.id,
       label: `${item.name}${item.projectId ? ` / ${item.projectId}` : ''}`,
+    }));
+  }
+
+  if (nodeType === 'source.sentinel2_gee_download' && definition.key === 'roiId') {
+    return context.spatialRois.map((item) => ({
+      value: item.id,
+      label: `${item.name}${item.tags?.length ? ` / ${item.tags.join(', ')}` : ''}`,
     }));
   }
 

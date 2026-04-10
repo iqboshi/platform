@@ -9,18 +9,33 @@ import type {
   DatasetSummary,
   DatasetVisibility,
   DatasetVersionSummary,
+  EmailSettingsSummary,
+  EmailSettingsUpdatePayload,
+  EmailCodeSendResult,
+  EmailVerificationScene,
   FeedbackTicketCategory,
   FeedbackTicketPriority,
   FeedbackTicketStatus,
   FeedbackTicketSummary,
   FeedbackTicketSummaryCounts,
   GeeCredentialSummary,
+  ImageCaptchaChallenge,
   LocaleCode,
   ModelVersionSummary,
+  PasswordChangePayload,
   PendingUserSummary,
+  ProductAssetSummary,
   RegisterPayload,
   RegisterResponse,
   RoleKey,
+  RoleUpgradeRequestSummary,
+  SpatialOverlayCreatePayload,
+  SpatialOverlaySummary,
+  SpatialOverlayUpdatePayload,
+  SpatialRoiCreatePayload,
+  SpatialRoiSummary,
+  SpatialRoiUpdatePayload,
+  UserProfileUpdatePayload,
   WorkspaceSummary,
   WorkflowNodeCatalogItem,
   WorkflowNodeExample,
@@ -56,10 +71,13 @@ export interface AssetOverview {
   scope: AssetScope;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  products: ProductAssetSummary[];
   geeCredentials: GeeCredentialSummary[];
   workflowVersions: WorkflowVersionSummary[];
   workflowRuns: WorkflowRunSummary[];
   modelVersions: ModelVersionSummary[];
+  spatialRois: SpatialRoiSummary[];
+  spatialOverlays: SpatialOverlaySummary[];
 }
 
 export class ApiError extends Error {
@@ -231,6 +249,21 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
   return (await response.json()) as T;
 }
 
+async function requestBlob(path: string, token: string): Promise<Blob> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response, path);
+  }
+
+  return response.blob();
+}
+
 function extractDownloadFileName(response: Response, fallbackFileName: string): string {
   const disposition = response.headers.get('content-disposition');
   if (!disposition) {
@@ -355,6 +388,106 @@ function normalizeDatasetVersionSummary(input: ApiRecord): DatasetVersionSummary
       getOptionalString(input, 'ownerDisplayName') ??
       getOptionalString(input, 'owner_display_name'),
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
+function normalizeSpatialRoiSummary(input: ApiRecord): SpatialRoiSummary {
+  return {
+    id: getString(input, 'id'),
+    workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
+    ownerUserId: getString(input, 'ownerUserId') || getString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
+    name: getString(input, 'name'),
+    description: getOptionalString(input, 'description'),
+    geometryType:
+      (getString(input, 'geometryType') ||
+        getString(input, 'geometry_type')) as SpatialRoiSummary['geometryType'],
+    geometry: (input.geometry as Record<string, unknown> | undefined) ?? {},
+    bbox:
+      getBBox(input) ??
+      ([0, 0, 0, 0] as SpatialRoiSummary['bbox']),
+    style: (input.style as Record<string, unknown> | undefined) ?? {},
+    tags:
+      getStringArray<string>(input, 'tags').length > 0
+        ? getStringArray<string>(input, 'tags')
+        : [],
+    visibility:
+      (getOptionalString(input, 'visibility') as SpatialRoiSummary['visibility'] | undefined) ??
+      'private',
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+    updatedAt: getString(input, 'updatedAt') || getString(input, 'updated_at'),
+  };
+}
+
+function normalizeSpatialOverlaySummary(input: ApiRecord): SpatialOverlaySummary {
+  return {
+    id: getString(input, 'id'),
+    workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
+    ownerUserId: getString(input, 'ownerUserId') || getString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
+    datasetVersionId:
+      getString(input, 'datasetVersionId') || getString(input, 'dataset_version_id'),
+    datasetId: getString(input, 'datasetId') || getString(input, 'dataset_id'),
+    datasetName: getString(input, 'datasetName') || getString(input, 'dataset_name'),
+    datasetKind:
+      (getString(input, 'datasetKind') ||
+        getString(input, 'dataset_kind')) as SpatialOverlaySummary['datasetKind'],
+    datasetVersionNumber:
+      getOptionalNumber(input, 'datasetVersionNumber') ??
+      getOptionalNumber(input, 'dataset_version_number') ??
+      1,
+    originalFileName:
+      getOptionalString(input, 'originalFileName') ??
+      getOptionalString(input, 'original_file_name'),
+    contentType:
+      getOptionalString(input, 'contentType') ?? getOptionalString(input, 'content_type'),
+    bbox: getBBox(input),
+    previewUrl: getOptionalString(input, 'previewUrl') ?? getOptionalString(input, 'preview_url'),
+    name: getString(input, 'name'),
+    description: getOptionalString(input, 'description'),
+    overlayType:
+      (getString(input, 'overlayType') ||
+        getString(input, 'overlay_type')) as SpatialOverlaySummary['overlayType'],
+    opacity: getOptionalNumber(input, 'opacity') ?? 0.85,
+    style: (input.style as Record<string, unknown> | undefined) ?? {},
+    visibility:
+      (getOptionalString(input, 'visibility') as SpatialOverlaySummary['visibility'] | undefined) ??
+      'private',
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+    updatedAt: getString(input, 'updatedAt') || getString(input, 'updated_at'),
+  };
+}
+
+function normalizeProductAssetSummary(input: ApiRecord): ProductAssetSummary {
+  return {
+    id: getString(input, 'id'),
+    workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
+    ownerUserId: getString(input, 'ownerUserId') || getString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ??
+      getOptionalString(input, 'owner_display_name'),
+    name: getString(input, 'name'),
+    description: getOptionalString(input, 'description'),
+    category: getOptionalString(input, 'category'),
+    tags: getStringArray<string>(input, 'tags'),
+    highlights: getStringArray<string>(input, 'highlights'),
+    specifications:
+      (input.specifications as Record<string, string> | undefined) ??
+      ((input.specifications_json as Record<string, string> | undefined) ?? {}),
+    visibility:
+      (getOptionalString(input, 'visibility') as ProductAssetSummary['visibility'] | undefined) ??
+      'private',
+    assetPath: getString(input, 'assetPath') || getString(input, 'asset_path'),
+    originalFileName:
+      getString(input, 'originalFileName') || getString(input, 'original_file_name'),
+    contentType: getString(input, 'contentType') || getString(input, 'content_type'),
+    sizeBytes: getOptionalNumber(input, 'sizeBytes') ?? getOptionalNumber(input, 'size_bytes') ?? 0,
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+    updatedAt: getString(input, 'updatedAt') || getString(input, 'updated_at'),
   };
 }
 
@@ -849,6 +982,12 @@ function normalizeAuthUser(input: ApiRecord): AuthUser {
     ) as AuthUser['approvalStatus'],
     preferredLocale:
       (getString(input, 'preferredLocale') || getString(input, 'preferred_locale')) as LocaleCode,
+    avatarUrl: getOptionalString(input, 'avatarUrl') || getOptionalString(input, 'avatar_url'),
+    jobTitle: getOptionalString(input, 'jobTitle') || getOptionalString(input, 'job_title'),
+    organization:
+      getOptionalString(input, 'organization') || getOptionalString(input, 'organization'),
+    bio: getOptionalString(input, 'bio') || getOptionalString(input, 'bio'),
+    lastLoginAt: getOptionalString(input, 'lastLoginAt') || getOptionalString(input, 'last_login_at'),
     permissions: getStringArray<AuthUser['permissions'][number]>(input, 'permissions'),
   };
 }
@@ -881,6 +1020,83 @@ function normalizePendingUser(input: ApiRecord): PendingUserSummary {
     preferredLocale:
       (getString(input, 'preferredLocale') || getString(input, 'preferred_locale')) as LocaleCode,
     createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
+function normalizeImageCaptcha(input: ApiRecord): ImageCaptchaChallenge {
+  return {
+    captchaKey: getString(input, 'captchaKey') || getString(input, 'captcha_key'),
+    imageDataUrl: getString(input, 'imageDataUrl') || getString(input, 'image_data_url'),
+    expiresInSeconds:
+      getOptionalNumber(input, 'expiresInSeconds') ??
+      getOptionalNumber(input, 'expires_in_seconds') ??
+      0,
+  };
+}
+
+function normalizeEmailCodeSendResult(input: ApiRecord): EmailCodeSendResult {
+  return {
+    message: getString(input, 'message'),
+    resendAfterSeconds:
+      getOptionalNumber(input, 'resendAfterSeconds') ??
+      getOptionalNumber(input, 'resend_after_seconds') ??
+      60,
+  };
+}
+
+function normalizeRoleUpgradeRequestSummary(input: ApiRecord): RoleUpgradeRequestSummary {
+  return {
+    id: getString(input, 'id'),
+    userId: getString(input, 'userId') || getString(input, 'user_id'),
+    userDisplayName:
+      getString(input, 'userDisplayName') || getString(input, 'user_display_name'),
+    userEmail: getString(input, 'userEmail') || getString(input, 'user_email'),
+    currentRole: (getString(input, 'currentRole') || getString(input, 'current_role')) as RoleKey,
+    requestedRole:
+      (getString(input, 'requestedRole') || getString(input, 'requested_role')) as RoleKey,
+    status: (getString(input, 'status') as RoleUpgradeRequestSummary['status']) || 'pending',
+    reason: getString(input, 'reason'),
+    reviewNote: getOptionalString(input, 'reviewNote') || getOptionalString(input, 'review_note'),
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+    reviewedAt: getOptionalString(input, 'reviewedAt') || getOptionalString(input, 'reviewed_at'),
+    reviewedBy: getOptionalString(input, 'reviewedBy') || getOptionalString(input, 'reviewed_by'),
+    reviewedByDisplayName:
+      getOptionalString(input, 'reviewedByDisplayName') ||
+      getOptionalString(input, 'reviewed_by_display_name'),
+  };
+}
+
+function normalizeEmailSettingsSummary(input: ApiRecord): EmailSettingsSummary {
+  return {
+    emailEnabled:
+      getOptionalBoolean(input, 'emailEnabled') ?? getOptionalBoolean(input, 'email_enabled') ?? false,
+    smtpHost: getString(input, 'smtpHost') || getString(input, 'smtp_host'),
+    smtpPort: getOptionalNumber(input, 'smtpPort') ?? getOptionalNumber(input, 'smtp_port') ?? 465,
+    smtpUseSsl:
+      getOptionalBoolean(input, 'smtpUseSsl') ?? getOptionalBoolean(input, 'smtp_use_ssl') ?? true,
+    smtpUsername: getString(input, 'smtpUsername') || getString(input, 'smtp_username'),
+    smtpPasswordConfigured:
+      getOptionalBoolean(input, 'smtpPasswordConfigured') ??
+      getOptionalBoolean(input, 'smtp_password_configured') ??
+      false,
+    smtpFromEmail: getString(input, 'smtpFromEmail') || getString(input, 'smtp_from_email'),
+    smtpFromName: getString(input, 'smtpFromName') || getString(input, 'smtp_from_name'),
+    smtpTimeoutSeconds:
+      getOptionalNumber(input, 'smtpTimeoutSeconds') ??
+      getOptionalNumber(input, 'smtp_timeout_seconds') ??
+      20,
+    emailCodeExpireMinutes:
+      getOptionalNumber(input, 'emailCodeExpireMinutes') ??
+      getOptionalNumber(input, 'email_code_expire_minutes') ??
+      10,
+    emailCodeResendSeconds:
+      getOptionalNumber(input, 'emailCodeResendSeconds') ??
+      getOptionalNumber(input, 'email_code_resend_seconds') ??
+      60,
+    imageCaptchaExpireMinutes:
+      getOptionalNumber(input, 'imageCaptchaExpireMinutes') ??
+      getOptionalNumber(input, 'image_captcha_expire_minutes') ??
+      5,
   };
 }
 
@@ -935,6 +1151,33 @@ export async function login(credentials: {
   return normalizeTokenResponse(payload);
 }
 
+export async function getImageCaptcha(): Promise<ImageCaptchaChallenge> {
+  const payload = await requestJson<ApiRecord>('/auth/captcha');
+  return normalizeImageCaptcha(payload);
+}
+
+export async function sendEmailVerificationCode(
+  payload: {
+    email: string;
+    scene: EmailVerificationScene;
+    captchaKey: string;
+    captchaCode: string;
+  },
+  token?: string,
+): Promise<EmailCodeSendResult> {
+  const response = await requestJson<ApiRecord>('/auth/email-code/send', {
+    method: 'POST',
+    token,
+    body: {
+      email: payload.email,
+      scene: payload.scene,
+      captcha_key: payload.captchaKey,
+      captcha_code: payload.captchaCode,
+    },
+  });
+  return normalizeEmailCodeSendResult(response);
+}
+
 export async function register(payload: RegisterPayload): Promise<RegisterResponse> {
   const response = await requestJson<ApiRecord>('/auth/register', {
     method: 'POST',
@@ -942,6 +1185,7 @@ export async function register(payload: RegisterPayload): Promise<RegisterRespon
       email: payload.email,
       display_name: payload.displayName,
       password: payload.password,
+      email_code: payload.emailCode,
       preferred_locale: payload.preferredLocale,
     },
   });
@@ -958,6 +1202,41 @@ export async function logout(token: string): Promise<void> {
 export async function loadCurrentUser(token: string): Promise<AuthUser> {
   const payload = await requestJson<ApiRecord>('/auth/me', { token });
   return normalizeAuthUser(payload);
+}
+
+export async function updateCurrentUserProfile(
+  token: string,
+  payload: UserProfileUpdatePayload,
+): Promise<AuthUser> {
+  const response = await requestJson<ApiRecord>('/auth/me', {
+    method: 'PATCH',
+    token,
+    body: {
+      display_name: payload.displayName,
+      preferred_locale: payload.preferredLocale,
+      email: payload.email,
+      email_code: payload.emailCode,
+      avatar_url: payload.avatarUrl,
+      job_title: payload.jobTitle,
+      organization: payload.organization,
+      bio: payload.bio,
+    },
+  });
+  return normalizeAuthUser(response);
+}
+
+export async function changeCurrentUserPassword(
+  token: string,
+  payload: PasswordChangePayload,
+): Promise<void> {
+  await requestJson<ApiRecord>('/auth/me/password', {
+    method: 'POST',
+    token,
+    body: {
+      current_password: payload.currentPassword,
+      new_password: payload.newPassword,
+    },
+  });
 }
 
 export async function listPendingUsers(token: string): Promise<PendingUserSummary[]> {
@@ -984,6 +1263,58 @@ export async function rejectPendingUser(token: string, userId: string): Promise<
     token,
   });
   return normalizeAuthUser(payload);
+}
+
+export async function listMyRoleUpgradeRequests(
+  token: string,
+): Promise<RoleUpgradeRequestSummary[]> {
+  const payload = await requestJson<ApiRecord[]>('/auth/role-upgrade-requests/mine', { token });
+  return payload.map(normalizeRoleUpgradeRequestSummary);
+}
+
+export async function listRoleUpgradeRequests(
+  token: string,
+): Promise<RoleUpgradeRequestSummary[]> {
+  const payload = await requestJson<ApiRecord[]>('/auth/role-upgrade-requests', { token });
+  return payload.map(normalizeRoleUpgradeRequestSummary);
+}
+
+export async function createRoleUpgradeRequest(
+  token: string,
+  reason: string,
+): Promise<RoleUpgradeRequestSummary> {
+  const payload = await requestJson<ApiRecord>('/auth/role-upgrade-requests', {
+    method: 'POST',
+    token,
+    body: { reason },
+  });
+  return normalizeRoleUpgradeRequestSummary(payload);
+}
+
+export async function approveRoleUpgradeRequest(
+  token: string,
+  requestId: string,
+  reviewNote = '',
+): Promise<RoleUpgradeRequestSummary> {
+  const payload = await requestJson<ApiRecord>(`/auth/role-upgrade-requests/${requestId}/approve`, {
+    method: 'POST',
+    token,
+    body: { review_note: reviewNote },
+  });
+  return normalizeRoleUpgradeRequestSummary(payload);
+}
+
+export async function rejectRoleUpgradeRequest(
+  token: string,
+  requestId: string,
+  reviewNote = '',
+): Promise<RoleUpgradeRequestSummary> {
+  const payload = await requestJson<ApiRecord>(`/auth/role-upgrade-requests/${requestId}/reject`, {
+    method: 'POST',
+    token,
+    body: { review_note: reviewNote },
+  });
+  return normalizeRoleUpgradeRequestSummary(payload);
 }
 
 export async function createDemoUploadSession(
@@ -1066,6 +1397,320 @@ export async function updateDataset(
 
 export async function deleteDataset(token: string, datasetId: string): Promise<void> {
   await requestJson<ApiRecord>(`/datasets/${datasetId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function listDatasets(
+  token: string,
+  scope: AssetScope = 'visible',
+  visibility?: DatasetVisibility,
+): Promise<DatasetSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/datasets', {
+      scope,
+      visibility,
+    }),
+    { token },
+  );
+  return payload.map(normalizeDatasetSummary);
+}
+
+export async function listProductAssets(
+  token: string,
+  scope: AssetScope = 'visible',
+  visibility?: 'private' | 'public',
+): Promise<ProductAssetSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/products', {
+      scope,
+      visibility,
+    }),
+    { token },
+  );
+  return payload.map(normalizeProductAssetSummary);
+}
+
+export async function uploadProductAsset(
+  token: string,
+  payload: {
+    workspaceId: string;
+    name: string;
+    description?: string;
+    category?: string;
+    tags?: string[];
+    highlights?: string[];
+    specifications?: Record<string, string>;
+    visibility?: 'private' | 'public';
+    file: File;
+  },
+): Promise<ProductAssetSummary> {
+  const formData = new FormData();
+  formData.append('workspace_id', payload.workspaceId);
+  formData.append('name', payload.name);
+  formData.append('description', payload.description ?? '');
+  formData.append('category', payload.category ?? '');
+  formData.append('tags_json', JSON.stringify(payload.tags ?? []));
+  formData.append('highlights_json', JSON.stringify(payload.highlights ?? []));
+  formData.append('specifications_json', JSON.stringify(payload.specifications ?? {}));
+  if (payload.visibility) {
+    formData.append('visibility', payload.visibility);
+  }
+  formData.append('file', payload.file);
+
+  const response = await requestJson<ApiRecord>('/products/upload', {
+    method: 'POST',
+    token,
+    body: formData,
+  });
+  return normalizeProductAssetSummary(response);
+}
+
+export async function updateProductAsset(
+  token: string,
+  productId: string,
+  payload: {
+    name?: string;
+    description?: string;
+    category?: string;
+    tags?: string[];
+    highlights?: string[];
+    specifications?: Record<string, string>;
+    visibility?: 'private' | 'public';
+    file?: File;
+  },
+): Promise<ProductAssetSummary> {
+  const formData = new FormData();
+  if (payload.name !== undefined) {
+    formData.append('name', payload.name);
+  }
+  if (payload.description !== undefined) {
+    formData.append('description', payload.description);
+  }
+  if (payload.category !== undefined) {
+    formData.append('category', payload.category);
+  }
+  if (payload.tags !== undefined) {
+    formData.append('tags_json', JSON.stringify(payload.tags));
+  }
+  if (payload.highlights !== undefined) {
+    formData.append('highlights_json', JSON.stringify(payload.highlights));
+  }
+  if (payload.specifications !== undefined) {
+    formData.append('specifications_json', JSON.stringify(payload.specifications));
+  }
+  if (payload.visibility !== undefined) {
+    formData.append('visibility', payload.visibility);
+  }
+  if (payload.file) {
+    formData.append('file', payload.file);
+  }
+
+  const response = await requestJson<ApiRecord>(`/products/${productId}`, {
+    method: 'PATCH',
+    token,
+    body: formData,
+  });
+  return normalizeProductAssetSummary(response);
+}
+
+export async function deleteProductAsset(token: string, productId: string): Promise<void> {
+  await requestJson<ApiRecord>(`/products/${productId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function downloadProductAsset(
+  token: string,
+  productId: string,
+  fallbackFileName = `product-${productId}`,
+): Promise<void> {
+  const path = `/products/${productId}/download`;
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response, path);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = extractDownloadFileName(response, fallbackFileName);
+  anchor.click();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+export async function fetchProductAssetArrayBuffer(
+  token: string,
+  productId: string,
+): Promise<{ fileName: string; buffer: ArrayBuffer; sizeBytes: number; contentType: string }> {
+  const path = `/products/${productId}/download`;
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw await buildApiError(response, path);
+  }
+
+  const buffer = await response.arrayBuffer();
+  return {
+    fileName: extractDownloadFileName(response, `product-${productId}`),
+    buffer,
+    sizeBytes: buffer.byteLength,
+    contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+  };
+}
+
+export async function listDatasetVersions(
+  token: string,
+  scope: AssetScope = 'visible',
+  datasetId?: string,
+): Promise<DatasetVersionSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/dataset-versions', {
+      scope,
+      dataset_id: datasetId,
+    }),
+    { token },
+  );
+  return payload.map(normalizeDatasetVersionSummary);
+}
+
+export async function fetchDatasetVersionBlob(
+  token: string,
+  datasetVersionId: string,
+): Promise<Blob> {
+  return requestBlob(`/dataset-versions/${datasetVersionId}/download`, token);
+}
+
+export async function fetchDatasetVersionText(
+  token: string,
+  datasetVersionId: string,
+): Promise<string> {
+  const blob = await fetchDatasetVersionBlob(token, datasetVersionId);
+  return blob.text();
+}
+
+export async function listSpatialRois(
+  token: string,
+  scope: AssetScope = 'mine',
+): Promise<SpatialRoiSummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/spatial/rois', { scope }),
+    { token },
+  );
+  return payload.map(normalizeSpatialRoiSummary);
+}
+
+export async function createSpatialRoi(
+  token: string,
+  payload: SpatialRoiCreatePayload,
+): Promise<SpatialRoiSummary> {
+  const response = await requestJson<ApiRecord>('/spatial/rois', {
+    method: 'POST',
+    token,
+    body: {
+      workspace_id: payload.workspaceId,
+      name: payload.name,
+      description: payload.description ?? '',
+      geometry_type: payload.geometryType,
+      geometry: payload.geometry,
+      style: payload.style ?? {},
+      tags: payload.tags ?? [],
+    },
+  });
+  return normalizeSpatialRoiSummary(response);
+}
+
+export async function updateSpatialRoi(
+  token: string,
+  roiId: string,
+  payload: SpatialRoiUpdatePayload,
+): Promise<SpatialRoiSummary> {
+  const response = await requestJson<ApiRecord>(`/spatial/rois/${roiId}`, {
+    method: 'PATCH',
+    token,
+    body: {
+      name: payload.name,
+      description: payload.description,
+      geometry_type: payload.geometryType,
+      geometry: payload.geometry,
+      style: payload.style,
+      tags: payload.tags,
+    },
+  });
+  return normalizeSpatialRoiSummary(response);
+}
+
+export async function deleteSpatialRoi(token: string, roiId: string): Promise<void> {
+  await requestJson<ApiRecord>(`/spatial/rois/${roiId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+export async function listSpatialOverlays(
+  token: string,
+  scope: AssetScope = 'mine',
+): Promise<SpatialOverlaySummary[]> {
+  const payload = await requestJson<ApiRecord[]>(
+    withQuery('/spatial/overlays', { scope }),
+    { token },
+  );
+  return payload.map(normalizeSpatialOverlaySummary);
+}
+
+export async function createSpatialOverlay(
+  token: string,
+  payload: SpatialOverlayCreatePayload,
+): Promise<SpatialOverlaySummary> {
+  const response = await requestJson<ApiRecord>('/spatial/overlays', {
+    method: 'POST',
+    token,
+    body: {
+      workspace_id: payload.workspaceId,
+      dataset_version_id: payload.datasetVersionId,
+      name: payload.name,
+      description: payload.description ?? '',
+      opacity: payload.opacity ?? 0.85,
+      style: payload.style ?? {},
+    },
+  });
+  return normalizeSpatialOverlaySummary(response);
+}
+
+export async function updateSpatialOverlay(
+  token: string,
+  overlayId: string,
+  payload: SpatialOverlayUpdatePayload,
+): Promise<SpatialOverlaySummary> {
+  const response = await requestJson<ApiRecord>(`/spatial/overlays/${overlayId}`, {
+    method: 'PATCH',
+    token,
+    body: {
+      name: payload.name,
+      description: payload.description,
+      opacity: payload.opacity,
+      style: payload.style,
+    },
+  });
+  return normalizeSpatialOverlaySummary(response);
+}
+
+export async function deleteSpatialOverlay(token: string, overlayId: string): Promise<void> {
+  await requestJson<ApiRecord>(`/spatial/overlays/${overlayId}`, {
     method: 'DELETE',
     token,
   });
@@ -1289,6 +1934,37 @@ export async function updateDashboardConfig(
     },
   });
   return normalizeDashboardConfig(response);
+}
+
+export async function getEmailSettings(token: string): Promise<EmailSettingsSummary> {
+  const payload = await requestJson<ApiRecord>('/platform-settings/email', { token });
+  return normalizeEmailSettingsSummary(payload);
+}
+
+export async function updateEmailSettings(
+  token: string,
+  payload: EmailSettingsUpdatePayload,
+): Promise<EmailSettingsSummary> {
+  const response = await requestJson<ApiRecord>('/platform-settings/email', {
+    method: 'PUT',
+    token,
+    body: {
+      email_enabled: payload.emailEnabled,
+      smtp_host: payload.smtpHost,
+      smtp_port: payload.smtpPort,
+      smtp_use_ssl: payload.smtpUseSsl,
+      smtp_username: payload.smtpUsername,
+      smtp_password: payload.smtpPassword,
+      clear_smtp_password: payload.clearSmtpPassword,
+      smtp_from_email: payload.smtpFromEmail,
+      smtp_from_name: payload.smtpFromName,
+      smtp_timeout_seconds: payload.smtpTimeoutSeconds,
+      email_code_expire_minutes: payload.emailCodeExpireMinutes,
+      email_code_resend_seconds: payload.emailCodeResendSeconds,
+      image_captcha_expire_minutes: payload.imageCaptchaExpireMinutes,
+    },
+  });
+  return normalizeEmailSettingsSummary(response);
 }
 
 export async function listFeedbackTickets(
@@ -1551,24 +2227,39 @@ export async function loadAssetOverview(
   token: string,
   scope: AssetScope = 'mine',
 ): Promise<AssetOverview> {
-  const [datasets, datasetVersions, geeCredentials, workflowVersions, workflowRuns, modelVersions] =
-    await Promise.all([
-      requestJson<ApiRecord[]>(withQuery('/datasets', { scope }), { token }),
-      requestJson<ApiRecord[]>(withQuery('/dataset-versions', { scope }), { token }),
-      requestJson<ApiRecord[]>(withQuery('/integrations/gee-credentials', { scope }), { token }),
-      requestJson<ApiRecord[]>(withQuery('/workflows/versions', { scope }), { token }),
-      requestJson<ApiRecord[]>(withQuery('/workflow-runs', { scope }), { token }),
-      requestJson<ApiRecord[]>(withQuery('/models/versions', { scope }), { token }),
-    ]);
+  const [
+    datasets,
+    datasetVersions,
+    products,
+    geeCredentials,
+    workflowVersions,
+    workflowRuns,
+    modelVersions,
+    spatialRois,
+    spatialOverlays,
+  ] = await Promise.all([
+    requestJson<ApiRecord[]>(withQuery('/datasets', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/dataset-versions', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/products', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/integrations/gee-credentials', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/workflows/versions', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/workflow-runs', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/models/versions', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/spatial/rois', { scope }), { token }),
+    requestJson<ApiRecord[]>(withQuery('/spatial/overlays', { scope }), { token }),
+  ]);
 
   return {
     scope,
     datasets: datasets.map(normalizeDatasetSummary),
     datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
+    products: products.map(normalizeProductAssetSummary),
     geeCredentials: geeCredentials.map(normalizeGeeCredentialSummary),
     workflowVersions: workflowVersions.map(normalizeWorkflowVersionSummary),
     workflowRuns: workflowRuns.map(normalizeWorkflowRun),
     modelVersions: modelVersions.map(normalizeModelVersion),
+    spatialRois: spatialRois.map(normalizeSpatialRoiSummary),
+    spatialOverlays: spatialOverlays.map(normalizeSpatialOverlaySummary),
   };
 }
 

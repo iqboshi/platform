@@ -25,6 +25,7 @@ from platform_backend.models.entities import (
     DatasetVersion,
     Model,
     ModelVersion,
+    ProductAsset,
     Role,
     User,
     Workflow,
@@ -35,6 +36,9 @@ from platform_backend.models.entities import (
 from platform_backend.seed_data import (
     SEED_LINEAR_MODEL_ID,
     SEED_LINEAR_MODEL_VERSION_ID,
+    SEED_PRODUCT_INSPECTION_ARM_ID,
+    SEED_PRODUCT_PAYLOAD_RIG_ID,
+    SEED_PRODUCT_SENSOR_HOUSING_ID,
     SEED_RANDOM_FOREST_MODEL_ID,
     SEED_RANDOM_FOREST_MODEL_VERSION_ID,
     SEED_SVM_MODEL_ID,
@@ -73,6 +77,25 @@ def _write_text_if_changed(path: Path, content: str) -> None:
     if path.exists() and path.read_text(encoding="utf-8") == content:
         return
     path.write_text(content, encoding="utf-8")
+
+
+def _copy_file_if_changed(source_path: Path, target_path: Path) -> None:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if (
+        target_path.exists()
+        and target_path.stat().st_size == source_path.stat().st_size
+        and target_path.read_bytes() == source_path.read_bytes()
+    ):
+        return
+    target_path.write_bytes(source_path.read_bytes())
+
+
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _product_demo_source_path(file_name: str) -> Path:
+    return _repository_root() / "apps" / "web" / "public" / "product-models" / file_name
 
 
 def _ensure_dataset_seed(
@@ -119,6 +142,8 @@ def _ensure_dataset_seed(
 
     metadata_json = {
         "seeded": True,
+        "platform_asset": True,
+        "owner_display_name": "Platform",
         "visibility": "public",
         **(metadata or {}),
     }
@@ -205,6 +230,8 @@ def _ensure_model_seed(
         default_parameters=default_parameters,
     )
     metadata_json["seeded"] = True
+    metadata_json["platform_asset"] = True
+    metadata_json["owner_display_name"] = "Platform"
     metadata_json["source_type"] = "seeded"
     metadata_json["execution_mode"] = "in_process"
     metadata_json["visibility"] = "workspace"
@@ -230,6 +257,64 @@ def _ensure_model_seed(
         model_version.metadata_json = metadata_json
 
 
+def _ensure_product_seed(
+    *,
+    session,
+    workspace: Workspace,
+    owner_user: User,
+    product_id: str,
+    name: str,
+    description: str,
+    category: str,
+    file_name: str,
+    tags: list[str],
+    highlights: list[str],
+    specifications: dict[str, str],
+) -> None:
+    source_path = _product_demo_source_path(file_name)
+    if not source_path.exists():
+        return
+
+    target_dir = _ensure_storage_root() / "seed" / "products" / product_id
+    target_path = target_dir / file_name
+    _copy_file_if_changed(source_path, target_path)
+
+    product = session.get(ProductAsset, product_id)
+    if product is None:
+        product = ProductAsset(
+            id=product_id,
+            workspace_id=workspace.id,
+            owner_user_id=owner_user.id,
+            name=name,
+            description=description,
+            category=category,
+            tags_json=tags,
+            highlights_json=highlights,
+            specifications_json=specifications,
+            visibility="public",
+            asset_path=str(target_path.resolve()),
+            original_file_name=file_name,
+            content_type="application/step",
+            size_bytes=target_path.stat().st_size,
+        )
+        session.add(product)
+        return
+
+    product.workspace_id = workspace.id
+    product.owner_user_id = owner_user.id
+    product.name = name
+    product.description = description
+    product.category = category
+    product.tags_json = tags
+    product.highlights_json = highlights
+    product.specifications_json = specifications
+    product.visibility = "public"
+    product.asset_path = str(target_path.resolve())
+    product.original_file_name = file_name
+    product.content_type = "application/step"
+    product.size_bytes = target_path.stat().st_size
+
+
 _COMPACT_WORKFLOW_NODE_TYPES = {
     "source.dataset_version",
     "table.load_csv",
@@ -243,7 +328,7 @@ _COMPACT_WORKFLOW_NODE_TYPES = {
 }
 
 
-def _ensure_seed_assets(session, workspace: Workspace) -> None:
+def _ensure_seed_assets(session, workspace: Workspace, owner_user: User) -> None:
     _ensure_dataset_seed(
         session=session,
         workspace=workspace,
@@ -376,6 +461,69 @@ def _ensure_seed_assets(session, workspace: Workspace) -> None:
         feature_names=["feature_a", "feature_b"],
         default_parameters={"roundDigits": 4, "nJobs": 1},
     )
+    _ensure_product_seed(
+        session=session,
+        workspace=workspace,
+        owner_user=owner_user,
+        product_id=SEED_PRODUCT_PAYLOAD_RIG_ID,
+        name="Payload Rig Assembly",
+        description="Seeded hardware showcase asset for the product page.",
+        category="Airborne Structure",
+        file_name="payload-rig-assembly.stp",
+        tags=["STEP", "Assembly", "Preview"],
+        highlights=[
+            "Slow auto-rotation in the product viewer.",
+            "Demonstrates a complete public product asset.",
+            "Owned by the administrator for end-to-end asset management tests.",
+        ],
+        specifications={
+            "Positioning": "Airborne payload mounting demo",
+            "Use case": "Structure showcase / design review",
+            "Format": "STEP sample model",
+        },
+    )
+    _ensure_product_seed(
+        session=session,
+        workspace=workspace,
+        owner_user=owner_user,
+        product_id=SEED_PRODUCT_SENSOR_HOUSING_ID,
+        name="Edge Sensor Housing",
+        description="Seeded enclosure showcase asset for product presentation flows.",
+        category="Device Enclosure",
+        file_name="edge-sensor-housing.stp",
+        tags=["STP", "Enclosure", "Hardware"],
+        highlights=[
+            "Suitable for standard hardware product pages.",
+            "Public visibility is controlled by the asset layer.",
+            "Can be edited or deleted from personal assets.",
+        ],
+        specifications={
+            "Positioning": "Edge compute and sensing enclosure",
+            "Use case": "Marketing page / delivery showcase",
+            "Format": "STEP sample model",
+        },
+    )
+    _ensure_product_seed(
+        session=session,
+        workspace=workspace,
+        owner_user=owner_user,
+        product_id=SEED_PRODUCT_INSPECTION_ARM_ID,
+        name="Inspection Arm Interface",
+        description="Seeded mechanical component asset for 3D inspection and catalog demos.",
+        category="Mechanical Part",
+        file_name="inspection-arm-interface.stp",
+        tags=["STEP", "Mechanics", "3D"],
+        highlights=[
+            "Useful for zoomed local-structure inspection.",
+            "Fits the existing glass-style product viewer.",
+            "Serves as a seeded product asset example.",
+        ],
+        specifications={
+            "Positioning": "Inspection mechanism interface component",
+            "Use case": "Part showcase / catalog explanation",
+            "Format": "STEP sample model",
+        },
+    )
 
 
 def _hash_password(password: str, salt: str) -> str:
@@ -478,6 +626,10 @@ def _default_workflow_graph() -> dict[str, object]:
                 "target_handle": "input",
             },
         ],
+        "metadata": {
+            "platform_asset": True,
+            "owner_display_name": "Platform",
+        },
     }
 
 
@@ -504,7 +656,9 @@ def init_platform() -> None:
     with session_factory() as session:
         existing_workspace = session.scalar(select(Workspace).limit(1))
         if existing_workspace is not None:
-            _ensure_seed_assets(session, existing_workspace)
+            admin_user = session.scalar(select(User).where(User.role_key == RoleKey.ADMIN).limit(1))
+            if admin_user is not None:
+                _ensure_seed_assets(session, existing_workspace, admin_user)
             workflow = session.scalar(select(Workflow).order_by(Workflow.created_at.asc()))
             latest_version = session.scalar(
                 select(WorkflowVersion).order_by(
@@ -620,7 +774,7 @@ def init_platform() -> None:
         session.add(workflow)
         session.flush()
 
-        _ensure_seed_assets(session, workspace)
+        _ensure_seed_assets(session, workspace, users[0])
 
         session.add(
             WorkflowVersion(

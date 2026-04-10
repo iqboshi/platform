@@ -11,6 +11,7 @@ import { useI18n } from '@/i18n/useI18n';
 import {
   createWorkflowRun,
   importWorkflowVersion,
+  listSpatialRois,
   listWorkflowVersions,
   saveWorkflowVersion,
   validateWorkflow,
@@ -21,6 +22,20 @@ import { buildWorkflowStats } from './workflow-utils';
 
 const { Paragraph } = Typography;
 
+const RUN_HISTORY_PAGINATION = {
+  pageSize: 8,
+  showSizeChanger: true,
+  pageSizeOptions: ['8', '20', '50'],
+  hideOnSinglePage: true,
+};
+
+const ASSET_IMPORT_PAGINATION = {
+  pageSize: 6,
+  showSizeChanger: true,
+  pageSizeOptions: ['6', '12', '24'],
+  hideOnSinglePage: true,
+};
+
 export function WorkflowsPage({
   snapshot,
   onRefresh,
@@ -29,9 +44,11 @@ export function WorkflowsPage({
   onRefresh: () => Promise<void>;
 }) {
   const { message, modal } = App.useApp();
-  const { hasPermission, token } = useAuth();
+  const { currentUser, hasPermission, token } = useAuth();
   const { locale, t } = useI18n();
+  const platformOwnerLabel = t('assets.platformOwner');
   const [draftWorkflowVersion, setDraftWorkflowVersion] = useState(snapshot.workflowVersion);
+  const [spatialRois, setSpatialRois] = useState<Awaited<ReturnType<typeof listSpatialRois>>>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [assetImportOpen, setAssetImportOpen] = useState(false);
   const [assetWorkflowsLoading, setAssetWorkflowsLoading] = useState(false);
@@ -98,6 +115,31 @@ export function WorkflowsPage({
   useEffect(() => {
     setDraftWorkflowVersion(snapshot.workflowVersion);
   }, [snapshot.workflowVersion]);
+
+  useEffect(() => {
+    if (!token) {
+      setSpatialRois([]);
+      return;
+    }
+
+    let disposed = false;
+    const scope = currentUser?.role === 'ADMIN' ? 'all' : 'mine';
+    void listSpatialRois(token, scope)
+      .then((items) => {
+        if (!disposed) {
+          setSpatialRois(items);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setSpatialRois([]);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [currentUser?.role, token]);
 
   const stopRunProgressTimer = useCallback(() => {
     if (runProgressTimerRef.current !== null) {
@@ -409,6 +451,7 @@ export function WorkflowsPage({
         datasetVersions={snapshot.datasetVersions}
         geeCredentials={snapshot.geeCredentials}
         modelVersions={snapshot.modelVersions}
+        spatialRois={spatialRois}
         authToken={token}
         onWorkflowChange={setDraftWorkflowVersion}
       />
@@ -417,7 +460,7 @@ export function WorkflowsPage({
         <div className="panel-kicker">{t('workflows.runHistory')}</div>
         <Table
           rowKey="id"
-          pagination={false}
+          pagination={RUN_HISTORY_PAGINATION}
           dataSource={snapshot.workflowRuns}
           columns={[
             { title: t('workflows.runId'), dataIndex: 'id' },
@@ -463,7 +506,7 @@ export function WorkflowsPage({
         <Table
           rowKey="id"
           loading={assetWorkflowsLoading}
-          pagination={false}
+          pagination={ASSET_IMPORT_PAGINATION}
           dataSource={assetWorkflowVersions}
           rowSelection={{
             type: 'radio',
@@ -481,7 +524,7 @@ export function WorkflowsPage({
             {
               title: t('assets.owner'),
               dataIndex: 'ownerDisplayName',
-              render: (value: string | undefined) => value ?? '-',
+              render: (value: string | undefined) => value ?? platformOwnerLabel,
             },
             {
               title: t('common.createdAt'),

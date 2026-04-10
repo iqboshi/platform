@@ -8,8 +8,11 @@ from platform_backend.db.session import get_db
 from platform_backend.schemas.platform import (
     DashboardConfig,
     DashboardConfigUpdateRequest,
+    EmailSettingsSummary,
+    EmailSettingsUpdateRequest,
     UserProfile,
 )
+from platform_backend.services.email_settings import get_email_settings, update_email_settings
 from platform_backend.services.portal_store import get_dashboard_config, update_dashboard_config
 
 router = APIRouter()
@@ -41,3 +44,28 @@ def update_dashboard_config_route(
 ) -> DashboardConfig:
     del current_user
     return update_dashboard_config(db, request)
+
+
+@router.get(
+    "/email",
+    response_model=EmailSettingsSummary,
+)
+def get_email_settings_route(
+    db: DatabaseDep,
+    current_user: SystemConfigureUserDep,
+) -> EmailSettingsSummary:
+    del current_user
+    return get_email_settings(db)
+
+
+@router.put(
+    "/email",
+    response_model=EmailSettingsSummary,
+)
+def update_email_settings_route(
+    request: EmailSettingsUpdateRequest,
+    db: DatabaseDep,
+    current_user: SystemConfigureUserDep,
+) -> EmailSettingsSummary:
+    del current_user
+    return update_email_settings(db, request)

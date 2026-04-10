@@ -67,6 +67,72 @@ def _upload_table_dataset(
     return response.json()
 
 
+def _upload_vector_dataset(
+    client: TestClient,
+    token: str,
+    workspace_id: str,
+    dataset_name: str,
+    geojson_text: str,
+    description: str | None = None,
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/datasets/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={
+            "file": (
+                f"{dataset_name}.geojson",
+                geojson_text.encode("utf-8"),
+                "application/geo+json",
+            )
+        },
+        data={
+            "workspace_id": workspace_id,
+            "dataset_name": dataset_name,
+            "description": description or "",
+            "kind": "vector",
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def _upload_product_asset(
+    client: TestClient,
+    token: str,
+    workspace_id: str,
+    product_name: str,
+    *,
+    description: str = "Product asset for automated tests.",
+    category: str = "Hardware",
+    visibility: str | None = None,
+    file_name: str | None = None,
+    content: bytes | None = None,
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/products/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={
+            "file": (
+                file_name or f"{product_name}.stp",
+                content or b"ISO-10303-21;\nEND-ISO-10303-21;\n",
+                "application/step",
+            )
+        },
+        data={
+            "workspace_id": workspace_id,
+            "name": product_name,
+            "description": description,
+            "category": category,
+            "tags_json": json.dumps(["test", "product"]),
+            "highlights_json": json.dumps(["downloadable", "private by default"]),
+            "specifications_json": json.dumps({"Material": "Aluminum"}),
+            **({"visibility": visibility} if visibility is not None else {}),
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def _upload_model_package(
     client: TestClient,
     token: str,
@@ -225,6 +291,39 @@ def _set_platform_default_gee_credential(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
+    return response.json()
+
+
+def _create_spatial_roi(
+    client: TestClient,
+    token: str,
+    workspace_id: str,
+    name: str = "Test ROI",
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/spatial/rois",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "workspace_id": workspace_id,
+            "name": name,
+            "description": "ROI for automated tests.",
+            "geometry_type": "rectangle",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [116.10, 39.70],
+                        [116.65, 39.70],
+                        [116.65, 40.10],
+                        [116.10, 40.10],
+                        [116.10, 39.70],
+                    ]
+                ],
+            },
+            "tags": ["test", "roi"],
+        },
+    )
+    assert response.status_code == 201
     return response.json()
 
 
@@ -708,6 +807,174 @@ def test_workflow_node_test_reports_gee_connectivity_errors_clearly(
     assert "oauth2.googleapis.com" in payload["errors"][0]
     assert "127.0.0.1:7897" in payload["errors"][0]
     get_settings.cache_clear()
+
+
+def test_spatial_roi_crud_and_admin_scope(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    created = _create_spatial_roi(client, engineer_token, workspace_id, "Engineer ROI")
+
+    mine = client.get(
+        "/api/v1/spatial/rois?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_all = client.get(
+        "/api/v1/spatial/rois?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_all = client.get(
+        "/api/v1/spatial/rois?scope=all",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+
+    assert mine.status_code == 200
+    assert admin_all.status_code == 200
+    assert member_all.status_code == 403
+    assert any(item["id"] == created["id"] for item in mine.json())
+    assert any(item["id"] == created["id"] for item in admin_all.json())
+
+    updated = client.patch(
+        f"/api/v1/spatial/rois/{created['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={
+            "name": "Engineer ROI Updated",
+            "description": "Updated ROI description.",
+            "tags": ["updated", "roi"],
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Engineer ROI Updated"
+
+    deleted = client.delete(
+        f"/api/v1/spatial/rois/{created['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert deleted.status_code == 200
+
+
+def test_spatial_overlay_creation_accepts_geojson_dataset_and_admin_scope(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    dataset_version = _upload_vector_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "vector-overlay-source",
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"name": "Area A"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [116.20, 39.80],
+                                    [116.40, 39.80],
+                                    [116.40, 39.98],
+                                    [116.20, 39.98],
+                                    [116.20, 39.80],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    created = client.post(
+        "/api/v1/spatial/overlays",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={
+            "workspace_id": workspace_id,
+            "dataset_version_id": dataset_version["id"],
+            "name": "Engineer Vector Overlay",
+            "description": "Saved vector overlay.",
+            "opacity": 0.6,
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["overlay_type"] == "vector"
+
+    mine = client.get(
+        "/api/v1/spatial/overlays?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_all = client.get(
+        "/api/v1/spatial/overlays?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert mine.status_code == 200
+    assert admin_all.status_code == 200
+    assert any(item["id"] == created.json()["id"] for item in mine.json())
+    assert any(item["id"] == created.json()["id"] for item in admin_all.json())
+
+
+def test_workflow_validate_accepts_saved_roi_for_sentinel(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    roi = _create_spatial_roi(client, engineer_token, workspace_id, "Workflow ROI")
+    graph = _template_graph(client, engineer_token, "sentinel2.single_scene_download")
+
+    graph["nodes"][0]["params"]["roiMode"] = "saved_roi"
+    graph["nodes"][0]["params"]["roiId"] = roi["id"]
+    graph["nodes"][0]["params"].pop("bbox", None)
+
+    response = client.post(
+        "/api/v1/workflows/validate",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json=graph,
+    )
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+
+
+def test_workflow_node_test_resolves_saved_roi_for_sentinel(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    credential = _create_gee_credential(client, engineer_token, workspace_id)
+    roi = _create_spatial_roi(client, engineer_token, workspace_id, "Sentinel ROI")
+
+    def fake_preview(params, resolved_credential):
+        assert resolved_credential.name == credential["name"]
+        assert list(params.bbox) == roi["bbox"]
+        return {
+            "scene_id": "S2A_SAVED_ROI",
+            "cloud_cover": 4.8,
+            "acquired_at": "2025-06-21T02:31:00+00:00",
+            "bbox": list(params.bbox),
+            "bands": list(params.bands),
+            "scale": params.scale,
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.preview_sentinel_scene",
+        fake_preview,
+    )
+
+    graph = _template_graph(client, engineer_token, "sentinel2.single_scene_download")
+    graph["nodes"][0]["params"]["roiMode"] = "saved_roi"
+    graph["nodes"][0]["params"]["roiId"] = roi["id"]
+    graph["nodes"][0]["params"].pop("bbox", None)
+    graph["nodes"][0]["params"]["credentialMode"] = "personal"
+    graph["nodes"][0]["params"]["personalCredentialId"] = credential["id"]
+
+    payload = _test_workflow_node(client, engineer_token, graph, graph["nodes"][0]["id"])
+    assert payload["status"] == "succeeded"
+    assert payload["output_preview"]["dataset"]["scene_id"] == "S2A_SAVED_ROI"
 
 
 def test_sentinel_band_aliases_are_normalized_for_gee_runtime(
@@ -1263,6 +1530,50 @@ def test_sentinel_workflow_run_creates_private_raster_output(
     assert engineer_download.content == b"FAKE-GEOTIFF-DATA"
 
 
+def test_sentinel_workflow_run_resolves_saved_roi_bbox(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    credential = _create_gee_credential(client, engineer_token, workspace_id)
+    roi = _create_spatial_roi(client, engineer_token, workspace_id, "Run ROI")
+
+    def fake_download(params, resolved_credential, output_path):
+        assert resolved_credential.name == credential["name"]
+        assert list(params.bbox) == roi["bbox"]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"FAKE-SAVED-ROI-GEOTIFF")
+        return {
+            "scene_id": "S2B_SAVED_ROI",
+            "cloud_cover": 1.9,
+            "acquired_at": "2025-06-19T02:11:00+00:00",
+            "bbox": list(params.bbox),
+            "bands": list(params.bands),
+            "scale": params.scale,
+            "size_bytes": output_path.stat().st_size,
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.download_sentinel_scene",
+        fake_download,
+    )
+
+    graph = _template_graph(client, engineer_token, "sentinel2.single_scene_download")
+    graph["nodes"][0]["params"]["roiMode"] = "saved_roi"
+    graph["nodes"][0]["params"]["roiId"] = roi["id"]
+    graph["nodes"][0]["params"].pop("bbox", None)
+    graph["nodes"][0]["params"]["credentialMode"] = "personal"
+    graph["nodes"][0]["params"]["personalCredentialId"] = credential["id"]
+
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+
+    assert accepted_run["status"] == "succeeded"
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    assert run["metrics"]["scene_id"] == "S2B_SAVED_ROI"
+
+
 def test_sentinel_platform_default_workflow_run_returns_failed_status_not_500(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1404,6 +1715,100 @@ def test_workflow_versions_are_user_scoped_and_downloadable(client: TestClient) 
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert delete_response.status_code == 200
+
+
+def test_product_assets_are_user_scoped_publishable_and_downloadable(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    engineer_user = _current_user(client, engineer_token)
+
+    created = _upload_product_asset(
+        client,
+        engineer_token,
+        workspace_id,
+        "engineer-private-product",
+    )
+    assert created["visibility"] == "private"
+    assert created["owner_user_id"] == engineer_user["id"]
+
+    engineer_products = client.get(
+        "/api/v1/products?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_all_products = client.get(
+        "/api/v1/products?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_forbidden_all_scope = client.get(
+        "/api/v1/products?scope=all",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    member_visible_before = client.get(
+        "/api/v1/products",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_products.status_code == 200
+    assert admin_all_products.status_code == 200
+    assert member_forbidden_all_scope.status_code == 403
+    assert member_visible_before.status_code == 200
+    assert any(item["id"] == created["id"] for item in engineer_products.json())
+    assert any(item["id"] == created["id"] for item in admin_all_products.json())
+    assert not any(item["id"] == created["id"] for item in member_visible_before.json())
+
+    owner_rename = client.patch(
+        f"/api/v1/products/{created['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        data={"name": "engineer-private-product-v2"},
+    )
+    owner_publish_forbidden = client.patch(
+        f"/api/v1/products/{created['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        data={"visibility": "public"},
+    )
+    assert owner_rename.status_code == 200
+    assert owner_rename.json()["name"] == "engineer-private-product-v2"
+    assert owner_publish_forbidden.status_code == 403
+
+    admin_publish = client.patch(
+        f"/api/v1/products/{created['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        data={"visibility": "public"},
+    )
+    assert admin_publish.status_code == 200
+    assert admin_publish.json()["visibility"] == "public"
+
+    member_visible_after = client.get(
+        "/api/v1/products?visibility=public",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_after.status_code == 200
+    assert any(item["id"] == created["id"] for item in member_visible_after.json())
+
+    owner_download = client.get(
+        f"/api/v1/products/{created['id']}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    member_download = client.get(
+        f"/api/v1/products/{created['id']}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert owner_download.status_code == 200
+    assert member_download.status_code == 200
+
+    member_delete_forbidden = client.delete(
+        f"/api/v1/products/{created['id']}",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    admin_delete = client.delete(
+        f"/api/v1/products/{created['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert member_delete_forbidden.status_code == 403
+    assert admin_delete.status_code == 200
 
 
 def test_custom_api_model_assets_are_private_downloadable_and_deletable(
@@ -1674,6 +2079,56 @@ def test_dashboard_config_requires_admin_for_updates(client: TestClient) -> None
     )
     assert refreshed.status_code == 200
     assert refreshed.json()["announcements"][0]["id"] == "release-001"
+
+
+def test_email_settings_require_admin_for_updates(client: TestClient) -> None:
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+
+    forbidden = client.get(
+        "/api/v1/platform-settings/email",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert forbidden.status_code == 403
+
+    current = client.get(
+        "/api/v1/platform-settings/email",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert current.status_code == 200
+
+    update_payload = {
+        "email_enabled": True,
+        "smtp_host": "smtp.qq.com",
+        "smtp_port": 465,
+        "smtp_use_ssl": True,
+        "smtp_username": "ops@example.com",
+        "smtp_password": "smtp-secret",
+        "smtp_from_email": "ops@example.com",
+        "smtp_from_name": "Platform Ops",
+        "smtp_timeout_seconds": 18,
+        "email_code_expire_minutes": 12,
+        "email_code_resend_seconds": 90,
+        "image_captcha_expire_minutes": 6,
+    }
+
+    updated = client.put(
+        "/api/v1/platform-settings/email",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json=update_payload,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["email_enabled"] is True
+    assert updated.json()["smtp_username"] == "ops@example.com"
+    assert updated.json()["smtp_password_configured"] is True
+    assert updated.json()["email_code_resend_seconds"] == 90
+
+    refreshed = client.get(
+        "/api/v1/platform-settings/email",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["smtp_from_name"] == "Platform Ops"
 
 
 def test_feedback_tickets_support_member_submission_and_admin_triage(

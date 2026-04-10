@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     gee_download_max_pixels: int = 100_000_000
     gee_download_max_estimated_mb: int = 2048
     gee_single_request_max_bytes: int = 48 * 1024 * 1024
+    email_enabled: bool = False
+    smtp_host: str = "smtp.qq.com"
+    smtp_port: int = 465
+    smtp_use_ssl: bool = True
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Platform RS Studio"
+    smtp_timeout_seconds: int = 20
+    email_code_expire_minutes: int = 10
+    email_code_resend_seconds: int = 60
+    image_captcha_expire_minutes: int = 5
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 

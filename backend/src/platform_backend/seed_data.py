@@ -26,3 +26,7 @@ SEED_SVM_MODEL_VERSION_ID = "seed-svm-v1"
 
 SEED_RANDOM_FOREST_MODEL_ID = "seed-rf-model"
 SEED_RANDOM_FOREST_MODEL_VERSION_ID = "seed-rf-v1"
+
+SEED_PRODUCT_PAYLOAD_RIG_ID = "seed-product-payload-rig"
+SEED_PRODUCT_SENSOR_HOUSING_ID = "seed-product-sensor-housing"
+SEED_PRODUCT_INSPECTION_ARM_ID = "seed-product-inspection-arm"

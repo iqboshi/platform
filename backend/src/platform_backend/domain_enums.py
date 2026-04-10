@@ -66,3 +66,14 @@ class FeedbackTicketStatus(StrEnum):
     IN_PROGRESS = "in_progress"
     RESOLVED = "resolved"
     CLOSED = "closed"
+
+
+class EmailVerificationScene(StrEnum):
+    REGISTER = "register"
+    CHANGE_EMAIL = "change_email"
+
+
+class RoleUpgradeRequestStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"

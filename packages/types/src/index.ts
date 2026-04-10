@@ -1,6 +1,8 @@
 export type RoleKey = 'ADMIN' | 'ML_ENGINEER' | 'MEMBER';
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export type LocaleCode = 'zh-CN' | 'en-US';
+export type EmailVerificationScene = 'register' | 'change_email';
+export type RoleUpgradeRequestStatus = 'pending' | 'approved' | 'rejected';
 export type PermissionKey =
   | 'workspace.view'
   | 'workspace.manage'
@@ -59,6 +61,11 @@ export interface AuthUser {
   role: RoleKey;
   approvalStatus: ApprovalStatus;
   preferredLocale: LocaleCode;
+  avatarUrl?: string;
+  jobTitle?: string;
+  organization?: string;
+  bio?: string;
+  lastLoginAt?: string;
   permissions: PermissionKey[];
 }
 
@@ -72,7 +79,66 @@ export interface RegisterPayload {
   email: string;
   displayName: string;
   password: string;
+  emailCode: string;
   preferredLocale: LocaleCode;
+}
+
+export interface ImageCaptchaChallenge {
+  captchaKey: string;
+  imageDataUrl: string;
+  expiresInSeconds: number;
+}
+
+export interface EmailCodeSendResult {
+  message: string;
+  resendAfterSeconds: number;
+}
+
+export interface UserProfileUpdatePayload {
+  displayName?: string;
+  preferredLocale?: LocaleCode;
+  email?: string;
+  emailCode?: string;
+  avatarUrl?: string;
+  jobTitle?: string;
+  organization?: string;
+  bio?: string;
+}
+
+export interface PasswordChangePayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface EmailSettingsSummary {
+  emailEnabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUseSsl: boolean;
+  smtpUsername: string;
+  smtpPasswordConfigured: boolean;
+  smtpFromEmail: string;
+  smtpFromName: string;
+  smtpTimeoutSeconds: number;
+  emailCodeExpireMinutes: number;
+  emailCodeResendSeconds: number;
+  imageCaptchaExpireMinutes: number;
+}
+
+export interface EmailSettingsUpdatePayload {
+  emailEnabled: boolean;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUseSsl: boolean;
+  smtpUsername: string;
+  smtpPassword?: string;
+  clearSmtpPassword?: boolean;
+  smtpFromEmail: string;
+  smtpFromName: string;
+  smtpTimeoutSeconds: number;
+  emailCodeExpireMinutes: number;
+  emailCodeResendSeconds: number;
+  imageCaptchaExpireMinutes: number;
 }
 
 export interface RegisterResponse {
@@ -89,6 +155,22 @@ export interface PendingUserSummary {
   approvalStatus: ApprovalStatus;
   preferredLocale: LocaleCode;
   createdAt: string;
+}
+
+export interface RoleUpgradeRequestSummary {
+  id: string;
+  userId: string;
+  userDisplayName: string;
+  userEmail: string;
+  currentRole: RoleKey;
+  requestedRole: RoleKey;
+  status: RoleUpgradeRequestStatus;
+  reason: string;
+  reviewNote?: string;
+  createdAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewedByDisplayName?: string;
 }
 
 export interface WorkspaceSummary {
@@ -132,6 +214,102 @@ export interface DatasetVersionSummary {
   ownerUserId?: string;
   ownerDisplayName?: string;
   createdAt: string;
+}
+
+export interface SpatialRoiSummary {
+  id: string;
+  workspaceId: string;
+  ownerUserId: string;
+  ownerDisplayName?: string;
+  name: string;
+  description?: string;
+  geometryType: 'rectangle' | 'polygon';
+  geometry: Record<string, unknown>;
+  bbox: [number, number, number, number];
+  style?: Record<string, unknown>;
+  tags?: string[];
+  visibility?: 'private';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpatialRoiCreatePayload {
+  workspaceId: string;
+  name: string;
+  description?: string;
+  geometryType: 'rectangle' | 'polygon';
+  geometry: Record<string, unknown>;
+  style?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export interface SpatialRoiUpdatePayload {
+  name?: string;
+  description?: string;
+  geometryType?: 'rectangle' | 'polygon';
+  geometry?: Record<string, unknown>;
+  style?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export interface SpatialOverlaySummary {
+  id: string;
+  workspaceId: string;
+  ownerUserId: string;
+  ownerDisplayName?: string;
+  datasetVersionId: string;
+  datasetId: string;
+  datasetName: string;
+  datasetKind: DatasetKind;
+  datasetVersionNumber: number;
+  originalFileName?: string;
+  contentType?: string;
+  bbox?: [number, number, number, number];
+  previewUrl?: string;
+  name: string;
+  description?: string;
+  overlayType: 'raster' | 'vector';
+  opacity: number;
+  style?: Record<string, unknown>;
+  visibility?: 'private';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpatialOverlayCreatePayload {
+  workspaceId: string;
+  datasetVersionId: string;
+  name: string;
+  description?: string;
+  opacity?: number;
+  style?: Record<string, unknown>;
+}
+
+export interface SpatialOverlayUpdatePayload {
+  name?: string;
+  description?: string;
+  opacity?: number;
+  style?: Record<string, unknown>;
+}
+
+export interface ProductAssetSummary {
+  id: string;
+  workspaceId: string;
+  ownerUserId: string;
+  ownerDisplayName?: string;
+  name: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  highlights?: string[];
+  specifications?: Record<string, string>;
+  visibility?: 'private' | 'public';
+  assetPath: string;
+  originalFileName: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkflowParamOption {

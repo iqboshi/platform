@@ -178,17 +178,18 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
                     dataset_kinds=["raster"],
                     file_formats=["GeoTIFF"],
                     notes=[
-                        "bbox must use EPSG:4326 coordinates in minLon,minLat,maxLon,maxLat order.",
+                        "Use either a manual EPSG:4326 bbox or a saved ROI asset.",
                         "The node picks the lowest-cloud scene, then prefers the newest acquisition.",
                     ],
                 ),
             ],
             "example_inputs": [
                 _example(
-                    "Example bbox and filters",
+                    "Example manual bbox and filters",
                     "json",
                     content=json.dumps(
                         {
+                            "roiMode": "manual_bbox",
                             "bbox": "116.10,39.70,116.65,40.10",
                             "startDate": "2025-06-01",
                             "endDate": "2025-06-30",
@@ -209,7 +210,8 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
                 )
             ],
             "common_errors": [
-                "bbox is missing or malformed.",
+                "bbox is missing or malformed when roiMode is manual_bbox.",
+                "roiId is missing when roiMode is saved_roi.",
                 "No Sentinel-2 scene matched the date and cloud filters.",
                 "The selected GEE credential is missing or invalid.",
             ],
@@ -700,19 +702,35 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         type="source.sentinel2_gee_download",
         label="Sentinel-2 Download",
         category="source",
-        description="Download one Sentinel-2 L2A scene from Google Earth Engine by bbox and date range.",
+        description="Download one Sentinel-2 L2A scene from Google Earth Engine by manual bbox or saved ROI.",
         runtime_kind="source",
         supported_tasks=["sentinel_download"],
         tags=["sentinel", "gee", "download", "raster"],
         outputs=[_port("dataset", "Raster Dataset", "dataset_version")],
         params=[
             _param(
+                "roiMode",
+                "ROI Mode",
+                "select",
+                default_value="manual_bbox",
+                required=True,
+                options=[
+                    ("manual_bbox", "Manual BBox"),
+                    ("saved_roi", "Saved ROI"),
+                ],
+            ),
+            _param(
+                "roiId",
+                "Saved ROI",
+                "select",
+                description="Used only when ROI Mode is Saved ROI.",
+            ),
+            _param(
                 "bbox",
                 "BBox",
                 "text",
-                description="Use minLon,minLat,maxLon,maxLat in EPSG:4326.",
+                description="Used only when ROI Mode is Manual BBox. Use minLon,minLat,maxLon,maxLat in EPSG:4326.",
                 placeholder="116.10,39.70,116.65,40.10",
-                required=True,
             ),
             _param(
                 "startDate",
@@ -1845,12 +1863,14 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                     160,
                     180,
                     params={
+                        "roiMode": "manual_bbox",
                         "bbox": "116.10,39.70,116.65,40.10",
                         "startDate": "2025-06-01",
                         "endDate": "2025-06-30",
                         "maxCloudCover": 20,
                         "bands": ["B4", "B3", "B2"],
                         "scale": 10,
+                        "credentialMode": "platform_default",
                         "outputDatasetName": "Sentinel-2 Download",
                     },
                 ),

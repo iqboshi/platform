@@ -36,7 +36,43 @@ class UserProfile(BaseModel):
     role: RoleKey
     approval_status: ApprovalStatus
     preferred_locale: LocaleCode
+    avatar_url: str = ""
+    job_title: str = ""
+    organization: str = ""
+    bio: str = ""
+    last_login_at: datetime | None = None
     permissions: list[str] = Field(default_factory=list)
+
+
+class EmailSettingsSummary(BaseModel):
+    email_enabled: bool = False
+    smtp_host: str = "smtp.qq.com"
+    smtp_port: int = 465
+    smtp_use_ssl: bool = True
+    smtp_username: str = ""
+    smtp_password_configured: bool = False
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Platform RS Studio"
+    smtp_timeout_seconds: int = 20
+    email_code_expire_minutes: int = 10
+    email_code_resend_seconds: int = 60
+    image_captcha_expire_minutes: int = 5
+
+
+class EmailSettingsUpdateRequest(BaseModel):
+    email_enabled: bool = False
+    smtp_host: str = Field(default="smtp.qq.com", min_length=1, max_length=255)
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    smtp_use_ssl: bool = True
+    smtp_username: str = Field(default="", max_length=255)
+    smtp_password: str | None = Field(default=None, max_length=2000)
+    clear_smtp_password: bool = False
+    smtp_from_email: str = Field(default="", max_length=255)
+    smtp_from_name: str = Field(default="Platform RS Studio", max_length=255)
+    smtp_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    email_code_expire_minutes: int = Field(default=10, ge=1, le=120)
+    email_code_resend_seconds: int = Field(default=60, ge=0, le=3600)
+    image_captcha_expire_minutes: int = Field(default=5, ge=1, le=60)
 
 
 class WorkspaceSummary(BaseModel):
@@ -168,6 +204,26 @@ class ModelVersionSummary(BaseModel):
     owner_display_name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+class ProductAssetSummary(BaseModel):
+    id: str
+    workspace_id: str
+    owner_user_id: str
+    owner_display_name: str | None = None
+    name: str
+    description: str = ""
+    category: str = ""
+    tags: list[str] = Field(default_factory=list)
+    highlights: list[str] = Field(default_factory=list)
+    specifications: dict[str, str] = Field(default_factory=dict)
+    visibility: Literal["private", "public"] = "private"
+    asset_path: str
+    original_file_name: str
+    content_type: str
+    size_bytes: int = 0
+    created_at: datetime
+    updated_at: datetime
 
 
 class JobSummary(BaseModel):

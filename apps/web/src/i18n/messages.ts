@@ -34,6 +34,8 @@ export type TranslationKey =
   | 'locale.en-US'
   | 'menu.overview'
   | 'menu.datasets'
+  | 'menu.products'
+  | 'menu.spatial'
   | 'menu.assets'
   | 'menu.workflows'
   | 'menu.models'
@@ -169,6 +171,7 @@ export type TranslationKey =
   | 'assets.publish'
   | 'assets.unpublish'
   | 'assets.owner'
+  | 'assets.platformOwner'
   | 'assets.resultDataset'
   | 'workflows.kicker'
   | 'workflows.title'
@@ -358,10 +361,12 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'locale.en-US': 'English',
     'menu.overview': 'Overview',
     'menu.datasets': 'Public Datasets',
+    'menu.products': 'Products',
+    'menu.spatial': 'Spatial Studio',
     'menu.assets': 'My Assets',
     'menu.workflows': 'Workflows',
     'menu.models': 'Models',
-    'menu.approvals': 'Approvals',
+    'menu.approvals': 'Approval Center',
     'header.workspace': 'Workspace',
     'header.members': 'members',
     'header.datasets': 'datasets',
@@ -511,6 +516,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.publish': 'Publish',
     'assets.unpublish': 'Unpublish',
     'assets.owner': 'Owner',
+    'assets.platformOwner': 'Platform Asset',
     'assets.resultDataset': 'Result Dataset',
     'workflows.kicker': 'Workflow Orchestration',
     'workflows.title':
@@ -717,10 +723,12 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'locale.en-US': '英文',
     'menu.overview': '总览',
     'menu.datasets': '公开数据集',
+    'menu.products': '产品展示',
+    'menu.spatial': '空间工作台',
     'menu.assets': '个人资产',
     'menu.workflows': '工作流',
     'menu.models': '模型',
-    'menu.approvals': '审批',
+    'menu.approvals': '审批中心',
     'header.workspace': '工作空间',
     'header.members': '成员',
     'header.datasets': '数据集',
@@ -857,6 +865,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.publish': '发布公开',
     'assets.unpublish': '取消公开',
     'assets.owner': '所有者',
+    'assets.platformOwner': '平台资产',
     'assets.resultDataset': '结果数据集',
     'workflows.kicker': '工作流编排',
     'workflows.title': '为预处理、切片、推理和导出设计可版本化 DAG。',

@@ -3,7 +3,9 @@ import type { PermissionKey } from '@platform/types';
 
 import {
   AppstoreOutlined,
+  BuildOutlined,
   DeploymentUnitOutlined,
+  EnvironmentOutlined,
   FolderOpenOutlined,
   GlobalOutlined,
   LogoutOutlined,
@@ -35,6 +37,16 @@ const DatasetsPage = lazy(() =>
 const WorkflowsPage = lazy(() =>
   import('./features/workflows/WorkflowsPage').then((module) => ({
     default: module.WorkflowsPage,
+  })),
+);
+const SpatialStudioPage = lazy(() =>
+  import('./features/spatial/SpatialStudioPage').then((module) => ({
+    default: module.SpatialStudioPage,
+  })),
+);
+const ProductsPage = lazy(() =>
+  import('./features/products/ProductsPage').then((module) => ({
+    default: module.ProductsPage,
   })),
 );
 const PersonalAssetsPage = lazy(() =>
@@ -80,10 +92,12 @@ interface ShellMenuItem {
   key: string;
   permission?: PermissionKey;
   icon: ReactNode;
-  placement: 'primary' | 'secondary';
+  section: 'workspace' | 'admin' | 'personal';
   labelKey:
     | 'menu.overview'
     | 'menu.datasets'
+    | 'menu.products'
+    | 'menu.spatial'
     | 'menu.assets'
     | 'menu.workflows'
     | 'menu.models'
@@ -91,31 +105,36 @@ interface ShellMenuItem {
 }
 
 const menuConfig: ShellMenuItem[] = [
-  { key: '/', icon: <AppstoreOutlined />, placement: 'primary', labelKey: 'menu.overview' },
-  { key: '/datasets', icon: <FolderOpenOutlined />, placement: 'primary', labelKey: 'menu.datasets' },
-  { key: '/workflows', icon: <DeploymentUnitOutlined />, placement: 'primary', labelKey: 'menu.workflows' },
+  { key: '/', icon: <AppstoreOutlined />, section: 'workspace', labelKey: 'menu.overview' },
+  { key: '/datasets', icon: <FolderOpenOutlined />, section: 'workspace', labelKey: 'menu.datasets' },
+  { key: '/products', icon: <BuildOutlined />, section: 'workspace', labelKey: 'menu.products' },
+  { key: '/spatial', icon: <EnvironmentOutlined />, section: 'workspace', labelKey: 'menu.spatial' },
+  { key: '/workflows', icon: <DeploymentUnitOutlined />, section: 'workspace', labelKey: 'menu.workflows' },
   {
     key: '/models',
     icon: <RadarChartOutlined />,
-    placement: 'primary',
+    section: 'workspace',
     labelKey: 'menu.models',
     permission: 'model.view',
   },
   {
     key: '/admin/users',
     icon: <SafetyCertificateOutlined />,
-    placement: 'primary',
+    section: 'admin',
     labelKey: 'menu.approvals',
     permission: 'user.approve',
   },
-  { key: '/assets', icon: <UserOutlined />, placement: 'secondary', labelKey: 'menu.assets' },
+  { key: '/assets', icon: <UserOutlined />, section: 'personal', labelKey: 'menu.assets' },
 ];
 
 function routeKey(pathname: string): string {
   if (pathname.startsWith('/datasets')) return '/datasets';
+  if (pathname.startsWith('/products')) return '/products';
+  if (pathname.startsWith('/spatial')) return '/spatial';
   if (pathname.startsWith('/assets')) return '/assets';
   if (pathname.startsWith('/workflows')) return '/workflows';
   if (pathname.startsWith('/models')) return '/models';
+  if (pathname.startsWith('/approvals')) return '/admin/users';
   if (pathname.startsWith('/admin')) return '/admin/users';
   return '/';
 }
@@ -176,10 +195,25 @@ function AppShell({
   const location = useLocation();
 
   const selectedKey = useMemo(() => routeKey(location.pathname), [location.pathname]);
-  const primaryMenuItems = useMemo<MenuProps['items']>(
+  const sectionTitles = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            workspace: '工作区',
+            admin: '管理中心',
+            personal: '个人',
+          }
+        : {
+            workspace: 'Workspace',
+            admin: 'Administration',
+            personal: 'Personal',
+          },
+    [locale],
+  );
+  const workspaceMenuItems = useMemo<MenuProps['items']>(
     () =>
       menuConfig
-        .filter((item) => item.placement === 'primary')
+        .filter((item) => item.section === 'workspace')
         .filter((item) => (item.permission ? hasPermission(item.permission) : true))
         .map((item) => ({
           key: item.key,
@@ -188,10 +222,22 @@ function AppShell({
         })),
     [hasPermission, t],
   );
-  const secondaryMenuItems = useMemo<MenuProps['items']>(
+  const adminMenuItems = useMemo<MenuProps['items']>(
     () =>
       menuConfig
-        .filter((item) => item.placement === 'secondary')
+        .filter((item) => item.section === 'admin')
+        .filter((item) => (item.permission ? hasPermission(item.permission) : true))
+        .map((item) => ({
+          key: item.key,
+          icon: item.icon,
+          label: t(item.labelKey),
+        })),
+    [hasPermission, t],
+  );
+  const personalMenuItems = useMemo<MenuProps['items']>(
+    () =>
+      menuConfig
+        .filter((item) => item.section === 'personal')
         .filter((item) => (item.permission ? hasPermission(item.permission) : true))
         .map((item) => ({
           key: item.key,
@@ -216,53 +262,77 @@ function AppShell({
             </Tag>
           </div>
           <div className="sider-nav-shell">
-            <div className="nav-menu-block">
-              <Menu
-                mode="inline"
-                selectedKeys={[selectedKey]}
-                items={primaryMenuItems}
-                onClick={({ key }) => navigate(key)}
-                className="nav-menu nav-menu-primary"
-              />
-            </div>
-            {secondaryMenuItems && secondaryMenuItems.length > 0 ? (
-              <div className="nav-bottom-panel">
-                {currentUser ? (
-                  <div className="nav-profile-card">
-                    <div className="nav-profile-name">{currentUser.displayName}</div>
-                    <div className="nav-profile-role">{t(roleKey(currentUser.role))}</div>
-                    <div className="nav-profile-tools">
-                      <Select
-                        value={locale}
-                        onChange={setLocale}
-                        suffixIcon={<GlobalOutlined />}
-                        options={[
-                          { value: 'zh-CN', label: t('locale.zh-CN') },
-                          { value: 'en-US', label: t('locale.en-US') },
-                        ]}
-                        className="nav-utility-select"
-                      />
-                      <Button
-                        icon={<LogoutOutlined />}
-                        onClick={() => void logout().then(() => navigate('/login'))}
-                        className="nav-utility-button"
-                      >
-                        {t('common.logout')}
-                      </Button>
-                    </div>
+            <div className="nav-menu-stack">
+              {workspaceMenuItems && workspaceMenuItems.length > 0 ? (
+                <div className="nav-menu-section">
+                  <div className="nav-section-title">{sectionTitles.workspace}</div>
+                  <div className="nav-menu-block">
+                    <Menu
+                      mode="inline"
+                      selectedKeys={[selectedKey]}
+                      items={workspaceMenuItems}
+                      onClick={({ key }) => navigate(key)}
+                      className="nav-menu nav-menu-primary"
+                    />
                   </div>
-                ) : null}
-                <div className="nav-menu-block nav-menu-block-secondary">
-                  <Menu
-                    mode="inline"
-                    selectedKeys={[selectedKey]}
-                    items={secondaryMenuItems}
-                    onClick={({ key }) => navigate(key)}
-                    className="nav-menu nav-menu-secondary"
-                  />
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+              {adminMenuItems && adminMenuItems.length > 0 ? (
+                <div className="nav-menu-section">
+                  <div className="nav-section-title">{sectionTitles.admin}</div>
+                  <div className="nav-menu-block">
+                    <Menu
+                      mode="inline"
+                      selectedKeys={[selectedKey]}
+                      items={adminMenuItems}
+                      onClick={({ key }) => navigate(key)}
+                      className="nav-menu nav-menu-primary"
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="nav-bottom-panel">
+              {currentUser ? (
+                <div className="nav-profile-card">
+                  <div className="nav-profile-name">{currentUser.displayName}</div>
+                  <div className="nav-profile-role">{t(roleKey(currentUser.role))}</div>
+                  <div className="nav-profile-tools">
+                    <Select
+                      value={locale}
+                      onChange={setLocale}
+                      suffixIcon={<GlobalOutlined />}
+                      options={[
+                        { value: 'zh-CN', label: t('locale.zh-CN') },
+                        { value: 'en-US', label: t('locale.en-US') },
+                      ]}
+                      className="nav-utility-select"
+                    />
+                    <Button
+                      icon={<LogoutOutlined />}
+                      onClick={() => void logout().then(() => navigate('/login'))}
+                      className="nav-utility-button"
+                    >
+                      {t('common.logout')}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              {personalMenuItems && personalMenuItems.length > 0 ? (
+                <div className="nav-menu-section nav-menu-section-secondary">
+                  <div className="nav-section-title">{sectionTitles.personal}</div>
+                  <div className="nav-menu-block nav-menu-block-secondary">
+                    <Menu
+                      mode="inline"
+                      selectedKeys={[selectedKey]}
+                      items={personalMenuItems}
+                      onClick={({ key }) => navigate(key)}
+                      className="nav-menu nav-menu-secondary"
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </Sider>
@@ -272,6 +342,8 @@ function AppShell({
             <Routes>
               <Route path="/" element={<DashboardPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/datasets" element={<DatasetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
+              <Route path="/products" element={<ProductsPage />} />
+              <Route path="/spatial" element={<SpatialStudioPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/assets" element={<PersonalAssetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/workflows" element={<WorkflowsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route
@@ -281,6 +353,14 @@ function AppShell({
                     <ModelsPage snapshot={snapshot} onRefresh={onRefresh} />
                   </RequirePermission>
                 }
+              />
+              <Route
+                path="/approvals"
+                element={<Navigate to="/admin/users" replace />}
+              />
+              <Route
+                path="/admin/approvals"
+                element={<Navigate to="/admin/users" replace />}
               />
               <Route
                 path="/admin/users"

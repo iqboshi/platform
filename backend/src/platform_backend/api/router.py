@@ -9,6 +9,8 @@ from platform_backend.api.routes import (
     jobs,
     models,
     platform_settings,
+    products,
+    spatial,
     splits,
     workflow_runs,
     workflows,
@@ -19,6 +21,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(workspaces.router, prefix="/workspaces", tags=["workspaces"])
 api_router.include_router(datasets.router, prefix="/datasets", tags=["datasets"])
+api_router.include_router(products.router, prefix="/products", tags=["products"])
 api_router.include_router(
     integrations.router,
     prefix="/integrations",
@@ -37,6 +40,7 @@ api_router.include_router(
     tags=["workflow-runs"],
 )
 api_router.include_router(models.router, prefix="/models", tags=["models"])
+api_router.include_router(spatial.router, prefix="/spatial", tags=["spatial"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 api_router.include_router(
     platform_settings.router,

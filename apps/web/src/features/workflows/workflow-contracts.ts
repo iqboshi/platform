@@ -5,6 +5,7 @@ import type {
   GeeCredentialSummary,
   ModelAlgorithmKey,
   ModelVersionSummary,
+  SpatialRoiSummary,
   WorkflowNode,
   WorkflowNodeCatalogItem,
   WorkflowNodeExample,
@@ -17,6 +18,7 @@ export interface WorkflowEditorContext {
   datasetVersions: DatasetVersionSummary[];
   geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
+  spatialRois: SpatialRoiSummary[];
 }
 
 export interface WorkflowNodeAnalysis {
@@ -63,6 +65,10 @@ function parseCsvColumns(value: unknown): string[] {
 }
 
 function parseBBoxText(value: unknown): number[] | undefined {
+  if (Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === 'number')) {
+    return value as number[];
+  }
+
   if (typeof value !== 'string' || !value.trim()) {
     return undefined;
   }
@@ -138,7 +144,7 @@ function compactSummaryForNode(definition: WorkflowNodeCatalogItem): string {
     case 'source.dataset_version':
       return 'Select a dataset version';
     case 'source.sentinel2_gee_download':
-      return 'BBox + date range -> Sentinel-2 raster dataset';
+      return 'Manual BBox or saved ROI + date range -> Sentinel-2 raster dataset';
     case 'table.load_csv':
       return 'CSV dataset version -> table';
     case 'table.train_test_split':
@@ -247,6 +253,7 @@ export function analyzeWorkflowGraph(
 ): Record<string, WorkflowNodeAnalysis> {
   const { datasetsById, datasetVersionsById, geeCredentialsById, modelsById } =
     resolveDatasetMaps(context);
+  const spatialRoisById = new Map(context.spatialRois.map((roi) => [roi.id, roi]));
   const nodesById = new Map(workflowVersion.graph.nodes.map((node) => [node.id, node]));
   const definitionsByType = new Map(definitions.map((definition) => [definition.type, definition]));
   const datasetRefMemo = new Map<string, ResolvedDatasetRef | null>();
@@ -389,6 +396,9 @@ export function analyzeWorkflowGraph(
 
     if (node.type === 'source.sentinel2_gee_download') {
       const bbox = parseBBoxText(node.params.bbox);
+      const roiMode =
+        typeof node.params.roiMode === 'string' ? node.params.roiMode : 'manual_bbox';
+      const roiId = typeof node.params.roiId === 'string' ? node.params.roiId : '';
       const startDate = parseIsoDateText(node.params.startDate);
       const endDate = parseIsoDateText(node.params.endDate);
       const maxCloudCover =
@@ -405,7 +415,19 @@ export function analyzeWorkflowGraph(
           ? node.params.personalCredentialId
           : '';
 
-      if (!bbox) {
+      if (roiMode === 'saved_roi') {
+        if (!roiId) {
+          issues.push({
+            state: 'invalid_params',
+            message: 'Select a saved ROI when roiMode is saved_roi.',
+          });
+        } else if (!spatialRoisById.has(roiId)) {
+          issues.push({
+            state: 'invalid_params',
+            message: 'The selected saved ROI does not exist.',
+          });
+        }
+      } else if (!bbox) {
         issues.push({
           state: 'invalid_params',
           message: 'bbox must contain four coordinates in minLon,minLat,maxLon,maxLat order.',

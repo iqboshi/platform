@@ -47,7 +47,38 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "user_not_found", "message": "User account no longer exists."},
         )
-    return to_user_profile(user)
+    return to_user_profile(user, db)
+
+
+def get_optional_current_user(
+    credentials: AuthCredentials,
+    db: Annotated[Session, Depends(get_db)],
+) -> UserProfile | None:
+    if credentials is None:
+        return None
+
+    try:
+        payload = decode_access_token(credentials.credentials)
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_token", "message": "Authentication token is invalid."},
+        ) from exc
+
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_token", "message": "Authentication token is invalid."},
+        )
+
+    user = get_user_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "user_not_found", "message": "User account no longer exists."},
+        )
+    return to_user_profile(user, db)
 
 
 def require_permission(permission: str):

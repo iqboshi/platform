@@ -32,6 +32,7 @@ import {
 import {
   AppstoreOutlined,
   BellOutlined,
+  BuildOutlined,
   BulbOutlined,
   FolderOpenOutlined,
   PlusOutlined,
@@ -446,6 +447,7 @@ export function DashboardPage({
   const copy = DASHBOARD_COPY[locale];
   const canConfigurePortal = hasPermission('system.configure');
   const canManageModels = hasPermission('model.view');
+  const canApproveUsers = hasPermission('user.approve');
   const isAdmin = canConfigurePortal;
 
   const displayedFeatures = useMemo(
@@ -501,6 +503,16 @@ export function DashboardPage({
           icon: <ThunderboltOutlined />,
         },
         {
+          key: 'products',
+          title: locale === 'zh-CN' ? '产品展示' : 'Products',
+          description:
+            locale === 'zh-CN'
+              ? '查看硬件产品页并直接预览 STP / STEP 三维模型。'
+              : 'Open the hardware showcase and preview STP / STEP models directly.',
+          href: '/products',
+          icon: <BuildOutlined />,
+        },
+        {
           key: 'assets',
           title: copy.quickAssets,
           description: copy.quickAssetsCopy,
@@ -514,8 +526,26 @@ export function DashboardPage({
           href: '/models',
           icon: <RadarChartOutlined />,
         },
-      ].filter((item) => (item.key === 'models' ? canManageModels : true)),
-    [canManageModels, copy],
+        {
+          key: 'approvals',
+          title: locale === 'zh-CN' ? '审批中心' : 'Approval Center',
+          description:
+            locale === 'zh-CN'
+              ? '处理新账号审批、角色调整和管理员侧治理入口。'
+              : 'Review new account approvals, role changes, and governance actions.',
+          href: '/admin/users',
+          icon: <SafetyOutlined />,
+        },
+      ].filter((item) => {
+        if (item.key === 'models') {
+          return canManageModels;
+        }
+        if (item.key === 'approvals') {
+          return canApproveUsers;
+        }
+        return true;
+      }),
+    [canApproveUsers, canManageModels, copy, locale],
   );
 
   const feedbackCategoryOptions = useMemo(

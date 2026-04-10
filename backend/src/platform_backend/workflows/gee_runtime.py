@@ -807,6 +807,7 @@ def execute_gee_graph(
     *,
     db,
     workflow_version: WorkflowVersion,
+    graph_json: dict[str, object] | None,
     current_user: User,
     workspace_id: str,
     run_id: str,
@@ -815,7 +816,11 @@ def execute_gee_graph(
     create_private_dataset_version: CreatePrivateDatasetVersionFn,
 ) -> dict[str, object]:
     graph_json = (
-        workflow_version.graph_json if isinstance(workflow_version.graph_json, dict) else {}
+        graph_json
+        if isinstance(graph_json, dict)
+        else workflow_version.graph_json
+        if isinstance(workflow_version.graph_json, dict)
+        else {}
     )
     source_nodes = [
         node

@@ -28,6 +28,7 @@ from platform_backend.services.platform_store import (
     save_current_workflow_version,
     test_workflow_node,
 )
+from platform_backend.services.spatial_store import resolve_saved_rois_in_workflow_graph
 from platform_backend.workflows.validation import validate_workflow_graph
 
 router = APIRouter()
@@ -166,8 +167,24 @@ def delete_workflow_version_route(
     response_model=WorkflowValidationResult,
     dependencies=[Depends(require_permission("workflow.manage"))],
 )
-def validate_workflow(request: WorkflowGraph) -> WorkflowValidationResult:
-    return validate_workflow_graph(request)
+def validate_workflow(
+    request: WorkflowGraph,
+    db: DatabaseDep,
+    current_user: WorkflowManageUserDep,
+) -> WorkflowValidationResult:
+    try:
+        resolved_graph = resolve_saved_rois_in_workflow_graph(
+            db,
+            request,
+            current_user=current_user,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return validate_workflow_graph(resolved_graph)
 
 
 @router.post(
@@ -179,4 +196,16 @@ def test_workflow_node_route(
     db: DatabaseDep,
     current_user: WorkflowRunUserDep,
 ) -> WorkflowNodeTestResponse:
-    return test_workflow_node(db, request.graph, request.node_id, current_user)
+    try:
+        resolved_graph = resolve_saved_rois_in_workflow_graph(
+            db,
+            request.graph,
+            current_user=current_user,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return test_workflow_node(db, resolved_graph, request.node_id, current_user)

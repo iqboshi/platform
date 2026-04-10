@@ -11,12 +11,14 @@ from platform_backend.domain_enums import (
     ApprovalStatus,
     DatasetKind,
     DatasetStatus,
+    EmailVerificationScene,
     FeedbackTicketCategory,
     FeedbackTicketPriority,
     FeedbackTicketStatus,
     JobStatus,
     LocaleCode,
     RoleKey,
+    RoleUpgradeRequestStatus,
     WorkflowRunStatus,
 )
 
@@ -41,6 +43,67 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     preferred_locale: Mapped[LocaleCode] = mapped_column(Enum(LocaleCode), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserProfileDetail(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "user_profile_details"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    avatar_url: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    job_title: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    organization: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    bio: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class ImageCaptchaChallenge(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "image_captcha_challenges"
+
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EmailVerificationChallenge(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "email_verification_challenges"
+
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    scene: Mapped[EmailVerificationScene] = mapped_column(
+        Enum(EmailVerificationScene),
+        nullable=False,
+        index=True,
+    )
+    requested_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RoleUpgradeRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "role_upgrade_requests"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    current_role: Mapped[RoleKey] = mapped_column(Enum(RoleKey), nullable=False)
+    requested_role: Mapped[RoleKey] = mapped_column(Enum(RoleKey), nullable=False)
+    status: Mapped[RoleUpgradeRequestStatus] = mapped_column(
+        Enum(RoleUpgradeRequestStatus),
+        nullable=False,
+        default=RoleUpgradeRequestStatus.PENDING,
+    )
+    reason: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    review_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Workspace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -145,6 +208,60 @@ class GeeCredential(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     project_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     service_account_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SpatialRoi(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "spatial_rois"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    geometry_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    geometry_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    bbox: Mapped[list[float]] = mapped_column(JSON, default=list, nullable=False)
+    style_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    tags_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
+
+class SpatialOverlay(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "spatial_overlays"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    dataset_version_id: Mapped[str] = mapped_column(
+        ForeignKey("dataset_versions.id"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    overlay_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    opacity: Mapped[float] = mapped_column(nullable=False, default=0.85)
+    style_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
+
+class ProductAsset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "product_assets"
+
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    category: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    tags_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    highlights_json: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    specifications_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    asset_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class PlatformSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):

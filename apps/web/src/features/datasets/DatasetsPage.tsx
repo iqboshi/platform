@@ -11,6 +11,13 @@ import { datasetKindKey, datasetStatusKey } from '@/lib/i18n-helpers';
 
 const { Paragraph, Text, Title } = Typography;
 
+const DATASET_LIST_PAGINATION = {
+  pageSize: 8,
+  showSizeChanger: true,
+  pageSizeOptions: ['8', '20', '50'],
+  hideOnSinglePage: true,
+};
+
 function getMetadataString(metadata: Record<string, unknown>, key: string): string | undefined {
   const value = metadata[key];
   return typeof value === 'string' && value.trim() ? value : undefined;
@@ -81,6 +88,7 @@ export function DatasetsPage({
   const { message } = App.useApp();
   const { currentUser, token } = useAuth();
   const { locale, t } = useI18n();
+  const platformOwnerLabel = t('assets.platformOwner');
   const publicDatasets = useMemo(
     () => snapshot.datasets.filter((item) => item.visibility === 'public'),
     [snapshot.datasets],
@@ -196,7 +204,7 @@ export function DatasetsPage({
               <Table
                 rowKey="id"
                 dataSource={publicDatasets}
-                pagination={false}
+                pagination={DATASET_LIST_PAGINATION}
                 className="public-dataset-table"
                 rowClassName={(record) =>
                   record.id === selectedDataset?.id
@@ -217,7 +225,7 @@ export function DatasetsPage({
                   {
                     title: t('datasets.owner'),
                     dataIndex: 'ownerDisplayName',
-                    render: (value: string | undefined) => value ?? '-',
+                    render: (value: string | undefined) => value ?? platformOwnerLabel,
                   },
                   {
                     title: t('datasets.table.status'),
@@ -287,7 +295,7 @@ export function DatasetsPage({
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label={t('datasets.owner')}>
-                  {selectedDataset?.ownerDisplayName ?? '-'}
+                  {selectedDataset?.ownerDisplayName ?? platformOwnerLabel}
                 </Descriptions.Item>
                 <Descriptions.Item label={t('datasets.visibility')}>
                   <Tag color="blue">{t('datasets.visibilityPublic')}</Tag>

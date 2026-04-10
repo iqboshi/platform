@@ -3,6 +3,7 @@ import type {
   DatasetVersionSummary,
   GeeCredentialSummary,
   ModelVersionSummary,
+  SpatialRoiSummary,
   WorkflowNodeCatalogItem,
   WorkflowNodeExample,
   WorkflowNodePreviewValue,
@@ -946,6 +947,35 @@ function ParameterField({
   }
 }
 
+function shouldRenderParameterField(
+  nodeType: string,
+  params: Record<string, unknown>,
+  definition: WorkflowParamDefinition,
+): boolean {
+  if (nodeType !== 'source.sentinel2_gee_download') {
+    return true;
+  }
+
+  const credentialMode =
+    typeof params.credentialMode === 'string' ? params.credentialMode : 'platform_default';
+  const roiMode =
+    typeof params.roiMode === 'string' ? params.roiMode : 'manual_bbox';
+
+  if (definition.key === 'personalCredentialId') {
+    return credentialMode === 'personal';
+  }
+
+  if (definition.key === 'bbox') {
+    return roiMode === 'manual_bbox';
+  }
+
+  if (definition.key === 'roiId') {
+    return roiMode === 'saved_roi';
+  }
+
+  return true;
+}
+
 function CanvasInner({
   catalog,
   templates,
@@ -956,6 +986,7 @@ function CanvasInner({
   datasetVersions,
   geeCredentials,
   modelVersions,
+  spatialRois,
   authToken,
   onWorkflowChange,
 }: {
@@ -968,6 +999,7 @@ function CanvasInner({
   datasetVersions: DatasetVersionSummary[];
   geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
+  spatialRois: SpatialRoiSummary[];
   authToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
@@ -982,8 +1014,9 @@ function CanvasInner({
       datasetVersions,
       geeCredentials,
       modelVersions,
+      spatialRois,
     }),
-    [datasetVersions, datasets, geeCredentials, modelVersions],
+    [datasetVersions, datasets, geeCredentials, modelVersions, spatialRois],
   );
   const definitions = useMemo(() => catalog as WorkflowNodeDefinition[], [catalog]);
   const availableTemplates = useMemo(() => templates, [templates]);
@@ -1096,24 +1129,27 @@ function CanvasInner({
     selectedNodeTest && selectedNodeTest.graphSignature !== currentGraphSignature,
   );
   const selectedNodeType = selectedNode?.data.type;
-  const nodeTestProgressCopy =
-    locale === 'zh-CN'
-      ? {
-          title: '节点测试进行中',
-          authenticating: '正在连接 Google Earth Engine...',
-          searching: '正在检索 Sentinel 场景...',
-          preparing: '正在生成节点输出预览...',
-          completed: '节点测试完成。',
-          failed: '节点测试失败。',
-        }
-      : {
-          title: 'Node Test In Progress',
-          authenticating: 'Connecting to Google Earth Engine...',
-          searching: 'Searching Sentinel scenes...',
-          preparing: 'Preparing node output preview...',
-          completed: 'Node test completed.',
-          failed: 'Node test failed.',
-        };
+  const nodeTestProgressCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            title: '节点测试进行中',
+            authenticating: '正在连接 Google Earth Engine...',
+            searching: '正在检索 Sentinel 场景...',
+            preparing: '正在生成节点输出预览...',
+            completed: '节点测试完成。',
+            failed: '节点测试失败。',
+          }
+        : {
+            title: 'Node Test In Progress',
+            authenticating: 'Connecting to Google Earth Engine...',
+            searching: 'Searching Sentinel scenes...',
+            preparing: 'Preparing node output preview...',
+            completed: 'Node test completed.',
+            failed: 'Node test failed.',
+          },
+    [locale],
+  );
 
   const stopNodeTestProgressTimer = useCallback(() => {
     if (nodeTestProgressTimerRef.current !== null) {
@@ -1436,14 +1472,46 @@ function CanvasInner({
         return node;
       }
 
+      let nextParams: Record<string, unknown> = {
+        ...node.data.params,
+        [paramKey]: value,
+      };
+
+      if (node.data.type === 'source.sentinel2_gee_download') {
+        if (paramKey === 'credentialMode') {
+          if (value === 'platform_default') {
+            nextParams = {
+              ...nextParams,
+              personalCredentialId: '',
+            };
+          }
+          if (
+            value === 'personal' &&
+            (!nextParams.personalCredentialId || typeof nextParams.personalCredentialId !== 'string')
+          ) {
+            nextParams = {
+              ...nextParams,
+              personalCredentialId: editorContext.geeCredentials[0]?.id ?? '',
+            };
+          }
+        }
+
+        if (paramKey === 'roiMode' && value === 'saved_roi') {
+          nextParams = {
+            ...nextParams,
+            roiId:
+              typeof nextParams.roiId === 'string' && nextParams.roiId
+                ? nextParams.roiId
+                : editorContext.spatialRois[0]?.id ?? '',
+          };
+        }
+      }
+
       return {
         ...node,
         data: {
           ...node.data,
-          params: {
-            ...node.data.params,
-            [paramKey]: value,
-          },
+          params: nextParams,
         },
       };
     });
@@ -1867,23 +1935,31 @@ function CanvasInner({
             children: (
               <div className="workflow-inspector-section">
                 {selectedDefinition.params.length ? (
-                  selectedDefinition.params.map((field) => (
-                    <div key={field.key} className="workflow-parameter-field">
-                      <div className="workflow-parameter-head">
-                        <strong>{field.label}</strong>
-                        {field.description ? (
-                          <Text type="secondary">{field.description}</Text>
-                        ) : null}
+                  selectedDefinition.params
+                    .filter((field) =>
+                      shouldRenderParameterField(
+                        selectedNode.data.type,
+                        selectedNode.data.params,
+                        field,
+                      ),
+                    )
+                    .map((field) => (
+                      <div key={field.key} className="workflow-parameter-field">
+                        <div className="workflow-parameter-head">
+                          <strong>{field.label}</strong>
+                          {field.description ? (
+                            <Text type="secondary">{field.description}</Text>
+                          ) : null}
+                        </div>
+                        <ParameterField
+                          definition={field}
+                          nodeType={selectedNode.data.type}
+                          value={selectedNode.data.params[field.key]}
+                          context={editorContext}
+                          onChange={(value) => updateSelectedNodeParams(field.key, value)}
+                        />
                       </div>
-                      <ParameterField
-                        definition={field}
-                        nodeType={selectedNode.data.type}
-                        value={selectedNode.data.params[field.key]}
-                        context={editorContext}
-                        onChange={(value) => updateSelectedNodeParams(field.key, value)}
-                      />
-                    </div>
-                  ))
+                    ))
                 ) : (
                   <Text type="secondary">{t('workflows.noParameters')}</Text>
                 )}
@@ -2313,6 +2389,7 @@ export function WorkflowCanvas(props: {
   datasetVersions: DatasetVersionSummary[];
   geeCredentials: GeeCredentialSummary[];
   modelVersions: ModelVersionSummary[];
+  spatialRois: SpatialRoiSummary[];
   authToken?: string | null;
   onWorkflowChange?: (workflowVersion: WorkflowVersionDetail) => void;
 }) {
