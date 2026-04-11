@@ -186,9 +186,14 @@ class WorkflowVersionSummary(BaseModel):
     workflow_id: str
     version: int
     graph: WorkflowGraph
+    visibility: str = "private"
     owner_user_id: str | None = None
     owner_display_name: str | None = None
     created_at: datetime
+
+
+class WorkflowVersionUpdateRequest(BaseModel):
+    visibility: str | None = None
 
 
 class WorkflowValidationResult(BaseModel):

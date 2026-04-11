@@ -15,6 +15,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import platform_backend.workflows.gee_runtime as gee_runtime
+from platform_backend.core.visibility import (
+    can_access_by_visibility,
+    can_manage_owned_asset,
+    normalize_visibility,
+)
 from platform_backend.core.settings import get_settings
 from platform_backend.domain_enums import (
     DatasetKind,
@@ -103,10 +108,14 @@ def _is_admin_user(current_user: UserProfile | User | None) -> bool:
 def _dataset_visibility(metadata: dict[str, object] | None) -> str:
     if not metadata:
         return "workspace"
-    visibility = str(metadata.get("visibility", "workspace")).strip().lower()
-    if visibility in {"private", "public", "workspace"}:
-        return visibility
-    return "workspace"
+    try:
+        return normalize_visibility(
+            str(metadata.get("visibility", "workspace")),
+            default="workspace",
+            allow_workspace=True,
+        )
+    except ValueError:
+        return "workspace"
 
 
 def _dataset_owner_user_id(metadata: dict[str, object] | None) -> str | None:
@@ -126,10 +135,14 @@ def _dataset_owner_display_name(metadata: dict[str, object] | None) -> str | Non
 def _model_visibility(metadata: dict[str, object] | None) -> str:
     if not metadata:
         return "workspace"
-    visibility = str(metadata.get("visibility", "private")).strip().lower()
-    if visibility in {"private", "public", "workspace"}:
-        return visibility
-    return "private"
+    try:
+        return normalize_visibility(
+            str(metadata.get("visibility", "private")),
+            default="private",
+            allow_workspace=True,
+        )
+    except ValueError:
+        return "private"
 
 
 def _model_owner_user_id(metadata: dict[str, object] | None) -> str | None:
@@ -154,13 +167,12 @@ def _can_access_model_version(
     row: ModelVersion,
     current_user: UserProfile | User | None,
 ) -> bool:
-    if not _is_private_model_metadata(row.metadata_json):
-        return True
-    if current_user is None:
-        return False
-    if _is_admin_user(current_user):
-        return True
-    return _model_owner_user_id(row.metadata_json) == current_user.id
+    return can_access_by_visibility(
+        _model_visibility(row.metadata_json),
+        _model_owner_user_id(row.metadata_json),
+        current_user_id=current_user.id if current_user is not None else None,
+        is_admin=_is_admin_user(current_user),
+    )
 
 
 def _sanitize_model_metadata(metadata: dict[str, object] | None) -> dict[str, object]:
@@ -241,6 +253,28 @@ def _workflow_owner_display_name(row: WorkflowVersion) -> str | None:
     return owner_display_name or None
 
 
+def _workflow_visibility(row: WorkflowVersion) -> str:
+    try:
+        return normalize_visibility(
+            str(_workflow_metadata(row.graph_json).get("visibility", "private")),
+            default="private",
+        )
+    except ValueError:
+        return "private"
+
+
+def _unique_string_values(values: list[object]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
 def _gee_service_account_email(service_account_json: str) -> str | None:
     try:
         payload = json.loads(service_account_json)
@@ -305,7 +339,14 @@ def _can_access_workflow_version(
 ) -> bool:
     if scope == "all":
         return _is_admin_user(current_user)
-    return _workflow_owner_user_id(row) == current_user.id
+    if scope == "mine":
+        return _workflow_owner_user_id(row) == current_user.id
+    return can_access_by_visibility(
+        _workflow_visibility(row),
+        _workflow_owner_user_id(row),
+        current_user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
+    )
 
 
 def _dataset_summary(
@@ -352,14 +393,60 @@ def _dataset_version_summary(row: DatasetVersion) -> DatasetVersionSummary:
     )
 
 
-def _workflow_run_summary(row: WorkflowRun, submitted_by: str) -> WorkflowRunSummary:
+def _workflow_input_asset_version_ids(row: WorkflowRun) -> list[str]:
+    metrics_payload = row.metrics_json if isinstance(row.metrics_json, dict) else {}
+    raw_input_ids = metrics_payload.get("input_asset_version_ids")
+    if isinstance(raw_input_ids, list):
+        return _unique_string_values(raw_input_ids)
+
+    references = metrics_payload.get("references")
+    candidate_values: list[object] = []
+    if isinstance(references, dict):
+        candidate_values.append(references.get("input_dataset_version_id"))
+    candidate_values.append(row.input_dataset_version_id)
+    return _unique_string_values(candidate_values)
+
+
+def _workflow_output_asset_version_ids(row: WorkflowRun) -> list[str]:
+    metrics_payload = row.metrics_json if isinstance(row.metrics_json, dict) else {}
+    candidate_values: list[object] = []
+
+    raw_output_ids = metrics_payload.get("output_asset_version_ids")
+    if isinstance(raw_output_ids, list):
+        candidate_values.extend(raw_output_ids)
+
+    saved_dataset_version_ids = metrics_payload.get("saved_dataset_version_ids")
+    if isinstance(saved_dataset_version_ids, list):
+        candidate_values.extend(saved_dataset_version_ids)
+
+    candidate_values.append(row.result_dataset_version_id)
+    return _unique_string_values(candidate_values)
+
+
+def _workflow_primary_output_asset_version_id(row: WorkflowRun) -> str | None:
+    metrics_payload = row.metrics_json if isinstance(row.metrics_json, dict) else {}
+    explicit_output_id = str(
+        metrics_payload.get("primary_output_asset_version_id", "")
+    ).strip()
+    return explicit_output_id or row.result_dataset_version_id
+
+
+def _workflow_run_summary(
+    row: WorkflowRun,
+    submitted_by: str,
+    workflow_name: str | None = None,
+) -> WorkflowRunSummary:
     metrics_payload = row.metrics_json if isinstance(row.metrics_json, dict) else {}
     return WorkflowRunSummary(
         id=row.id,
         workflow_version_id=row.workflow_version_id,
+        workflow_name=workflow_name,
         status=row.status,
         submitted_by=submitted_by,
         result_dataset_version_id=row.result_dataset_version_id,
+        input_asset_version_ids=_workflow_input_asset_version_ids(row),
+        output_asset_version_ids=_workflow_output_asset_version_ids(row),
+        primary_output_asset_version_id=_workflow_primary_output_asset_version_id(row),
         error_message=(
             str(metrics_payload.get("error", "")).strip()
             if isinstance(metrics_payload.get("error"), str)
@@ -376,9 +463,8 @@ def _workflow_run_summary(row: WorkflowRun, submitted_by: str) -> WorkflowRunSum
 
 
 def _model_version_summary(row: ModelVersion, model_name: str | None = None) -> ModelVersionSummary:
-    metadata = _sanitize_model_metadata(
-        row.metadata_json if isinstance(row.metadata_json, dict) else {}
-    )
+    metadata = dict(row.metadata_json) if isinstance(row.metadata_json, dict) else {}
+    public_metadata = _sanitize_model_metadata(metadata)
     feature_names = metadata.get("feature_names", [])
     default_parameters = metadata.get("default_parameters", {})
     return ModelVersionSummary(
@@ -402,7 +488,7 @@ def _model_version_summary(row: ModelVersion, model_name: str | None = None) -> 
         visibility=_model_visibility(metadata),
         owner_user_id=_model_owner_user_id(metadata),
         owner_display_name=_model_owner_display_name(metadata),
-        metadata=metadata,
+        metadata=public_metadata,
         created_at=row.created_at,
     )
 
@@ -413,6 +499,7 @@ def _workflow_version_summary(row: WorkflowVersion) -> WorkflowVersionSummary:
         workflow_id=row.workflow_id,
         version=row.version,
         graph=WorkflowGraph.model_validate(row.graph_json),
+        visibility=_workflow_visibility(row),
         owner_user_id=_workflow_owner_user_id(row),
         owner_display_name=_workflow_owner_display_name(row),
         created_at=row.created_at,
@@ -1400,6 +1487,7 @@ def _ensure_workflow_owner_metadata(
     current_user: UserProfile | User,
 ) -> dict[str, object]:
     metadata = _workflow_metadata(graph_json)
+    metadata["visibility"] = "private"
     metadata["owner_user_id"] = current_user.id
     metadata["owner_display_name"] = (
         current_user.display_name
@@ -1537,11 +1625,7 @@ def get_workflow_version(
     row = db.get(WorkflowVersion, workflow_version_id)
     if row is None:
         return None
-    if not _can_access_workflow_version(
-        row,
-        current_user,
-        scope="all" if _is_admin_user(current_user) else "mine",
-    ):
+    if not _can_access_workflow_version(row, current_user, scope="visible"):
         return None
     return _workflow_version_summary(row)
 
@@ -1554,15 +1638,38 @@ def get_workflow_version_download_payload(
     row = db.get(WorkflowVersion, workflow_version_id)
     if row is None:
         return None
-    if not _can_access_workflow_version(
-        row,
-        current_user,
-        scope="all" if _is_admin_user(current_user) else "mine",
-    ):
+    if not _can_access_workflow_version(row, current_user, scope="visible"):
         return None
     file_name = f"workflow-version-{row.version}.json"
     payload = json.dumps(row.graph_json, indent=2, ensure_ascii=False)
     return payload, file_name
+
+
+def update_workflow_version(
+    db: Session,
+    workflow_version_id: str,
+    *,
+    visibility: str | None,
+    current_user: UserProfile | User,
+) -> WorkflowVersionSummary:
+    row = db.get(WorkflowVersion, workflow_version_id)
+    if row is None:
+        raise LookupError("Workflow version not found.")
+
+    if visibility is not None:
+        if not _is_admin_user(current_user):
+            raise PermissionError("Only administrators can change workflow visibility.")
+        metadata = _workflow_metadata(row.graph_json)
+        metadata["visibility"] = normalize_visibility(visibility, default="private")
+        graph_json = dict(row.graph_json) if isinstance(row.graph_json, dict) else {}
+        row.graph_json = {
+            **graph_json,
+            "metadata": metadata,
+        }
+
+    db.commit()
+    db.refresh(row)
+    return _workflow_version_summary(row)
 
 
 def import_workflow_version(
@@ -1647,10 +1754,10 @@ def delete_workflow_version(
     row = db.get(WorkflowVersion, workflow_version_id)
     if row is None:
         raise LookupError("Workflow version not found.")
-    if not _can_access_workflow_version(
-        row,
-        current_user,
-        scope="all" if _is_admin_user(current_user) else "mine",
+    if not can_manage_owned_asset(
+        _workflow_owner_user_id(row),
+        current_user_id=current_user.id,
+        is_admin=_is_admin_user(current_user),
     ):
         raise PermissionError(
             "Only the owner or an administrator can delete this workflow version."
@@ -1677,8 +1784,22 @@ def list_workflow_runs(
         row.id: row.display_name
         for row in db.scalars(select(User).where(User.id.in_(user_ids))).all()
     }
+    workflow_version_ids = {row.workflow_version_id for row in rows}
+    workflow_versions = db.scalars(
+        select(WorkflowVersion).where(WorkflowVersion.id.in_(workflow_version_ids))
+    ).all()
+    workflow_id_by_version_id = {row.id: row.workflow_id for row in workflow_versions}
+    workflow_ids = set(workflow_id_by_version_id.values())
+    workflows = {
+        row.id: row.name for row in db.scalars(select(Workflow).where(Workflow.id.in_(workflow_ids))).all()
+    }
     return [
-        _workflow_run_summary(row, users.get(row.submitted_by, row.submitted_by)) for row in rows
+        _workflow_run_summary(
+            row,
+            users.get(row.submitted_by, row.submitted_by),
+            workflows.get(workflow_id_by_version_id.get(row.workflow_version_id, "")),
+        )
+        for row in rows
     ]
 
 
@@ -1688,6 +1809,60 @@ def _write_run_artifact(run_id: str, payload: dict[str, object]) -> Path:
     target_path = target_dir / "result-summary.json"
     target_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return target_path
+
+
+def _metadata_upstream_asset_version_ids(metadata: dict[str, object]) -> list[str]:
+    candidate_values: list[object] = []
+
+    raw_upstream_ids = metadata.get("upstream_asset_version_ids")
+    if isinstance(raw_upstream_ids, list):
+        candidate_values.extend(raw_upstream_ids)
+
+    raw_input_ids = metadata.get("input_asset_version_ids")
+    if isinstance(raw_input_ids, list):
+        candidate_values.extend(raw_input_ids)
+
+    for key in ("input_dataset_version_id", "source_dataset_version_id"):
+        candidate_values.append(metadata.get(key))
+
+    return _unique_string_values(candidate_values)
+
+
+def _attach_workflow_run_lineage_to_dataset_versions(
+    db: Session,
+    *,
+    run: WorkflowRun,
+    workflow_version_id: str,
+    output_dataset_version_ids: list[str],
+    input_asset_version_ids: list[str],
+    model_version_id: str | None,
+) -> None:
+    normalized_input_ids = _unique_string_values(list(input_asset_version_ids))
+    normalized_output_ids = _unique_string_values(list(output_dataset_version_ids))
+
+    for dataset_version_id in normalized_output_ids:
+        row = db.get(DatasetVersion, dataset_version_id)
+        if row is None:
+            continue
+
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        merged_metadata = dict(metadata)
+        merged_metadata["source_execution_id"] = run.id
+        merged_metadata["workflow_run_id"] = run.id
+        merged_metadata["source_workflow_version_id"] = workflow_version_id
+        merged_metadata["upstream_asset_version_ids"] = _unique_string_values(
+            [
+                *_metadata_upstream_asset_version_ids(merged_metadata),
+                *normalized_input_ids,
+            ]
+        )
+        if model_version_id:
+            merged_metadata["model_version_id"] = model_version_id
+        if len(normalized_input_ids) == 1 and not merged_metadata.get("input_dataset_version_id"):
+            merged_metadata["input_dataset_version_id"] = normalized_input_ids[0]
+
+        row.metadata_json = merged_metadata
+        db.add(row)
 
 
 def _extract_run_references(graph_json: dict[str, object]) -> tuple[str | None, str | None]:
@@ -1822,11 +1997,7 @@ def create_workflow_run(
     workflow_version = db.get(WorkflowVersion, request.workflow_version_id)
     if workflow_version is None:
         raise LookupError("Workflow version was not found.")
-    if not _can_access_workflow_version(
-        workflow_version,
-        current_user,
-        scope="all" if _is_admin_user(current_user) else "mine",
-    ):
+    if not _can_access_workflow_version(workflow_version, current_user, scope="visible"):
         raise PermissionError("You do not have access to this workflow version.")
 
     graph_json = (
@@ -1860,6 +2031,10 @@ def create_workflow_run(
     if fallback_model_version is None:
         raise LookupError("No model version is available to associate with this workflow run.")
 
+    input_asset_version_ids = (
+        [dataset_version.id] if dataset_version is not None else []
+    )
+
     def resolve_credential(
         mode: str,
         personal_credential_id: str | None,
@@ -1880,6 +2055,9 @@ def create_workflow_run(
         started_at=datetime.now(UTC),
         metrics_json={
             "priority": request.priority,
+            "input_asset_version_ids": input_asset_version_ids,
+            "output_asset_version_ids": [],
+            "primary_output_asset_version_id": None,
             "references": {
                 "input_dataset_version_id": dataset_version.id if dataset_version else None,
                 "model_version_id": model_version.id if model_version else None,
@@ -1915,6 +2093,12 @@ def create_workflow_run(
             run.status = WorkflowRunStatus.SUCCEEDED
             run.finished_at = datetime.now(UTC)
             run.result_dataset_version_id = runtime_result["result_dataset_version_id"]
+            output_dataset_version_ids = _unique_string_values(
+                [
+                    *(runtime_result["saved_dataset_version_ids"] or []),
+                    run.result_dataset_version_id,
+                ]
+            )
             run.metrics_json = {
                 **run.metrics_json,
                 "metrics": runtime_result["metrics"],
@@ -1922,7 +2106,17 @@ def create_workflow_run(
                 "saved_model_version_ids": runtime_result["saved_model_version_ids"],
                 "result_model_version_id": runtime_result["result_model_version_id"],
                 "artifact_path": runtime_result["artifact_path"],
+                "output_asset_version_ids": output_dataset_version_ids,
+                "primary_output_asset_version_id": run.result_dataset_version_id,
             }
+            _attach_workflow_run_lineage_to_dataset_versions(
+                db,
+                run=run,
+                workflow_version_id=workflow_version.id,
+                output_dataset_version_ids=output_dataset_version_ids,
+                input_asset_version_ids=input_asset_version_ids,
+                model_version_id=model_version.id if model_version is not None else None,
+            )
             db.add(
                 JobLog(
                     job_type="workflow_run",
@@ -1947,6 +2141,12 @@ def create_workflow_run(
             run.status = WorkflowRunStatus.SUCCEEDED
             run.finished_at = datetime.now(UTC)
             run.result_dataset_version_id = runtime_result["result_dataset_version_id"]
+            output_dataset_version_ids = _unique_string_values(
+                [
+                    *(runtime_result["saved_dataset_version_ids"] or []),
+                    run.result_dataset_version_id,
+                ]
+            )
             run.metrics_json = {
                 **run.metrics_json,
                 "metrics": runtime_result["metrics"],
@@ -1954,7 +2154,17 @@ def create_workflow_run(
                 "saved_model_version_ids": runtime_result["saved_model_version_ids"],
                 "result_model_version_id": runtime_result["result_model_version_id"],
                 "artifact_path": runtime_result["artifact_path"],
+                "output_asset_version_ids": output_dataset_version_ids,
+                "primary_output_asset_version_id": run.result_dataset_version_id,
             }
+            _attach_workflow_run_lineage_to_dataset_versions(
+                db,
+                run=run,
+                workflow_version_id=workflow_version.id,
+                output_dataset_version_ids=output_dataset_version_ids,
+                input_asset_version_ids=input_asset_version_ids,
+                model_version_id=model_version.id if model_version is not None else None,
+            )
             db.add(
                 JobLog(
                     job_type="workflow_run",
@@ -1973,6 +2183,23 @@ def create_workflow_run(
                 dataset_version=dataset_version or fallback_dataset_version,
                 model_version=model_version,
             )
+            _attach_workflow_run_lineage_to_dataset_versions(
+                db,
+                run=run,
+                workflow_version_id=workflow_version.id,
+                output_dataset_version_ids=[run.result_dataset_version_id]
+                if run.result_dataset_version_id
+                else [],
+                input_asset_version_ids=input_asset_version_ids,
+                model_version_id=model_version.id if model_version is not None else None,
+            )
+            run.metrics_json = {
+                **run.metrics_json,
+                "output_asset_version_ids": (
+                    [run.result_dataset_version_id] if run.result_dataset_version_id else []
+                ),
+                "primary_output_asset_version_id": run.result_dataset_version_id,
+            }
         db.commit()
     except Exception as exc:
         ensure_workflow_run_transition(run.status, WorkflowRunStatus.FAILED)
@@ -1982,6 +2209,8 @@ def create_workflow_run(
         run.metrics_json = {
             **run.metrics_json,
             "error": error_message,
+            "output_asset_version_ids": [],
+            "primary_output_asset_version_id": None,
         }
         db.add(
             JobLog(
@@ -2095,6 +2324,39 @@ def get_model_version_download_payload(
     return file_path.read_bytes(), file_path.name, media_type
 
 
+def update_model_version(
+    db: Session,
+    model_version_id: str,
+    *,
+    visibility: str | None,
+    current_user: UserProfile | User | None,
+) -> ModelVersionSummary:
+    row = db.get(ModelVersion, model_version_id)
+    if row is None:
+        raise LookupError("Model version not found.")
+    if current_user is None:
+        raise PermissionError("Authentication is required.")
+
+    metadata = dict(row.metadata_json) if isinstance(row.metadata_json, dict) else {}
+
+    if visibility is not None:
+        if not _is_admin_user(current_user):
+            raise PermissionError("Only administrators can change model visibility.")
+        metadata["visibility"] = normalize_visibility(
+            visibility,
+            default=_model_visibility(metadata),
+            allow_workspace=True,
+        )
+
+    row.metadata_json = metadata
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    model = db.get(Model, row.model_id)
+    return _model_version_summary(row, model.name if model is not None else None)
+
+
 def delete_model_version(
     db: Session,
     model_version_id: str,
@@ -2107,8 +2369,11 @@ def delete_model_version(
     if not _can_access_model_version(row, current_user):
         raise PermissionError("You do not have access to this model version.")
     if (
-        not _is_admin_user(current_user)
-        and _model_owner_user_id(row.metadata_json) != current_user.id
+        not can_manage_owned_asset(
+            _model_owner_user_id(row.metadata_json),
+            current_user_id=current_user.id if current_user is not None else None,
+            is_admin=_is_admin_user(current_user),
+        )
     ):
         raise PermissionError("Only the owner or an administrator can delete this model version.")
 

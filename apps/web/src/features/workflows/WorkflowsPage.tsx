@@ -2,8 +2,16 @@ import type { PlatformDataSnapshot } from '@/lib/api';
 
 import { App, Button, Card, Col, Modal, Progress, Row, Table, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { isApiError } from '@/auth/errors';
+import { AssetFlowPanel } from '@/features/asset-flow/AssetFlowPanel';
+import {
+  createHandoffPath,
+  createSpatialAssetHandoff,
+  readHandoffFromSearchParams,
+  removeHandoffFromSearchParams,
+} from '@/features/asset-flow/handoff';
 import { useAuth } from '@/auth/useAuth';
 import { StatCard } from '@/components/StatCard';
 import { WorkflowCanvas } from '@/components/WorkflowCanvas';
@@ -18,6 +26,11 @@ import {
 } from '@/lib/api';
 import { parseImportedWorkflowGraph } from '@/lib/workflow-import';
 import { workflowRunStatusKey } from '@/lib/i18n-helpers';
+import type { WorkflowEditorContext } from './node-registry';
+import {
+  attachDatasetVersionToWorkflow,
+  attachSavedRoiToWorkflow,
+} from './draft-handoff';
 import { buildWorkflowStats } from './workflow-utils';
 
 const { Paragraph } = Typography;
@@ -36,6 +49,45 @@ const ASSET_IMPORT_PAGINATION = {
   hideOnSinglePage: true,
 };
 
+function datasetVersionIsMapReady(
+  datasetVersionId: string | undefined,
+  snapshot: PlatformDataSnapshot,
+): boolean {
+  if (!datasetVersionId) {
+    return false;
+  }
+
+  const version = snapshot.datasetVersions.find((item) => item.id === datasetVersionId);
+  if (!version) {
+    return false;
+  }
+
+  const dataset = snapshot.datasets.find((item) => item.id === version.datasetId);
+  if (!dataset || !['raster', 'vector'].includes(dataset.kind)) {
+    return false;
+  }
+
+  const metadata = version.metadata ?? {};
+  const contentType = String(metadata.content_type ?? '').toLowerCase();
+  const originalFileName = String(metadata.original_file_name ?? '').toLowerCase();
+
+  if (dataset.kind === 'raster') {
+    return (
+      contentType.includes('tiff') ||
+      contentType.includes('geotiff') ||
+      originalFileName.endsWith('.tif') ||
+      originalFileName.endsWith('.tiff')
+    );
+  }
+
+  return (
+    contentType.includes('geo+json') ||
+    contentType.endsWith('/json') ||
+    originalFileName.endsWith('.geojson') ||
+    originalFileName.endsWith('.json')
+  );
+}
+
 export function WorkflowsPage({
   snapshot,
   onRefresh,
@@ -46,9 +98,24 @@ export function WorkflowsPage({
   const { message, modal } = App.useApp();
   const { currentUser, hasPermission, token } = useAuth();
   const { locale, t } = useI18n();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const platformOwnerLabel = t('assets.platformOwner');
+  const renderVisibilityTag = useCallback(
+    (visibility: string | undefined) => (
+      <Tag color={visibility === 'private' || visibility === undefined ? 'default' : 'blue'}>
+        {visibility === 'private' || visibility === undefined
+          ? t('assets.visibilityPrivate')
+          : t('assets.visibilityPublic')}
+      </Tag>
+    ),
+    [t],
+  );
   const [draftWorkflowVersion, setDraftWorkflowVersion] = useState(snapshot.workflowVersion);
+  const draftWorkflowVersionRef = useRef(snapshot.workflowVersion);
+  const processedWorkflowLinkRef = useRef<string | null>(null);
   const [spatialRois, setSpatialRois] = useState<Awaited<ReturnType<typeof listSpatialRois>>>([]);
+  const [spatialRoisLoaded, setSpatialRoisLoaded] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [assetImportOpen, setAssetImportOpen] = useState(false);
   const [assetWorkflowsLoading, setAssetWorkflowsLoading] = useState(false);
@@ -60,9 +127,26 @@ export function WorkflowsPage({
   const [runProgressPercent, setRunProgressPercent] = useState(0);
   const [runProgressMessage, setRunProgressMessage] = useState('');
   const runProgressTimerRef = useRef<number | null>(null);
+  const [assetFlowRefreshSignal, setAssetFlowRefreshSignal] = useState(0);
   const stats = useMemo(
     () => buildWorkflowStats(snapshot.workflowCatalog, draftWorkflowVersion),
     [draftWorkflowVersion, snapshot.workflowCatalog],
+  );
+  const workflowEditorContext = useMemo<WorkflowEditorContext>(
+    () => ({
+      datasets: snapshot.datasets,
+      datasetVersions: snapshot.datasetVersions,
+      geeCredentials: snapshot.geeCredentials,
+      modelVersions: snapshot.modelVersions,
+      spatialRois,
+    }),
+    [
+      snapshot.datasets,
+      snapshot.datasetVersions,
+      snapshot.geeCredentials,
+      snapshot.modelVersions,
+      spatialRois,
+    ],
   );
   const hasUnsavedChanges = useMemo(
     () => JSON.stringify(draftWorkflowVersion.graph) !== JSON.stringify(snapshot.workflowVersion.graph),
@@ -74,10 +158,22 @@ export function WorkflowsPage({
         ? {
             resultDataset: '结果数据集',
             metrics: '评测指标',
+            openInMap: '在地图中打开',
+            appliedInput: '这个输出已经写入当前工作流草稿。',
+            datasetLinked: '已把上游数据带入当前工作流草稿。',
+            datasetLinkMissing: '当前工作流里没有可接收数据集版本的源节点。',
+            roiLinked: '已把 ROI 带入当前工作流草稿。',
+            roiLinkMissing: '当前工作流里没有 Sentinel ROI 节点。',
           }
         : {
             resultDataset: 'Result Dataset',
             metrics: 'Metrics',
+            openInMap: 'Open In Map',
+            appliedInput: 'This output is now bound to the current workflow draft.',
+            datasetLinked: 'The upstream dataset has been attached to the current workflow draft.',
+            datasetLinkMissing: 'The current workflow does not contain a dataset source node.',
+            roiLinked: 'The ROI has been attached to the current workflow draft.',
+            roiLinkMissing: 'The current workflow does not contain a Sentinel ROI node.',
           },
     [locale],
   );
@@ -113,26 +209,35 @@ export function WorkflowsPage({
   );
 
   useEffect(() => {
+    draftWorkflowVersionRef.current = snapshot.workflowVersion;
     setDraftWorkflowVersion(snapshot.workflowVersion);
   }, [snapshot.workflowVersion]);
 
   useEffect(() => {
+    draftWorkflowVersionRef.current = draftWorkflowVersion;
+  }, [draftWorkflowVersion]);
+
+  useEffect(() => {
     if (!token) {
       setSpatialRois([]);
+      setSpatialRoisLoaded(true);
       return;
     }
 
     let disposed = false;
-    const scope = currentUser?.role === 'ADMIN' ? 'all' : 'mine';
+    const scope = currentUser?.role === 'ADMIN' ? 'all' : 'visible';
+    setSpatialRoisLoaded(false);
     void listSpatialRois(token, scope)
       .then((items) => {
         if (!disposed) {
           setSpatialRois(items);
+          setSpatialRoisLoaded(true);
         }
       })
       .catch(() => {
         if (!disposed) {
           setSpatialRois([]);
+          setSpatialRoisLoaded(true);
         }
       });
 
@@ -140,6 +245,172 @@ export function WorkflowsPage({
       disposed = true;
     };
   }, [currentUser?.role, token]);
+
+  useEffect(() => {
+    const handoff = readHandoffFromSearchParams(searchParams);
+    const linkedDatasetVersionId =
+      handoff?.target === 'workflow' && handoff.inputKind === 'dataset_version'
+        ? handoff.datasetVersionId
+        : searchParams.get('datasetVersionId');
+    const linkedRoiId =
+      handoff?.target === 'workflow' && handoff.inputKind === 'spatial_roi'
+        ? handoff.roiId
+        : searchParams.get('roiId');
+    const pendingLinkKey = linkedDatasetVersionId
+      ? `dataset:${linkedDatasetVersionId}`
+      : linkedRoiId
+        ? `roi:${linkedRoiId}`
+        : null;
+
+    if (!pendingLinkKey) {
+      processedWorkflowLinkRef.current = null;
+      return;
+    }
+
+    if (processedWorkflowLinkRef.current === pendingLinkKey) {
+      return;
+    }
+
+    if (linkedRoiId && !spatialRoisLoaded) {
+      return;
+    }
+
+    processedWorkflowLinkRef.current = pendingLinkKey;
+
+    let nextWorkflowVersion = draftWorkflowVersionRef.current;
+    let changed = false;
+    if (linkedDatasetVersionId) {
+      const datasetVersionExists = snapshot.datasetVersions.some(
+          (item) => item.id === linkedDatasetVersionId,
+        );
+        if (!datasetVersionExists) {
+          message.warning(
+            locale === 'zh-CN'
+              ? '该数据版本已不存在，或不在当前可见范围内。'
+              : 'This dataset version is no longer available in the current scope.',
+          );
+        } else {
+          const linkedDatasetResult = attachDatasetVersionToWorkflow(
+            nextWorkflowVersion,
+            linkedDatasetVersionId,
+            snapshot.workflowCatalog,
+            workflowEditorContext,
+          );
+          if (linkedDatasetResult.applied) {
+            nextWorkflowVersion = linkedDatasetResult.workflowVersion;
+            changed = true;
+            message.success(runTableCopy.datasetLinked);
+          } else {
+            message.warning(runTableCopy.datasetLinkMissing);
+          }
+        }
+    } else if (linkedRoiId) {
+        const roiExists = spatialRois.some((item) => item.id === linkedRoiId);
+        if (!roiExists) {
+          message.warning(
+            locale === 'zh-CN'
+              ? '该 ROI 已不存在，或不在当前可见范围内。'
+              : 'This ROI is no longer available in the current scope.',
+          );
+        } else {
+          const linkedRoiResult = attachSavedRoiToWorkflow(
+            nextWorkflowVersion,
+            linkedRoiId,
+            snapshot.workflowCatalog,
+            workflowEditorContext,
+          );
+          if (linkedRoiResult.applied) {
+            nextWorkflowVersion = linkedRoiResult.workflowVersion;
+            changed = true;
+            message.success(runTableCopy.roiLinked);
+          } else {
+            message.warning(runTableCopy.roiLinkMissing);
+          }
+        }
+    }
+
+    /*
+    const linkedDatasetVersionId = searchParams.get('datasetVersionId');
+    if (!consumedHandoff && linkedDatasetVersionId) {
+      const datasetVersionExists = snapshot.datasetVersions.some(
+        (item) => item.id === linkedDatasetVersionId,
+      );
+      if (!datasetVersionExists) {
+        message.warning(
+          locale === 'zh-CN'
+            ? '该数据版本已不存在，或不在当前可见范围内。'
+            : 'This dataset version is no longer available in the current scope.',
+        );
+      } else {
+        const linkedDatasetResult = attachDatasetVersionToWorkflow(
+          nextWorkflowVersion,
+          linkedDatasetVersionId,
+          snapshot.workflowCatalog,
+          workflowEditorContext,
+        );
+        if (linkedDatasetResult.applied) {
+          nextWorkflowVersion = linkedDatasetResult.workflowVersion;
+          changed = true;
+          message.success(runTableCopy.datasetLinked);
+        } else {
+          message.warning(runTableCopy.datasetLinkMissing);
+        }
+      }
+      nextSearch.delete('datasetVersionId');
+    }
+
+    const linkedRoiId = searchParams.get('roiId');
+    if (!consumedHandoff && linkedRoiId) {
+      if (!spatialRoisLoaded) {
+        return;
+      }
+      const roiExists = spatialRois.some((item) => item.id === linkedRoiId);
+      if (!roiExists) {
+        message.warning(
+          locale === 'zh-CN'
+            ? '该 ROI 已不存在，或不在当前可见范围内。'
+            : 'This ROI is no longer available in the current scope.',
+        );
+      } else {
+        const linkedRoiResult = attachSavedRoiToWorkflow(
+          nextWorkflowVersion,
+          linkedRoiId,
+          snapshot.workflowCatalog,
+          workflowEditorContext,
+        );
+        if (linkedRoiResult.applied) {
+          nextWorkflowVersion = linkedRoiResult.workflowVersion;
+          changed = true;
+          message.success(runTableCopy.roiLinked);
+        } else {
+          message.warning(runTableCopy.roiLinkMissing);
+        }
+      }
+      nextSearch.delete('roiId');
+    }
+
+    */
+    if (changed) {
+      draftWorkflowVersionRef.current = nextWorkflowVersion;
+      setDraftWorkflowVersion(nextWorkflowVersion);
+    }
+
+    const nextSearch = removeHandoffFromSearchParams(searchParams);
+    nextSearch.delete('datasetVersionId');
+    nextSearch.delete('roiId');
+    setSearchParams(nextSearch, { replace: true });
+  }, [
+    message,
+    runTableCopy,
+    searchParams,
+    setSearchParams,
+    locale,
+    snapshot.datasetVersions,
+    snapshot.workflowCatalog,
+    spatialRois,
+    spatialRoisLoaded,
+    workflowEditorContext,
+  ]);
 
   const stopRunProgressTimer = useCallback(() => {
     if (runProgressTimerRef.current !== null) {
@@ -227,6 +498,7 @@ export function WorkflowsPage({
       setDraftWorkflowVersion(saved);
       message.success(t('workflows.saveSuccess'));
       await onRefresh();
+      setAssetFlowRefreshSignal((current) => current + 1);
     } catch (error) {
       message.error(isApiError(error) ? error.message : t('error.request_failed'));
     }
@@ -257,6 +529,7 @@ export function WorkflowsPage({
         message.success(t('workflows.runCompleted'));
       }
       await onRefresh();
+      setAssetFlowRefreshSignal((current) => current + 1);
     } catch (error) {
       finishRunProgress(runProgressCopy.failed);
       message.error(isApiError(error) ? error.message : t('error.request_failed'));
@@ -291,6 +564,7 @@ export function WorkflowsPage({
       setDraftWorkflowVersion(imported);
       message.success(t('workflows.importSuccess'));
       await onRefresh();
+      setAssetFlowRefreshSignal((current) => current + 1);
     } catch (error) {
       if (error instanceof SyntaxError) {
         message.error(t('workflows.importInvalid'));
@@ -324,7 +598,7 @@ export function WorkflowsPage({
 
     try {
       setAssetWorkflowsLoading(true);
-      const workflows = await listWorkflowVersions(token, 'mine');
+      const workflows = await listWorkflowVersions(token, 'visible');
       setAssetWorkflowVersions(workflows);
       setSelectedAssetWorkflowId(workflows[0]?.id ?? null);
       setAssetImportOpen(true);
@@ -367,6 +641,20 @@ export function WorkflowsPage({
 
     applySelectedWorkflow();
   };
+
+  const openResultInMap = useCallback(
+    (assetVersionId: string) => {
+      navigate(
+        createHandoffPath(
+          '/spatial',
+          createSpatialAssetHandoff(assetVersionId, {
+            source: 'workflow_run_history',
+          }),
+        ),
+      );
+    },
+    [navigate],
+  );
 
   return (
     <div className="page-stack">
@@ -478,7 +766,21 @@ export function WorkflowsPage({
             {
               title: runTableCopy.resultDataset,
               dataIndex: 'resultDatasetVersionId',
-              render: (value: string | undefined) => value ?? '-',
+              render: (value: string | undefined) =>
+                value ? (
+                  <Row gutter={[8, 8]}>
+                    <Col span={24}>{value}</Col>
+                    {datasetVersionIsMapReady(value, snapshot) ? (
+                      <Col span={24}>
+                        <Button size="small" onClick={() => openResultInMap(value)}>
+                          {runTableCopy.openInMap}
+                        </Button>
+                      </Col>
+                    ) : null}
+                  </Row>
+                ) : (
+                  '-'
+                ),
             },
             {
               title: runTableCopy.metrics,
@@ -493,6 +795,12 @@ export function WorkflowsPage({
           ]}
         />
       </Card>
+
+      <AssetFlowPanel
+        token={token}
+        scope={currentUser?.role === 'ADMIN' ? 'all' : 'mine'}
+        refreshSignal={assetFlowRefreshSignal}
+      />
 
       <Modal
         title={t('workflows.assetImportTitle')}
@@ -521,6 +829,11 @@ export function WorkflowsPage({
           locale={{ emptyText: t('workflows.assetImportEmpty') }}
           columns={[
             { title: t('workflows.workflowVersion'), dataIndex: 'version' },
+            {
+              title: t('assets.visibility'),
+              dataIndex: 'visibility',
+              render: (visibility: string | undefined) => renderVisibilityTag(visibility),
+            },
             {
               title: t('assets.owner'),
               dataIndex: 'ownerDisplayName',

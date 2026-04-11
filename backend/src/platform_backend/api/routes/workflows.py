@@ -15,6 +15,7 @@ from platform_backend.schemas.workflow import (
     WorkflowTemplateDefinition,
     WorkflowValidationResult,
     WorkflowVersionSummary,
+    WorkflowVersionUpdateRequest,
 )
 from platform_backend.services.platform_store import (
     delete_workflow_version,
@@ -27,6 +28,7 @@ from platform_backend.services.platform_store import (
     list_workflows,
     save_current_workflow_version,
     test_workflow_node,
+    update_workflow_version,
 )
 from platform_backend.services.spatial_store import resolve_saved_rois_in_workflow_graph
 from platform_backend.workflows.validation import validate_workflow_graph
@@ -142,6 +144,31 @@ def download_workflow_version_route(
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@router.patch(
+    "/versions/{workflow_version_id}",
+    response_model=WorkflowVersionSummary,
+)
+def update_workflow_version_route(
+    workflow_version_id: str,
+    request: WorkflowVersionUpdateRequest,
+    db: DatabaseDep,
+    current_user: WorkflowManageUserDep,
+) -> WorkflowVersionSummary:
+    try:
+        return update_workflow_version(
+            db,
+            workflow_version_id,
+            visibility=request.visibility,
+            current_user=current_user,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete(

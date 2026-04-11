@@ -920,6 +920,134 @@ def test_spatial_overlay_creation_accepts_geojson_dataset_and_admin_scope(
     assert any(item["id"] == created.json()["id"] for item in admin_all.json())
 
 
+def test_spatial_roi_assets_can_be_published_to_visible_scope(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    created = _create_spatial_roi(client, engineer_token, workspace_id, "Shared ROI")
+    assert created["visibility"] == "private"
+
+    member_visible_before = client.get(
+        "/api/v1/spatial/rois?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_before.status_code == 200
+    assert not any(item["id"] == created["id"] for item in member_visible_before.json())
+
+    owner_publish_forbidden = client.patch(
+        f"/api/v1/spatial/rois/{created['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={"visibility": "public"},
+    )
+    assert owner_publish_forbidden.status_code == 403
+
+    admin_publish = client.patch(
+        f"/api/v1/spatial/rois/{created['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert admin_publish.status_code == 200
+    assert admin_publish.json()["visibility"] == "public"
+
+    member_visible_after = client.get(
+        "/api/v1/spatial/rois?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_after.status_code == 200
+    assert any(item["id"] == created["id"] for item in member_visible_after.json())
+
+
+def test_spatial_overlays_require_public_source_before_publish(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    dataset_version = _upload_vector_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "shared-overlay-source",
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"name": "Shared Area"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [116.20, 39.80],
+                                    [116.40, 39.80],
+                                    [116.40, 39.98],
+                                    [116.20, 39.98],
+                                    [116.20, 39.80],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+    overlay_created = client.post(
+        "/api/v1/spatial/overlays",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={
+            "workspace_id": workspace_id,
+            "dataset_version_id": dataset_version["id"],
+            "name": "Shared Overlay",
+            "description": "Overlay that depends on a published source dataset.",
+            "opacity": 0.7,
+        },
+    )
+    assert overlay_created.status_code == 201
+    overlay = overlay_created.json()
+    assert overlay["visibility"] == "private"
+
+    owner_publish_forbidden = client.patch(
+        f"/api/v1/spatial/overlays/{overlay['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={"visibility": "public"},
+    )
+    assert owner_publish_forbidden.status_code == 403
+
+    publish_before_dataset = client.patch(
+        f"/api/v1/spatial/overlays/{overlay['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert publish_before_dataset.status_code == 400
+    assert "source dataset version is public" in publish_before_dataset.json()["detail"]
+
+    dataset_publish = client.patch(
+        f"/api/v1/datasets/{dataset_version['dataset_id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert dataset_publish.status_code == 200
+    assert dataset_publish.json()["visibility"] == "public"
+
+    publish_after_dataset = client.patch(
+        f"/api/v1/spatial/overlays/{overlay['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert publish_after_dataset.status_code == 200
+    assert publish_after_dataset.json()["visibility"] == "public"
+
+    member_visible_overlays = client.get(
+        "/api/v1/spatial/overlays?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_overlays.status_code == 200
+    assert any(item["id"] == overlay["id"] for item in member_visible_overlays.json())
+
+
 def test_workflow_validate_accepts_saved_roi_for_sentinel(client: TestClient) -> None:
     engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
     workspace_id = _workspace_id(client, engineer_token)
@@ -1376,6 +1504,9 @@ def test_prediction_workflow_run_creates_private_table_output(
     run = _workflow_run_details(client, engineer_token, accepted_run["id"])
     result_dataset_version_id = run["result_dataset_version_id"]
     assert result_dataset_version_id
+    assert run["input_asset_version_ids"] == [dataset_version["id"]]
+    assert result_dataset_version_id in run["output_asset_version_ids"]
+    assert run["primary_output_asset_version_id"] == result_dataset_version_id
 
     download = client.get(
         f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
@@ -1383,6 +1514,36 @@ def test_prediction_workflow_run_creates_private_table_output(
     )
     assert download.status_code == 200
     assert "prediction" in download.text
+
+    asset_flow = client.get(
+        "/api/v1/asset-flow/overview?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert asset_flow.status_code == 200
+    asset_flow_payload = asset_flow.json()
+    execution = next(
+        item for item in asset_flow_payload["executions"] if item["id"] == accepted_run["id"]
+    )
+    assert execution["workflow_version_id"] == workflow_version["id"]
+    assert execution["input_asset_version_ids"] == [dataset_version["id"]]
+    assert result_dataset_version_id in execution["output_asset_version_ids"]
+    assert any(
+        item["id"] == workflow_version["id"]
+        and item["asset"]["asset_type"] == "workflow"
+        for item in asset_flow_payload["asset_versions"]
+    )
+    assert any(
+        item["id"] == result_dataset_version_id
+        and item["source_execution_id"] == accepted_run["id"]
+        and item["upstream_asset_version_ids"] == [dataset_version["id"]]
+        for item in asset_flow_payload["asset_versions"]
+    )
+    assert any(
+        item["source_asset_version_id"] == dataset_version["id"]
+        and item["target_asset_version_id"] == result_dataset_version_id
+        and item["execution_id"] == accepted_run["id"]
+        for item in asset_flow_payload["lineage_edges"]
+    )
 
     engineer_versions = client.get(
         "/api/v1/dataset-versions",
@@ -1573,6 +1734,53 @@ def test_sentinel_workflow_run_resolves_saved_roi_bbox(
     run = _workflow_run_details(client, engineer_token, accepted_run["id"])
     assert run["metrics"]["scene_id"] == "S2B_SAVED_ROI"
 
+    map_candidates = client.get(
+        "/api/v1/asset-flow/input-candidates?consumer=map_overlay&scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert map_candidates.status_code == 200
+    payload = map_candidates.json()
+    matched = next(
+        item
+        for item in payload
+        if item["asset_version"]["id"] == run["result_dataset_version_id"]
+    )
+    assert matched["consumer"] == "map_overlay"
+    assert matched["candidate_type"] == "asset_version"
+    assert matched["asset_version"]["source_execution_id"] == accepted_run["id"]
+    assert "map_overlay_ready" in matched["asset_version"]["capabilities"]
+    assert "workflow_dataset" in matched["asset_version"]["consumable_by"]
+    assert matched["asset_version"]["spatial_traits"]["overlay_type"] == "raster"
+
+
+def test_asset_flow_workflow_roi_candidates_include_visible_rois(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    roi = _create_spatial_roi(client, engineer_token, workspace_id, "Visible Workflow ROI")
+
+    publish = client.patch(
+        f"/api/v1/spatial/rois/{roi['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert publish.status_code == 200
+    assert publish.json()["visibility"] == "public"
+
+    response = client.get(
+        "/api/v1/asset-flow/input-candidates?consumer=workflow_roi&scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    matched = next(item for item in payload if item["spatial_roi"]["id"] == roi["id"])
+    assert matched["consumer"] == "workflow_roi"
+    assert matched["candidate_type"] == "spatial_roi"
+    assert matched["title"] == "Visible Workflow ROI"
+    assert matched["spatial_roi"]["visibility"] == "public"
+
 
 def test_sentinel_platform_default_workflow_run_returns_failed_status_not_500(
     client: TestClient,
@@ -1715,6 +1923,56 @@ def test_workflow_versions_are_user_scoped_and_downloadable(client: TestClient) 
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert delete_response.status_code == 200
+
+
+def test_workflow_versions_can_be_published_to_visible_scope(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+
+    engineer_current = client.get(
+        "/api/v1/workflows/versions/current",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert engineer_current.status_code == 200
+    workflow_version = engineer_current.json()
+    assert workflow_version["visibility"] == "private"
+
+    member_visible_before = client.get(
+        "/api/v1/workflows/versions?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_before.status_code == 200
+    assert not any(item["id"] == workflow_version["id"] for item in member_visible_before.json())
+
+    owner_publish_forbidden = client.patch(
+        f"/api/v1/workflows/versions/{workflow_version['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={"visibility": "public"},
+    )
+    assert owner_publish_forbidden.status_code == 403
+
+    admin_publish = client.patch(
+        f"/api/v1/workflows/versions/{workflow_version['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert admin_publish.status_code == 200
+    assert admin_publish.json()["visibility"] == "public"
+
+    member_visible_after = client.get(
+        "/api/v1/workflows/versions?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_after.status_code == 200
+    assert any(item["id"] == workflow_version["id"] for item in member_visible_after.json())
+
+    member_download = client.get(
+        f"/api/v1/workflows/versions/{workflow_version['id']}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_download.status_code == 200
+    assert member_download.headers["content-type"].startswith("application/json")
 
 
 def test_product_assets_are_user_scoped_publishable_and_downloadable(
@@ -1877,6 +2135,103 @@ def test_custom_api_model_assets_are_private_downloadable_and_deletable(
     )
     assert member_delete.status_code == 403
     assert owner_delete.status_code == 200
+
+
+def test_custom_api_models_can_be_published_and_keep_runtime_auth(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    model_version = _create_custom_api_model(
+        client,
+        engineer_token,
+        workspace_id,
+        "shared-external-regressor",
+        version="2.0.0",
+    )
+    assert model_version["visibility"] == "private"
+
+    owner_publish_forbidden = client.patch(
+        f"/api/v1/models/versions/{model_version['id']}",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+        json={"visibility": "public"},
+    )
+    assert owner_publish_forbidden.status_code == 403
+
+    admin_publish = client.patch(
+        f"/api/v1/models/versions/{model_version['id']}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"visibility": "public"},
+    )
+    assert admin_publish.status_code == 200
+    assert admin_publish.json()["visibility"] == "public"
+    assert "auth_token" not in admin_publish.json()["metadata"]["api_config"]
+
+    member_visible_models = client.get(
+        "/api/v1/models/versions?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_visible_models.status_code == 200
+    assert any(item["id"] == model_version["id"] for item in member_visible_models.json())
+
+    member_download = client.get(
+        f"/api/v1/models/versions/{model_version['id']}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert member_download.status_code == 200
+
+    prediction_dataset = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-input",
+        "feature_a,feature_b\n7,8\n8,9\n",
+    )
+    graph = _template_graph(client, engineer_token, "tabular.custom_api_prediction")
+    for node in graph["nodes"]:
+        if node["type"] == "source.dataset_version":
+            node["params"]["datasetVersionId"] = prediction_dataset["id"]
+        if node["type"] == "custom.api_predict":
+            node["params"]["modelVersionId"] = model_version["id"]
+            node["params"]["predictionColumn"] = "prediction"
+            node["params"]["callParametersJson"] = "{}"
+        if node["type"] == "export.table":
+            node["params"]["outputDatasetName"] = "Custom API Published Output"
+
+    captured_request: dict[str, object] = {}
+
+    class FakeApiResponse:
+        def __enter__(self) -> "FakeApiResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps({"predictions": [10.5, 12.25]}).encode("utf-8")
+
+    def fake_urlopen(request_obj, timeout: int = 30):
+        captured_request["url"] = request_obj.full_url
+        captured_request["timeout"] = timeout
+        captured_request["headers"] = {
+            key.lower(): value for key, value in request_obj.header_items()
+        }
+        return FakeApiResponse()
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.tabular_runtime.urllib_request.urlopen",
+        fake_urlopen,
+    )
+
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert run["status"] == "succeeded"
+    assert captured_request["url"] == "https://example.com/predict"
+    assert captured_request["headers"]["x-api-key"] == "secret-token"
 
 
 def test_trained_model_assets_can_power_prediction_workflows(client: TestClient) -> None:

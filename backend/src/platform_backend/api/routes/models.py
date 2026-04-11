@@ -12,6 +12,7 @@ from platform_backend.schemas.platform import (
     ApiMessage,
     CustomApiModelCreateRequest,
     ModelSummary,
+    ModelVersionUpdateRequest,
     ModelVersionSummary,
     UserProfile,
 )
@@ -22,6 +23,7 @@ from platform_backend.services.platform_store import (
     get_model_version_download_payload,
     list_model_versions,
     list_models,
+    update_model_version,
 )
 from platform_backend.workflows.tabular_runtime import parse_json_object
 
@@ -141,6 +143,31 @@ def download_model_version_route(
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@router.patch(
+    "/versions/{model_version_id}",
+    response_model=ModelVersionSummary,
+)
+def update_model_version_route(
+    model_version_id: str,
+    request: ModelVersionUpdateRequest,
+    db: DatabaseDep,
+    current_user: ModelManageUserDep,
+) -> ModelVersionSummary:
+    try:
+        return update_model_version(
+            db,
+            model_version_id,
+            visibility=request.visibility,
+            current_user=current_user,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete(

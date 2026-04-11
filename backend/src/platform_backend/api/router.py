@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from platform_backend.api.routes import (
+    asset_flow,
     auth,
     dataset_versions,
     datasets,
@@ -19,6 +20,7 @@ from platform_backend.api.routes import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(asset_flow.router, prefix="/asset-flow", tags=["asset-flow"])
 api_router.include_router(workspaces.router, prefix="/workspaces", tags=["workspaces"])
 api_router.include_router(datasets.router, prefix="/datasets", tags=["datasets"])
 api_router.include_router(products.router, prefix="/products", tags=["products"])

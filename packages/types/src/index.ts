@@ -22,12 +22,57 @@ export type DatasetKind = 'raster' | 'vector' | 'table' | 'artifact';
 export type DatasetStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
 export type DatasetVisibility = 'public' | 'private' | 'workspace';
 export type AssetScope = 'visible' | 'mine' | 'all';
+export type AssetType = 'dataset' | 'workflow' | 'model' | 'product' | 'spatial';
 export type WorkflowRunStatus = 'draft' | 'queued' | 'running' | 'succeeded' | 'failed';
+export type AssetCapability =
+  | 'downloadable'
+  | 'publishable'
+  | 'workflow_input_ready'
+  | 'workflow_roi_ready'
+  | 'map_overlay_ready'
+  | 'lineage_tracked'
+  | 'execution_output';
+export type AssetConsumer = 'workflow_dataset' | 'workflow_roi' | 'map_overlay';
+export type AssetFormat = 'csv' | 'geojson' | 'geotiff' | 'json' | 'workflow_graph' | 'roi_geometry' | 'unknown';
+export type AssetHandoffTarget = 'workflow' | 'spatial';
+export type AssetHandoffSource =
+  | 'asset_flow'
+  | 'my_assets'
+  | 'workflow_run_history'
+  | 'spatial_roi'
+  | 'unknown';
+export type AssetHandoffPayload =
+  | {
+      version: 1;
+      target: 'workflow';
+      inputKind: 'dataset_version';
+      datasetVersionId: string;
+      label?: string;
+      source?: AssetHandoffSource;
+    }
+  | {
+      version: 1;
+      target: 'workflow';
+      inputKind: 'spatial_roi';
+      roiId: string;
+      label?: string;
+      source?: AssetHandoffSource;
+    }
+  | {
+      version: 1;
+      target: 'spatial';
+      inputKind: 'asset_version';
+      assetVersionId: string;
+      label?: string;
+      source?: AssetHandoffSource;
+    };
 export type FeedbackTicketCategory = 'bug' | 'feature_request' | 'ux' | 'question' | 'other';
 export type FeedbackTicketPriority = 'low' | 'medium' | 'high';
 export type FeedbackTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type WorkflowNodeCategory = 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
 export type WorkflowNodeTestStatus = 'succeeded' | 'failed' | 'not_supported';
+export type ExecutionType = 'workflow_run';
+export type LineageRelationship = 'execution_output';
 export type WorkflowPortDataType =
   | 'dataset_version'
   | 'table'
@@ -228,7 +273,7 @@ export interface SpatialRoiSummary {
   bbox: [number, number, number, number];
   style?: Record<string, unknown>;
   tags?: string[];
-  visibility?: 'private';
+  visibility?: 'private' | 'public';
   createdAt: string;
   updatedAt: string;
 }
@@ -250,6 +295,7 @@ export interface SpatialRoiUpdatePayload {
   geometry?: Record<string, unknown>;
   style?: Record<string, unknown>;
   tags?: string[];
+  visibility?: 'private' | 'public';
 }
 
 export interface SpatialOverlaySummary {
@@ -271,7 +317,7 @@ export interface SpatialOverlaySummary {
   overlayType: 'raster' | 'vector';
   opacity: number;
   style?: Record<string, unknown>;
-  visibility?: 'private';
+  visibility?: 'private' | 'public';
   createdAt: string;
   updatedAt: string;
 }
@@ -290,6 +336,7 @@ export interface SpatialOverlayUpdatePayload {
   description?: string;
   opacity?: number;
   style?: Record<string, unknown>;
+  visibility?: 'private' | 'public';
 }
 
 export interface ProductAssetSummary {
@@ -414,6 +461,7 @@ export interface WorkflowVersionSummary {
   id: string;
   workflowId: string;
   version: number;
+  visibility?: 'private' | 'public';
   ownerUserId?: string;
   ownerDisplayName?: string;
   graph: {
@@ -441,16 +489,93 @@ export interface WorkflowTemplateDefinition {
   };
 }
 
+export interface AssetRef {
+  id: string;
+  assetType: AssetType;
+  assetKind: string;
+  workspaceId: string;
+  name: string;
+  visibility: DatasetVisibility;
+  ownerUserId?: string;
+  ownerDisplayName?: string;
+}
+
+export interface AssetVersionRef {
+  id: string;
+  asset: AssetRef;
+  versionLabel: string;
+  versionNumber?: number;
+  status?: string;
+  createdAt: string;
+  sourceExecutionId?: string;
+  upstreamAssetVersionIds: string[];
+  format: AssetFormat;
+  capabilities: AssetCapability[];
+  consumableBy: AssetConsumer[];
+  spatialTraits?: SpatialAssetTraits;
+}
+
+export interface SpatialAssetTraits {
+  overlayType?: 'raster' | 'vector';
+  bbox?: [number, number, number, number];
+  previewUrl?: string;
+}
+
 export interface WorkflowRunSummary {
   id: string;
   workflowVersionId: string;
+  workflowName?: string;
   status: WorkflowRunStatus;
   startedAt?: string;
   finishedAt?: string;
   submittedBy: string;
   resultDatasetVersionId?: string;
+  inputAssetVersionIds?: string[];
+  outputAssetVersionIds?: string[];
+  primaryOutputAssetVersionId?: string;
   metrics?: Record<string, unknown>;
   errorMessage?: string;
+}
+
+export interface ExecutionSummary {
+  id: string;
+  executionType: ExecutionType;
+  status: WorkflowRunStatus;
+  submittedBy: string;
+  workflowVersionId: string;
+  workflowName?: string;
+  inputAssetVersionIds: string[];
+  outputAssetVersionIds: string[];
+  primaryOutputAssetVersionId?: string;
+  metrics?: Record<string, unknown>;
+  errorMessage?: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface LineageEdge {
+  id: string;
+  relationship: LineageRelationship;
+  sourceAssetVersionId: string;
+  targetAssetVersionId: string;
+  executionId?: string;
+}
+
+export interface AssetFlowOverview {
+  scope: AssetScope;
+  assetVersions: AssetVersionRef[];
+  executions: ExecutionSummary[];
+  lineageEdges: LineageEdge[];
+}
+
+export interface AssetInputCandidate {
+  id: string;
+  consumer: AssetConsumer;
+  candidateType: 'asset_version' | 'spatial_roi';
+  title: string;
+  description?: string;
+  assetVersion?: AssetVersionRef;
+  spatialRoi?: SpatialRoiSummary;
 }
 
 export interface DashboardFeatureItem {

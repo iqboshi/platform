@@ -9,29 +9,25 @@ import type {
 
 import {
   App,
-  Avatar,
   Button,
-  Card,
   Col,
-  Descriptions,
-  Empty,
   Form,
-  Input,
-  InputNumber,
-  Modal,
   Row,
-  Select,
   Space,
-  Switch,
-  Table,
-  Tabs,
   Tag,
   Typography,
 } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { isApiError } from '@/auth/errors';
 import { useAuth } from '@/auth/useAuth';
+import {
+  createHandoffPath,
+  createSpatialAssetHandoff,
+  createWorkflowDatasetHandoff,
+  createWorkflowRoiHandoff,
+} from '@/features/asset-flow/handoff';
 import { useI18n } from '@/i18n/useI18n';
 import {
   deleteDataset,
@@ -55,10 +51,14 @@ import {
   loadAssetOverview,
   downloadProductAsset,
   sendEmailVerificationCode,
+  updateModelVersion,
   updateProductAsset,
   updateEmailSettings,
   updateCurrentUserProfile,
   updateDataset,
+  updateSpatialOverlay,
+  updateSpatialRoi,
+  updateWorkflowVersion,
   uploadProductAsset,
   uploadDataset,
 } from '@/lib/api';
@@ -70,8 +70,25 @@ import {
 } from '@/lib/i18n-helpers';
 import { parseImportedWorkflowGraph } from '@/lib/workflow-import';
 import { downloadUploadTemplate } from '../datasets/upload-templates';
+import { AccountProfileCard } from './components/AccountProfileCard';
+import { AccountSidebarCards } from './components/AccountSidebarCards';
+import {
+  DatasetEditorModal,
+  DatasetUploadModal,
+  GeeCredentialModal,
+  ProductEditorModal,
+} from './components/AssetModals';
+import { AssetsCatalogCard, type AssetCatalogSection } from './components/AssetsCatalogCard';
+import { GeeCredentialsSectionCard } from './components/GeeCredentialsSectionCard';
+import { PersonalAssetsHeader } from './components/PersonalAssetsHeader';
+import { WorkspaceEmailSettingsCard } from './components/WorkspaceEmailSettingsCard';
+import {
+  getInitialAssetScopeForView,
+  shouldInitializeAdminAssetScope,
+} from './view-scope';
+import type { PersonalAssetsPageView } from './view-scope';
 
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 function getMetadataString(metadata: Record<string, unknown>, key: string): string {
   const value = metadata[key];
@@ -227,6 +244,8 @@ interface EmailConfigFormValues {
   imageCaptchaExpireMinutes: number;
 }
 
+export type { PersonalAssetsPageView } from './view-scope';
+
 function initialsForName(name: string | undefined): string {
   const cleaned = (name ?? '').trim();
   if (!cleaned) {
@@ -234,6 +253,35 @@ function initialsForName(name: string | undefined): string {
   }
   const parts = cleaned.split(/\s+/).slice(0, 2);
   return parts.map((part) => part.charAt(0).toUpperCase()).join('');
+}
+
+function datasetVersionSupportsMapPreview(
+  kind: DatasetKind,
+  latestVersion: AssetOverview['datasetVersions'][number] | undefined,
+): boolean {
+  if (!latestVersion || !['raster', 'vector'].includes(kind)) {
+    return false;
+  }
+
+  const metadata = latestVersion.metadata ?? {};
+  const contentType = String(metadata.content_type ?? '').toLowerCase();
+  const originalFileName = String(metadata.original_file_name ?? '').toLowerCase();
+
+  if (kind === 'raster') {
+    return (
+      contentType.includes('tiff') ||
+      contentType.includes('geotiff') ||
+      originalFileName.endsWith('.tif') ||
+      originalFileName.endsWith('.tiff')
+    );
+  }
+
+  return (
+    contentType.includes('geo+json') ||
+    contentType.endsWith('/json') ||
+    originalFileName.endsWith('.geojson') ||
+    originalFileName.endsWith('.json')
+  );
 }
 
 const ASSET_TABLE_PAGINATION = {
@@ -253,14 +301,19 @@ const PROFILE_TABLE_PAGINATION = {
 export function PersonalAssetsPage({
   snapshot,
   onRefresh,
+  view = 'assets',
 }: {
   snapshot: PlatformDataSnapshot;
   onRefresh: () => Promise<void>;
+  view?: PersonalAssetsPageView;
 }) {
   const { message, modal } = App.useApp();
   const { currentUser, refreshCurrentUser, token } = useAuth();
   const { locale, t } = useI18n();
-  const [scope, setScope] = useState<AssetScope>('mine');
+  const navigate = useNavigate();
+  const [scope, setScope] = useState<AssetScope>(() =>
+    getInitialAssetScopeForView(view, currentUser?.role),
+  );
   const [overview, setOverview] = useState<AssetOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -288,6 +341,7 @@ export function PersonalAssetsPage({
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const productFileInputRef = useRef<HTMLInputElement | null>(null);
   const adminScopeInitializedRef = useRef(false);
+  const assetOverviewRequestRef = useRef(0);
   const [uploadForm] = Form.useForm<UploadFormValues>();
   const [productForm] = Form.useForm<ProductFormValues>();
   const [credentialForm] = Form.useForm<GeeCredentialFormValues>();
@@ -301,9 +355,90 @@ export function PersonalAssetsPage({
   const watchedAvatarUrl = Form.useWatch('avatarUrl', profileForm) ?? '';
   const watchedJobTitle = Form.useWatch('jobTitle', profileForm) ?? '';
   const watchedOrganization = Form.useWatch('organization', profileForm) ?? '';
+  const isAssetsView = view === 'assets';
+  const isAccountView = view === 'account';
+  const isWorkspaceSettingsView = view === 'workspace-settings';
+  const needsAssetOverview = isAssetsView || isAccountView;
 
   const isAdmin = currentUser?.role === 'ADMIN';
   const platformOwnerLabel = t('assets.platformOwner');
+  const ownerColumnEnabled = isAdmin || scope !== 'mine';
+  const isSharedVisibility = useCallback(
+    (visibility: string | undefined) => visibility === 'public' || visibility === 'workspace',
+    [],
+  );
+  const renderVisibilityTag = useCallback(
+    (visibility: string | undefined, publicLabel?: string, privateLabel?: string) => (
+      <Tag color={isSharedVisibility(visibility) ? 'blue' : 'default'}>
+        {isSharedVisibility(visibility)
+          ? (publicLabel ?? t('assets.visibilityPublic'))
+          : (privateLabel ?? t('assets.visibilityPrivate'))}
+      </Tag>
+    ),
+    [isSharedVisibility, t],
+  );
+  const assetScopeOptions = useMemo(
+    () => [
+      { value: 'mine', label: t('assets.scopeMine') },
+      { value: 'visible', label: t('assets.scopeVisible') },
+      ...(isAdmin ? [{ value: 'all', label: t('assets.scopeAll') }] : []),
+    ],
+    [isAdmin, t],
+  );
+  const pageCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? isAssetsView
+          ? {
+              kicker: '资产中心',
+              title: '集中管理可复用资产与运行结果',
+              copy: '这里只保留资产与结果，不再混入账户资料和平台设置。',
+            }
+          : isAccountView
+            ? {
+                kicker: '账户中心',
+                title: '管理个人资料、安全设置与个人集成',
+                copy: '个人资料、密码、角色申请和 GEE 凭据集中到这里，不再和资产管理混在一起。',
+              }
+            : {
+                kicker: '工作空间设置',
+                title: '集中管理平台级邮件与验证配置',
+                copy: '平台设置从个人资产页中拆出，避免资产管理和系统配置互相干扰。',
+              }
+        : isAssetsView
+          ? {
+              kicker: 'Asset Hub',
+              title: 'Manage reusable assets and run outputs',
+              copy: 'This page now focuses on assets and results only.',
+            }
+          : isAccountView
+            ? {
+                kicker: 'Account Center',
+                title: 'Manage profile, security, and personal integrations',
+                copy:
+                  'Profile, password, role requests, and GEE credentials now live here instead of being mixed into asset management.',
+              }
+            : {
+                kicker: 'Workspace Settings',
+                title: 'Manage platform-wide email and verification settings',
+                copy:
+                  'System settings are now separated from personal assets to reduce page-level responsibility overlap.',
+              },
+    [isAccountView, isAssetsView, locale],
+  );
+  const handoffCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            openInWorkflow: '送入工作流',
+            openInMap: '打开到地图',
+          }
+        : {
+            openInWorkflow: 'Use In Workflow',
+            openInMap: 'Open In Map',
+          },
+    [locale],
+  );
   const geeCopy =
     locale === 'zh-CN'
       ? {
@@ -348,6 +483,10 @@ export function PersonalAssetsPage({
           setPlatformDefault: 'Set As Platform Default',
         platformDefaultSet: 'Platform default GEE credential updated.',
         };
+  const geeSectionCopy =
+    locale === 'zh-CN'
+      ? '将 Earth Engine 凭证单独管理，避免继续和数据集、模型、工作流等资产混在同一块区域。'
+      : 'Manage Earth Engine credentials in a dedicated area instead of mixing them into the asset catalog.';
   const productCopy =
     locale === 'zh-CN'
       ? {
@@ -661,44 +800,93 @@ export function PersonalAssetsPage({
         return;
       }
 
+      const requestId = assetOverviewRequestRef.current + 1;
+      assetOverviewRequestRef.current = requestId;
+
       try {
         setLoading(true);
         const payload = await loadAssetOverview(token, nextScope);
-        setOverview(payload);
+        if (assetOverviewRequestRef.current === requestId) {
+          setOverview(payload);
+        }
       } catch (error) {
-        message.error(isApiError(error) ? error.message : t('error.request_failed'));
+        if (assetOverviewRequestRef.current === requestId) {
+          message.error(isApiError(error) ? error.message : t('error.request_failed'));
+        }
       } finally {
-        setLoading(false);
+        if (assetOverviewRequestRef.current === requestId) {
+          setLoading(false);
+        }
       }
     },
     [message, scope, t, token],
   );
 
+  const reloadEmailConfig = useCallback(async () => {
+    if (!isAdmin || !token) {
+      return;
+    }
+
+    try {
+      setEmailConfigLoading(true);
+      const payload = await getEmailSettings(token);
+      setEmailSettings(payload);
+      emailConfigForm.setFieldsValue({
+        emailEnabled: payload.emailEnabled,
+        smtpHost: payload.smtpHost,
+        smtpPort: payload.smtpPort,
+        smtpUseSsl: payload.smtpUseSsl,
+        smtpUsername: payload.smtpUsername,
+        smtpPassword: '',
+        clearSmtpPassword: false,
+        smtpFromEmail: payload.smtpFromEmail,
+        smtpFromName: payload.smtpFromName,
+        smtpTimeoutSeconds: payload.smtpTimeoutSeconds,
+        emailCodeExpireMinutes: payload.emailCodeExpireMinutes,
+        emailCodeResendSeconds: payload.emailCodeResendSeconds,
+        imageCaptchaExpireMinutes: payload.imageCaptchaExpireMinutes,
+      });
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    } finally {
+      setEmailConfigLoading(false);
+    }
+  }, [emailConfigForm, isAdmin, message, t, token]);
+
   useEffect(() => {
-    if (!token) {
+    if (!token || !needsAssetOverview) {
       return;
     }
     void refreshAssets(scope);
-  }, [refreshAssets, scope, token]);
+  }, [needsAssetOverview, refreshAssets, scope, token]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !isAccountView) {
       return;
     }
     void refreshCurrentUser();
-  }, [refreshCurrentUser, token]);
+  }, [isAccountView, refreshCurrentUser, token]);
 
   useEffect(() => {
+    if (!needsAssetOverview) {
+      adminScopeInitializedRef.current = false;
+      return;
+    }
     if (!isAdmin) {
       adminScopeInitializedRef.current = false;
+      if (scope === 'all') {
+        setScope('mine');
+      }
       return;
     }
     if (adminScopeInitializedRef.current) {
       return;
     }
     adminScopeInitializedRef.current = true;
-    setScope('all');
-  }, [isAdmin]);
+    if (shouldInitializeAdminAssetScope(view) && scope !== 'all') {
+      setScope('all');
+    }
+  }, [isAdmin, needsAssetOverview, scope, view]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -718,40 +906,14 @@ export function PersonalAssetsPage({
   }, [currentUser, profileForm]);
 
   useEffect(() => {
-    if (!isAdmin || !token) {
+    if (!isWorkspaceSettingsView) {
       return;
     }
-    const loadEmailConfig = async () => {
-      try {
-        setEmailConfigLoading(true);
-        const payload = await getEmailSettings(token);
-        setEmailSettings(payload);
-        emailConfigForm.setFieldsValue({
-          emailEnabled: payload.emailEnabled,
-          smtpHost: payload.smtpHost,
-          smtpPort: payload.smtpPort,
-          smtpUseSsl: payload.smtpUseSsl,
-          smtpUsername: payload.smtpUsername,
-          smtpPassword: '',
-          clearSmtpPassword: false,
-          smtpFromEmail: payload.smtpFromEmail,
-          smtpFromName: payload.smtpFromName,
-          smtpTimeoutSeconds: payload.smtpTimeoutSeconds,
-          emailCodeExpireMinutes: payload.emailCodeExpireMinutes,
-          emailCodeResendSeconds: payload.emailCodeResendSeconds,
-          imageCaptchaExpireMinutes: payload.imageCaptchaExpireMinutes,
-        });
-      } catch (error) {
-        message.error(isApiError(error) ? error.message : t('error.request_failed'));
-      } finally {
-        setEmailConfigLoading(false);
-      }
-    };
-    void loadEmailConfig();
-  }, [emailConfigForm, isAdmin, message, t, token]);
+    void reloadEmailConfig();
+  }, [isWorkspaceSettingsView, reloadEmailConfig]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !isAccountView) {
       return;
     }
     const loadRoleRequests = async () => {
@@ -766,7 +928,7 @@ export function PersonalAssetsPage({
       }
     };
     void loadRoleRequests();
-  }, [message, t, token]);
+  }, [isAccountView, message, t, token]);
 
   useEffect(() => {
     if (profileEmailCooldown <= 0) {
@@ -793,8 +955,11 @@ export function PersonalAssetsPage({
   }, [message, profileCopy.captchaLoadFailed, profileForm]);
 
   useEffect(() => {
+    if (!isAccountView) {
+      return;
+    }
     void refreshProfileCaptcha();
-  }, [refreshProfileCaptcha]);
+  }, [isAccountView, refreshProfileCaptcha]);
 
   const resolveProfileErrorMessage = useCallback(
     (error: unknown) => {
@@ -910,6 +1075,75 @@ export function PersonalAssetsPage({
       void refreshProfileCaptcha();
     }
   };
+
+  const handleRefreshPage = useCallback(async () => {
+    if (isWorkspaceSettingsView) {
+      await reloadEmailConfig();
+      return;
+    }
+
+    const tasks: Promise<unknown>[] = [];
+    if (needsAssetOverview) {
+      tasks.push(refreshAssets());
+    }
+    if (isAccountView) {
+      tasks.push(reloadRoleRequests(), refreshCurrentUser());
+    }
+    await Promise.all(tasks);
+  }, [
+    isAccountView,
+    isWorkspaceSettingsView,
+    needsAssetOverview,
+    refreshAssets,
+    refreshCurrentUser,
+    reloadEmailConfig,
+    reloadRoleRequests,
+  ]);
+
+  const openDatasetInWorkflow = useCallback(
+    (datasetVersionId: string, label?: string) => {
+      navigate(
+        createHandoffPath(
+          '/workflows',
+          createWorkflowDatasetHandoff(datasetVersionId, {
+            label,
+            source: 'my_assets',
+          }),
+        ),
+      );
+    },
+    [navigate],
+  );
+
+  const openAssetVersionInMap = useCallback(
+    (assetVersionId: string, label?: string) => {
+      navigate(
+        createHandoffPath(
+          '/spatial',
+          createSpatialAssetHandoff(assetVersionId, {
+            label,
+            source: 'my_assets',
+          }),
+        ),
+      );
+    },
+    [navigate],
+  );
+
+  const openSpatialRoiInWorkflow = useCallback(
+    (roiId: string, label?: string) => {
+      navigate(
+        createHandoffPath(
+          '/workflows',
+          createWorkflowRoiHandoff(roiId, {
+            label,
+            source: 'my_assets',
+          }),
+        ),
+      );
+    },
+    [navigate],
+  );
 
   const latestVersionByDatasetId = useMemo(() => {
     const map = new Map<string, AssetOverview['datasetVersions'][number]>();
@@ -1260,6 +1494,74 @@ export function PersonalAssetsPage({
     }
   };
 
+  const handleToggleWorkflowVisibility = async (
+    workflowVersionId: string,
+    nextVisibility: 'public' | 'private',
+  ) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      await updateWorkflowVersion(token, workflowVersionId, { visibility: nextVisibility });
+      message.success(t('assets.visibilityUpdated'));
+      await Promise.all([refreshAssets(), onRefresh()]);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    }
+  };
+
+  const handleToggleModelVisibility = async (
+    modelVersionId: string,
+    nextVisibility: 'public' | 'private',
+  ) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      await updateModelVersion(token, modelVersionId, { visibility: nextVisibility });
+      message.success(t('assets.visibilityUpdated'));
+      await Promise.all([refreshAssets(), onRefresh()]);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    }
+  };
+
+  const handleToggleSpatialRoiVisibility = async (
+    roiId: string,
+    nextVisibility: 'public' | 'private',
+  ) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      await updateSpatialRoi(token, roiId, { visibility: nextVisibility });
+      message.success(t('assets.visibilityUpdated'));
+      await Promise.all([refreshAssets(), onRefresh()]);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    }
+  };
+
+  const handleToggleSpatialOverlayVisibility = async (
+    overlayId: string,
+    nextVisibility: 'public' | 'private',
+  ) => {
+    if (!token) {
+      return;
+    }
+
+    try {
+      await updateSpatialOverlay(token, overlayId, { visibility: nextVisibility });
+      message.success(t('assets.visibilityUpdated'));
+      await Promise.all([refreshAssets(), onRefresh()]);
+    } catch (error) {
+      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+    }
+  };
+
   const handleImportWorkflow = async (file: File) => {
     if (!token) {
       return;
@@ -1399,6 +1701,24 @@ export function PersonalAssetsPage({
   };
 
   const latestRoleRequest = roleRequests[0];
+  const currentRoleLabel = currentUser ? t(roleKey(currentUser.role)) : '-';
+  const lastLoginText =
+    currentUser?.lastLoginAt
+      ? new Intl.DateTimeFormat(locale, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        }).format(new Date(currentUser.lastLoginAt))
+      : profileCopy.noLastLogin;
+  const latestRoleRequestReviewedAtText = latestRoleRequest?.reviewedAt
+    ? new Intl.DateTimeFormat(locale, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(latestRoleRequest.reviewedAt))
+    : '-';
+  const localeOptions = [
+    { value: 'zh-CN' as const, label: t('locale.zh-CN') },
+    { value: 'en-US' as const, label: t('locale.en-US') },
+  ];
 
   const renderRoleRequestStatusTag = (status: RoleUpgradeRequestSummary['status']) => (
     <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'gold'}>
@@ -1488,13 +1808,9 @@ export function PersonalAssetsPage({
     {
       title: t('assets.visibility'),
       dataIndex: 'visibility',
-      render: (visibility: string | undefined) => (
-        <Tag color={visibility === 'public' ? 'blue' : 'default'}>
-          {visibility === 'public' ? t('assets.visibilityPublic') : t('assets.visibilityPrivate')}
-        </Tag>
-      ),
+      render: (visibility: string | undefined) => renderVisibilityTag(visibility),
     },
-    ...(isAdmin || scope === 'all'
+    ...(ownerColumnEnabled
       ? [
           {
             title: t('assets.owner'),
@@ -1515,6 +1831,7 @@ export function PersonalAssetsPage({
       key: 'actions',
       render: (_: unknown, record: (typeof datasetRows)[number]) => {
         const latestVersionId = record.latestVersion?.id;
+        const canManageDataset = isAdmin || currentUser?.id === record.ownerUserId;
         return (
           <Space wrap>
             {latestVersionId ? (
@@ -1522,25 +1839,39 @@ export function PersonalAssetsPage({
                 {t('common.download')}
               </Button>
             ) : null}
-            <Button type="link" onClick={() => openRenameModal(record)}>
-              {t('common.edit')}
-            </Button>
+            {latestVersionId ? (
+              <Button type="link" onClick={() => openDatasetInWorkflow(latestVersionId, record.name)}>
+                {handoffCopy.openInWorkflow}
+              </Button>
+            ) : null}
+            {latestVersionId && datasetVersionSupportsMapPreview(record.kind, record.latestVersion) ? (
+              <Button type="link" onClick={() => openAssetVersionInMap(latestVersionId, record.name)}>
+                {handoffCopy.openInMap}
+              </Button>
+            ) : null}
+            {canManageDataset ? (
+              <Button type="link" onClick={() => openRenameModal(record)}>
+                {t('common.edit')}
+              </Button>
+            ) : null}
             {isAdmin ? (
               <Button
                 type="link"
                 onClick={() =>
                   void handleToggleVisibility(
                     record.id,
-                    record.visibility === 'public' ? 'private' : 'public',
+                    isSharedVisibility(record.visibility) ? 'private' : 'public',
                   )
                 }
               >
-                {record.visibility === 'public' ? t('assets.unpublish') : t('assets.publish')}
+                {isSharedVisibility(record.visibility) ? t('assets.unpublish') : t('assets.publish')}
               </Button>
             ) : null}
-            <Button danger type="link" onClick={() => void handleDeleteDataset(record.id)}>
-              {t('common.delete')}
-            </Button>
+            {canManageDataset ? (
+              <Button danger type="link" onClick={() => void handleDeleteDataset(record.id)}>
+                {t('common.delete')}
+              </Button>
+            ) : null}
           </Space>
         );
       },
@@ -1549,7 +1880,12 @@ export function PersonalAssetsPage({
 
   const workflowColumns = [
     { title: t('workflows.workflowVersion'), dataIndex: 'version' },
-    ...(isAdmin || scope === 'all'
+    {
+      title: t('assets.visibility'),
+      dataIndex: 'visibility',
+      render: (visibility: string | undefined) => renderVisibilityTag(visibility),
+    },
+    ...(ownerColumnEnabled
       ? [
           {
             title: t('assets.owner'),
@@ -1562,33 +1898,51 @@ export function PersonalAssetsPage({
     {
       title: t('common.actions'),
       key: 'actions',
-      render: (_: unknown, record: NonNullable<typeof overview>['workflowVersions'][number]) => (
-        <Space wrap>
-          <Button
-            type="link"
-            onClick={() => token && void downloadWorkflowVersion(token, record.id)}
-          >
-            {t('common.download')}
-          </Button>
-          <Button
-            danger
-            type="link"
-            onClick={() =>
-              token &&
-              void deleteWorkflowVersion(token, record.id)
-                .then(async () => {
-                  message.success(t('assets.workflowDeleted'));
-                  await Promise.all([refreshAssets(), onRefresh()]);
-                })
-                .catch((error) => {
-                  message.error(isApiError(error) ? error.message : t('error.request_failed'));
-                })
-            }
-          >
-            {t('common.delete')}
-          </Button>
-        </Space>
-      ),
+      render: (_: unknown, record: NonNullable<typeof overview>['workflowVersions'][number]) => {
+        const canManageWorkflow = isAdmin || currentUser?.id === record.ownerUserId;
+        return (
+          <Space wrap>
+            <Button
+              type="link"
+              onClick={() => token && void downloadWorkflowVersion(token, record.id)}
+            >
+              {t('common.download')}
+            </Button>
+            {isAdmin ? (
+              <Button
+                type="link"
+                onClick={() =>
+                  void handleToggleWorkflowVisibility(
+                    record.id,
+                    isSharedVisibility(record.visibility) ? 'private' : 'public',
+                  )
+                }
+              >
+                {isSharedVisibility(record.visibility) ? t('assets.unpublish') : t('assets.publish')}
+              </Button>
+            ) : null}
+            {canManageWorkflow ? (
+              <Button
+                danger
+                type="link"
+                onClick={() =>
+                  token &&
+                  void deleteWorkflowVersion(token, record.id)
+                    .then(async () => {
+                      message.success(t('assets.workflowDeleted'));
+                      await Promise.all([refreshAssets(), onRefresh()]);
+                    })
+                    .catch((error) => {
+                      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+                    })
+                }
+              >
+                {t('common.delete')}
+              </Button>
+            ) : null}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -1614,13 +1968,10 @@ export function PersonalAssetsPage({
     {
       title: t('assets.visibility'),
       dataIndex: 'visibility',
-      render: (visibility: string | undefined) => (
-        <Tag color={visibility === 'public' ? 'blue' : 'default'}>
-          {visibility === 'public' ? productCopy.visibilityPublic : productCopy.visibilityPrivate}
-        </Tag>
-      ),
+      render: (visibility: string | undefined) =>
+        renderVisibilityTag(visibility, productCopy.visibilityPublic, productCopy.visibilityPrivate),
     },
-    ...(isAdmin || scope === 'all'
+    ...(ownerColumnEnabled
       ? [
           {
             title: t('assets.owner'),
@@ -1695,9 +2046,26 @@ export function PersonalAssetsPage({
       dataIndex: 'resultDatasetVersionId',
       render: (value: string | undefined) =>
         value && token ? (
-          <Button type="link" onClick={() => void downloadDatasetVersion(token, value)}>
-            {t('common.download')}
-          </Button>
+          <Space wrap>
+            <Button type="link" onClick={() => void downloadDatasetVersion(token, value)}>
+              {t('common.download')}
+            </Button>
+            <Button type="link" onClick={() => openDatasetInWorkflow(value, value)}>
+              {handoffCopy.openInWorkflow}
+            </Button>
+            {snapshot.datasetVersions.some(
+              (datasetVersion) =>
+                datasetVersion.id === value &&
+                datasetVersionSupportsMapPreview(
+                  snapshot.datasets.find((dataset) => dataset.id === datasetVersion.datasetId)?.kind ?? 'artifact',
+                  datasetVersion,
+                ),
+            ) ? (
+              <Button type="link" onClick={() => openAssetVersionInMap(value, value)}>
+                {handoffCopy.openInMap}
+              </Button>
+            ) : null}
+          </Space>
         ) : (
           '-'
         ),
@@ -1716,10 +2084,19 @@ export function PersonalAssetsPage({
       ),
     },
     {
-      title: t('assets.owner'),
-      dataIndex: 'ownerDisplayName',
-      render: (value: string | undefined) => value ?? platformOwnerLabel,
+      title: t('assets.visibility'),
+      dataIndex: 'visibility',
+      render: (visibility: string | undefined) => renderVisibilityTag(visibility),
     },
+    ...(ownerColumnEnabled
+      ? [
+          {
+            title: t('assets.owner'),
+            dataIndex: 'ownerDisplayName',
+            render: (value: string | undefined) => value ?? platformOwnerLabel,
+          },
+        ]
+      : []),
     { title: t('common.createdAt'), dataIndex: 'createdAt' },
     {
       title: t('common.actions'),
@@ -1734,6 +2111,19 @@ export function PersonalAssetsPage({
             >
               {t('common.download')}
             </Button>
+            {isAdmin ? (
+              <Button
+                type="link"
+                onClick={() =>
+                  void handleToggleModelVisibility(
+                    record.id,
+                    isSharedVisibility(record.visibility) ? 'private' : 'public',
+                  )
+                }
+              >
+                {isSharedVisibility(record.visibility) ? t('assets.unpublish') : t('assets.publish')}
+              </Button>
+            ) : null}
             {canDeleteModel ? (
               <Button
                 danger
@@ -1781,7 +2171,7 @@ export function PersonalAssetsPage({
       dataIndex: 'serviceAccountEmail',
       render: (value: string | undefined) => value ?? '-',
     },
-    ...(isAdmin || scope === 'all'
+    ...(ownerColumnEnabled
       ? [
           {
             title: t('assets.owner'),
@@ -1821,11 +2211,16 @@ export function PersonalAssetsPage({
       render: (value: string) => <Tag>{value}</Tag>,
     },
     {
+      title: t('assets.visibility'),
+      dataIndex: 'visibility',
+      render: (visibility: string | undefined) => renderVisibilityTag(visibility),
+    },
+    {
       title: spatialCopy.bbox,
       dataIndex: 'bbox',
       render: (bbox: [number, number, number, number]) => bbox.map((value) => value.toFixed(4)).join(', '),
     },
-    ...(isAdmin || scope === 'all'
+    ...(ownerColumnEnabled
       ? [
           {
             title: t('assets.owner'),
@@ -1837,27 +2232,48 @@ export function PersonalAssetsPage({
     {
       title: t('common.actions'),
       key: 'actions',
-      render: (_: unknown, record: NonNullable<typeof overview>['spatialRois'][number]) => (
-        <Space wrap>
-          <Button
-            danger
-            type="link"
-            onClick={() =>
-              token &&
-              void deleteSpatialRoi(token, record.id)
-                .then(async () => {
-                  message.success(spatialCopy.roiDeleted);
-                  await refreshAssets();
-                })
-                .catch((error) => {
-                  message.error(isApiError(error) ? error.message : t('error.request_failed'));
-                })
-            }
-          >
-            {t('common.delete')}
-          </Button>
-        </Space>
-      ),
+      render: (_: unknown, record: NonNullable<typeof overview>['spatialRois'][number]) => {
+        const canManageSpatialRoi = isAdmin || currentUser?.id === record.ownerUserId;
+        return (
+          <Space wrap>
+            <Button type="link" onClick={() => openSpatialRoiInWorkflow(record.id, record.name)}>
+              {handoffCopy.openInWorkflow}
+            </Button>
+            {isAdmin ? (
+              <Button
+                type="link"
+                onClick={() =>
+                  void handleToggleSpatialRoiVisibility(
+                    record.id,
+                    record.visibility === 'public' ? 'private' : 'public',
+                  )
+                }
+              >
+                {record.visibility === 'public' ? t('assets.unpublish') : t('assets.publish')}
+              </Button>
+            ) : null}
+            {canManageSpatialRoi ? (
+              <Button
+                danger
+                type="link"
+                onClick={() =>
+                  token &&
+                  void deleteSpatialRoi(token, record.id)
+                    .then(async () => {
+                      message.success(spatialCopy.roiDeleted);
+                      await Promise.all([refreshAssets(), onRefresh()]);
+                    })
+                    .catch((error) => {
+                      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+                    })
+                }
+              >
+                {t('common.delete')}
+              </Button>
+            ) : null}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -1874,11 +2290,16 @@ export function PersonalAssetsPage({
       render: (value: string) => <Tag>{value}</Tag>,
     },
     {
+      title: t('assets.visibility'),
+      dataIndex: 'visibility',
+      render: (visibility: string | undefined) => renderVisibilityTag(visibility),
+    },
+    {
       title: spatialCopy.opacity,
       dataIndex: 'opacity',
       render: (value: number) => value.toFixed(2),
     },
-    ...(isAdmin || scope === 'all'
+    ...(ownerColumnEnabled
       ? [
           {
             title: t('assets.owner'),
@@ -1890,812 +2311,296 @@ export function PersonalAssetsPage({
     {
       title: t('common.actions'),
       key: 'actions',
-      render: (_: unknown, record: NonNullable<typeof overview>['spatialOverlays'][number]) => (
-        <Space wrap>
-          <Button
-            danger
-            type="link"
-            onClick={() =>
-              token &&
-              void deleteSpatialOverlay(token, record.id)
-                .then(async () => {
-                  message.success(spatialCopy.overlayDeleted);
-                  await refreshAssets();
-                })
-                .catch((error) => {
-                  message.error(isApiError(error) ? error.message : t('error.request_failed'));
-                })
-            }
-          >
-            {t('common.delete')}
-          </Button>
-        </Space>
-      ),
+      render: (_: unknown, record: NonNullable<typeof overview>['spatialOverlays'][number]) => {
+        const canManageSpatialOverlay = isAdmin || currentUser?.id === record.ownerUserId;
+        return (
+          <Space wrap>
+            {isAdmin ? (
+              <Button
+                type="link"
+                onClick={() =>
+                  void handleToggleSpatialOverlayVisibility(
+                    record.id,
+                    record.visibility === 'public' ? 'private' : 'public',
+                  )
+                }
+              >
+                {record.visibility === 'public' ? t('assets.unpublish') : t('assets.publish')}
+              </Button>
+            ) : null}
+            {canManageSpatialOverlay ? (
+              <Button
+                danger
+                type="link"
+                onClick={() =>
+                  token &&
+                  void deleteSpatialOverlay(token, record.id)
+                    .then(async () => {
+                      message.success(spatialCopy.overlayDeleted);
+                      await Promise.all([refreshAssets(), onRefresh()]);
+                    })
+                    .catch((error) => {
+                      message.error(isApiError(error) ? error.message : t('error.request_failed'));
+                    })
+                }
+              >
+                {t('common.delete')}
+              </Button>
+            ) : null}
+          </Space>
+        );
+      },
     },
   ];
 
+  const assetSections: AssetCatalogSection[] = [
+    {
+      key: 'datasets',
+      label: t('assets.tabDatasets'),
+      rows: datasetRows as AssetCatalogSection['rows'],
+      columns: datasetColumns as AssetCatalogSection['columns'],
+      emptyLabel: t('assets.empty'),
+    },
+    {
+      key: 'workflows',
+      label: t('assets.tabWorkflows'),
+      rows: (overview?.workflowVersions ?? []) as AssetCatalogSection['rows'],
+      columns: workflowColumns as AssetCatalogSection['columns'],
+      emptyLabel: t('assets.empty'),
+    },
+    {
+      key: 'products',
+      label: productCopy.tab,
+      rows: productRows as AssetCatalogSection['rows'],
+      columns: productColumns as AssetCatalogSection['columns'],
+      emptyLabel: productCopy.empty,
+    },
+    {
+      key: 'runs',
+      label: t('assets.tabRuns'),
+      rows: (overview?.workflowRuns ?? []) as AssetCatalogSection['rows'],
+      columns: runColumns as AssetCatalogSection['columns'],
+      emptyLabel: t('assets.empty'),
+    },
+    {
+      key: 'models',
+      label: t('assets.tabModels'),
+      rows: (overview?.modelVersions ?? []) as AssetCatalogSection['rows'],
+      columns: modelColumns as AssetCatalogSection['columns'],
+      emptyLabel: t('assets.empty'),
+    },
+    {
+      key: 'spatial-rois',
+      label: spatialCopy.roiTab,
+      rows: (overview?.spatialRois ?? []) as AssetCatalogSection['rows'],
+      columns: spatialRoiColumns as AssetCatalogSection['columns'],
+      emptyLabel: spatialCopy.emptyRoi,
+    },
+    {
+      key: 'spatial-overlays',
+      label: spatialCopy.overlayTab,
+      rows: (overview?.spatialOverlays ?? []) as AssetCatalogSection['rows'],
+      columns: spatialOverlayColumns as AssetCatalogSection['columns'],
+      emptyLabel: spatialCopy.emptyOverlay,
+    },
+  ];
   return (
     <div className="page-stack">
-      <div className="section-header">
-        <div className="section-header-actions">
-          <div>
-            <div className="panel-kicker">{t('assets.kicker')}</div>
-            <h2 className="section-title">{t('assets.title')}</h2>
-            <Paragraph className="section-copy">{t('assets.copy')}</Paragraph>
-          </div>
-          <Space wrap className="section-actions">
-            <Button onClick={() => setUploadOpen(true)}>{t('common.upload')}</Button>
-            <Button onClick={() => openProductModal()}>{productCopy.upload}</Button>
-            <Button onClick={() => setCredentialOpen(true)}>{geeCopy.add}</Button>
-            <Button onClick={() => importInputRef.current?.click()}>{t('assets.importWorkflow')}</Button>
-            <Button onClick={() => void refreshAssets()}>{t('common.refresh')}</Button>
-          </Space>
-        </div>
-      </div>
-
-      <input
-        ref={importInputRef}
-        hidden
-        type="file"
-        accept=".json"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) {
-            void handleImportWorkflow(file);
-          }
-          event.currentTarget.value = '';
-        }}
+      <PersonalAssetsHeader
+        kicker={pageCopy.kicker}
+        title={pageCopy.title}
+        copy={pageCopy.copy}
+        isAssetsView={isAssetsView}
+        isAccountView={isAccountView}
+        uploadLabel={t('common.upload')}
+        uploadProductLabel={productCopy.upload}
+        addCredentialLabel={geeCopy.add}
+        importWorkflowLabel={t('assets.importWorkflow')}
+        refreshLabel={t('common.refresh')}
+        importInputRef={importInputRef}
+        onUploadDataset={() => setUploadOpen(true)}
+        onUploadProduct={() => openProductModal()}
+        onAddCredential={() => setCredentialOpen(true)}
+        onImportWorkflow={(file) => void handleImportWorkflow(file)}
+        onRefresh={() => void handleRefreshPage()}
       />
 
-      <Row gutter={[20, 20]}>
-        <Col xs={24} xl={14}>
-          <Card className="panel-card" variant="borderless">
-            <div className="panel-kicker">{profileCopy.title}</div>
-            <Paragraph className="section-copy">{profileCopy.copy}</Paragraph>
-            <Form form={profileForm} layout="vertical">
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/*"
-                style={{ display: 'none' }}
-                tabIndex={-1}
-                aria-hidden="true"
-                onChange={(event) => void handleAvatarFileChange(event)}
-              />
-              <Form.Item name="avatarUrl" hidden>
-                <Input />
-              </Form.Item>
-
-              <div className="profile-identity-card">
-                <Avatar
-                  size={88}
-                  src={watchedAvatarUrl || currentUser?.avatarUrl}
-                  className="profile-identity-avatar"
-                >
-                  {initialsForName(profileForm.getFieldValue('displayName') ?? currentUser?.displayName)}
-                </Avatar>
-                <div className="profile-identity-body">
-                  <div className="panel-kicker">{profileCopy.profilePreview}</div>
-                  <div className="profile-identity-name">
-                    {profileForm.getFieldValue('displayName') ?? currentUser?.displayName}
-                  </div>
-                  <div className="profile-identity-meta">
-                    {watchedJobTitle || watchedOrganization
-                      ? [watchedJobTitle, watchedOrganization].filter(Boolean).join(' · ')
-                      : profileCopy.profileMetaFallback}
-                  </div>
-                  <Space wrap>
-                    <Button onClick={() => avatarInputRef.current?.click()}>
-                      {profileCopy.uploadAvatar}
-                    </Button>
-                    {watchedAvatarUrl ? (
-                      <Button onClick={() => profileForm.setFieldValue('avatarUrl', '')}>
-                        {profileCopy.removeAvatar}
-                      </Button>
-                    ) : null}
-                  </Space>
-                </div>
-              </div>
-
-              <div className="profile-grid">
-                <Form.Item name="displayName" label={t('common.displayName')} rules={[{ required: true }]}>
-                  <Input />
-                </Form.Item>
-                <Form.Item name="preferredLocale" label={t('auth.preferredLocale')} rules={[{ required: true }]}>
-                  <Select
-                    options={[
-                      { value: 'zh-CN', label: t('locale.zh-CN') },
-                      { value: 'en-US', label: t('locale.en-US') },
-                    ]}
-                  />
-                </Form.Item>
-                <Form.Item name="email" label={t('common.email')} rules={[{ required: true }, { type: 'email' }]}>
-                  <Input />
-                </Form.Item>
-                <Form.Item name="jobTitle" label={profileCopy.jobTitleLabel}>
-                  <Input />
-                </Form.Item>
-                <Form.Item name="organization" label={profileCopy.organizationLabel}>
-                  <Input />
-                </Form.Item>
-                <Form.Item
-                  name="bio"
-                  label={profileCopy.bioLabel}
-                  className="profile-grid-span-full"
-                >
-                  <Input.TextArea rows={4} />
-                </Form.Item>
-                <div className="profile-summary-card">
-                  <div>
-                    <strong>{profileCopy.roleLabel}</strong>
-                    <div>{currentUser ? t(roleKey(currentUser.role)) : '-'}</div>
-                  </div>
-                  <div>
-                    <strong>{profileCopy.approvalLabel}</strong>
-                    <div>{currentUser?.approvalStatus ?? '-'}</div>
-                  </div>
-                  <div>
-                    <strong>{profileCopy.lastLoginLabel}</strong>
-                    <div>
-                      {currentUser?.lastLoginAt
-                        ? new Intl.DateTimeFormat(locale, {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          }).format(new Date(currentUser.lastLoginAt))
-                        : profileCopy.noLastLogin}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {watchedProfileEmail && watchedProfileEmail.trim().toLowerCase() !== currentUser?.email ? (
-                <div className="profile-email-verify">
-                  <div className="profile-email-row">
-                    <Form.Item name="captchaCode" label={profileCopy.captchaLabel} rules={[{ required: true }]}>
-                      <Input placeholder={profileCopy.captchaPlaceholder} />
-                    </Form.Item>
-                    <div className="auth-captcha-box">
-                      {profileCaptchaImageUrl ? (
-                        <img
-                          src={profileCaptchaImageUrl}
-                          alt="captcha"
-                          className="auth-captcha-image"
-                        />
-                      ) : null}
-                    </div>
-                    <Button onClick={() => void refreshProfileCaptcha()} loading={profileCaptchaLoading}>
-                      {profileCopy.refreshCaptcha}
-                    </Button>
-                  </div>
-                  <Form.Item name="emailCode" label={profileCopy.emailCodeLabel}>
-                    <Input
-                      placeholder={profileCopy.emailCodePlaceholder}
-                      addonAfter={
-                        <Button
-                          type="link"
-                          onClick={() => void sendProfileEmailCode()}
-                          disabled={profileEmailCooldown > 0}
-                        >
-                          {profileEmailCooldown > 0
-                            ? profileCopy.resendIn(profileEmailCooldown)
-                            : profileCopy.sendCode}
-                        </Button>
-                      }
-                    />
-                  </Form.Item>
-                </div>
-              ) : null}
-
-              <Button type="primary" onClick={() => void handleSaveProfile()} loading={profileSaving}>
-                {profileCopy.saveProfile}
-              </Button>
-            </Form>
-          </Card>
+      {isAccountView ? (
+        <Row gutter={[20, 20]}>
+          <Col xs={24} xl={14}>
+            <AccountProfileCard
+              currentUser={currentUser}
+              profileForm={profileForm}
+              avatarInputRef={avatarInputRef}
+              watchedAvatarUrl={watchedAvatarUrl}
+              watchedJobTitle={watchedJobTitle}
+              watchedOrganization={watchedOrganization}
+              watchedProfileEmail={watchedProfileEmail}
+              profileCaptchaImageUrl={profileCaptchaImageUrl}
+              profileCaptchaLoading={profileCaptchaLoading}
+              profileEmailCooldown={profileEmailCooldown}
+              profileSaving={profileSaving}
+              currentRoleLabel={currentRoleLabel}
+              displayNameLabel={t('common.displayName')}
+              preferredLocaleLabel={t('auth.preferredLocale')}
+              emailLabel={t('common.email')}
+              localeOptions={localeOptions}
+              copy={profileCopy}
+              renderInitials={initialsForName}
+              lastLoginText={lastLoginText}
+              onAvatarFileChange={(event) => void handleAvatarFileChange(event)}
+              onTriggerAvatarSelect={() => avatarInputRef.current?.click()}
+              onRemoveAvatar={() => profileForm.setFieldValue('avatarUrl', '')}
+              onRefreshCaptcha={() => void refreshProfileCaptcha()}
+              onSendEmailCode={() => void sendProfileEmailCode()}
+              onSave={() => void handleSaveProfile()}
+            />
         </Col>
 
         <Col xs={24} xl={10}>
-          <div className="profile-security-stack">
-            <Card className="panel-card" variant="borderless">
-              <div className="panel-kicker">{profileCopy.passwordTitle}</div>
-              <Paragraph className="section-copy">{profileCopy.passwordCopy}</Paragraph>
-              <Form form={passwordForm} layout="vertical">
-                <Form.Item name="currentPassword" label={profileCopy.currentPassword} rules={[{ required: true, min: 8 }]}>
-                  <Input.Password />
-                </Form.Item>
-                <Form.Item name="newPassword" label={profileCopy.newPassword} rules={[{ required: true, min: 8 }]}>
-                  <Input.Password />
-                </Form.Item>
-                <Form.Item name="confirmPassword" label={profileCopy.confirmPassword} rules={[{ required: true, min: 8 }]}>
-                  <Input.Password />
-                </Form.Item>
-                <Button type="primary" onClick={() => void handleChangePassword()} loading={passwordSaving}>
-                  {profileCopy.passwordTitle}
-                </Button>
-              </Form>
-            </Card>
-
-            <Card className="panel-card" variant="borderless">
-              <div className="panel-kicker">{roleRequestCopy.title}</div>
-              <Paragraph className="section-copy">{roleRequestCopy.copy}</Paragraph>
-              {latestRoleRequest ? (
-                <div className="profile-request-highlight">
-                  <div className="profile-request-highlight-head">
-                    <div>
-                      <div className="panel-kicker">{roleRequestCopy.latestTitle}</div>
-                      <Text>{latestRoleRequest.reason}</Text>
-                    </div>
-                    {renderRoleRequestStatusTag(latestRoleRequest.status)}
-                  </div>
-                  <Descriptions
-                    size="small"
-                    column={1}
-                    items={[
-                      {
-                        key: 'review-note',
-                        label: roleRequestCopy.tableReviewNote,
-                        children: latestRoleRequest.reviewNote || '-',
-                      },
-                      {
-                        key: 'reviewed-by',
-                        label: roleRequestCopy.reviewedBy,
-                        children: latestRoleRequest.reviewedByDisplayName || '-',
-                      },
-                      {
-                        key: 'reviewed-at',
-                        label: roleRequestCopy.reviewedAt,
-                        children: latestRoleRequest.reviewedAt
-                          ? new Intl.DateTimeFormat(locale, {
-                              dateStyle: 'medium',
-                              timeStyle: 'short',
-                            }).format(new Date(latestRoleRequest.reviewedAt))
-                          : '-',
-                      },
-                    ]}
-                  />
-                </div>
-              ) : null}
-              {currentUser?.role === 'MEMBER' ? (
-                <Form form={roleRequestForm} layout="vertical">
-                  <Form.Item
-                    name="reason"
-                    label={roleRequestCopy.reasonLabel}
-                    rules={[{ required: true, min: 4 }]}
-                  >
-                    <Input.TextArea rows={4} />
-                  </Form.Item>
-                  <Button type="primary" onClick={() => void handleCreateRoleRequest()} loading={roleRequestSaving}>
-                    {roleRequestCopy.submit}
-                  </Button>
-                </Form>
-              ) : (
-                <Paragraph>{roleRequestCopy.currentRoleOnly}</Paragraph>
-              )}
-
-              <div className="profile-role-request-table">
-                {roleRequests.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={roleRequestsLoading}
-                    pagination={PROFILE_TABLE_PAGINATION}
-                    columns={roleRequestColumns}
-                    dataSource={roleRequests}
-                    size="small"
-                  />
-                ) : (
-                  <Empty description={roleRequestCopy.empty} />
-                )}
-              </div>
-            </Card>
-
-            {isAdmin ? (
-              <Card className="panel-card" variant="borderless">
-                <div className="panel-kicker">{emailConfigCopy.title}</div>
-                <Paragraph className="section-copy">{emailConfigCopy.copy}</Paragraph>
-                <div className="profile-config-tip">
-                  <strong>{emailConfigCopy.exampleTitle}</strong>
-                  <div>{emailConfigCopy.exampleBody}</div>
-                </div>
-                <Form form={emailConfigForm} layout="vertical">
-                  <div className="profile-email-config-grid">
-                    <Form.Item
-                      name="emailEnabled"
-                      label={emailConfigCopy.enabledLabel}
-                      valuePropName="checked"
-                      extra={emailConfigCopy.enabledHelp}
-                    >
-                      <Switch />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpUseSsl"
-                      label={emailConfigCopy.sslLabel}
-                      valuePropName="checked"
-                      extra={emailConfigCopy.sslHelp}
-                    >
-                      <Switch />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpHost"
-                      label={emailConfigCopy.hostLabel}
-                      rules={[{ required: true }]}
-                      extra={emailConfigCopy.hostHelp}
-                    >
-                      <Input />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpPort"
-                      label={emailConfigCopy.portLabel}
-                      rules={[{ required: true }]}
-                      extra={emailConfigCopy.portHelp}
-                    >
-                      <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpUsername"
-                      label={emailConfigCopy.usernameLabel}
-                      extra={emailConfigCopy.usernameHelp}
-                    >
-                      <Input />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpPassword"
-                      label={emailConfigCopy.passwordLabel}
-                      extra={
-                        emailSettings?.smtpPasswordConfigured
-                          ? `${emailConfigCopy.passwordConfigured} ${emailConfigCopy.passwordHint} ${emailConfigCopy.passwordHelp}`
-                          : `${emailConfigCopy.passwordHint} ${emailConfigCopy.passwordHelp}`
-                      }
-                    >
-                      <Input.Password />
-                    </Form.Item>
-                    <Form.Item
-                      name="clearSmtpPassword"
-                      label={emailConfigCopy.clearPasswordLabel}
-                      valuePropName="checked"
-                      extra={emailConfigCopy.clearPasswordHelp}
-                    >
-                      <Switch />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpFromEmail"
-                      label={emailConfigCopy.fromEmailLabel}
-                      extra={emailConfigCopy.fromEmailHelp}
-                    >
-                      <Input />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpFromName"
-                      label={emailConfigCopy.fromNameLabel}
-                      extra={emailConfigCopy.fromNameHelp}
-                    >
-                      <Input />
-                    </Form.Item>
-                    <Form.Item
-                      name="smtpTimeoutSeconds"
-                      label={emailConfigCopy.timeoutLabel}
-                      rules={[{ required: true }]}
-                      extra={emailConfigCopy.timeoutHelp}
-                    >
-                      <InputNumber min={1} max={120} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="emailCodeExpireMinutes"
-                      label={emailConfigCopy.codeExpireLabel}
-                      rules={[{ required: true }]}
-                      extra={emailConfigCopy.codeExpireHelp}
-                    >
-                      <InputNumber min={1} max={120} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="emailCodeResendSeconds"
-                      label={emailConfigCopy.resendLabel}
-                      rules={[{ required: true }]}
-                      extra={emailConfigCopy.resendHelp}
-                    >
-                      <InputNumber min={0} max={3600} style={{ width: '100%' }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="imageCaptchaExpireMinutes"
-                      label={emailConfigCopy.captchaExpireLabel}
-                      rules={[{ required: true }]}
-                      extra={emailConfigCopy.captchaExpireHelp}
-                    >
-                      <InputNumber min={1} max={60} style={{ width: '100%' }} />
-                    </Form.Item>
-                  </div>
-                  <Button
-                    type="primary"
-                    onClick={() => void handleSaveEmailConfig()}
-                    loading={emailConfigSaving || emailConfigLoading}
-                  >
-                    {emailConfigCopy.save}
-                  </Button>
-                </Form>
-              </Card>
-            ) : null}
-          </div>
-        </Col>
-      </Row>
-
-      <Card className="panel-card" variant="borderless">
-        {overview ? (
-          <Tabs
-            tabBarExtraContent={
-              isAdmin ? (
-                <Select
-                  value={scope}
-                  onChange={(value) => setScope(value as AssetScope)}
-                  style={{ width: 180 }}
-                  options={[
-                    { value: 'mine', label: t('assets.scopeMine') },
-                    { value: 'all', label: t('assets.scopeAll') },
-                  ]}
-                />
-              ) : undefined
-            }
-            items={[
-              {
-                key: 'datasets',
-                label: t('assets.tabDatasets'),
-                children: datasetRows.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={datasetColumns}
-                    dataSource={datasetRows}
-                  />
-                ) : (
-                  <Empty description={t('assets.empty')} />
-                ),
-              },
-              {
-                key: 'workflows',
-                label: t('assets.tabWorkflows'),
-                children: overview.workflowVersions.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={workflowColumns}
-                    dataSource={overview.workflowVersions}
-                  />
-                ) : (
-                  <Empty description={t('assets.empty')} />
-                ),
-              },
-              {
-                key: 'products',
-                label: productCopy.tab,
-                children: productRows.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={productColumns}
-                    dataSource={productRows}
-                  />
-                ) : (
-                  <Empty description={productCopy.empty} />
-                ),
-              },
-              {
-                key: 'runs',
-                label: t('assets.tabRuns'),
-                children: overview.workflowRuns.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={runColumns}
-                    dataSource={overview.workflowRuns}
-                  />
-                ) : (
-                  <Empty description={t('assets.empty')} />
-                ),
-              },
-              {
-                key: 'models',
-                label: t('assets.tabModels'),
-                children: overview.modelVersions.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={modelColumns}
-                    dataSource={overview.modelVersions}
-                  />
-                ) : (
-                  <Empty description={t('assets.empty')} />
-                ),
-              },
-              {
-                key: 'gee-credentials',
-                label: geeCopy.tab,
-                children: overview.geeCredentials.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={geeCredentialColumns}
-                    dataSource={overview.geeCredentials}
-                  />
-                ) : (
-                  <Empty description={geeCopy.empty} />
-                ),
-              },
-              {
-                key: 'spatial-rois',
-                label: spatialCopy.roiTab,
-                children: overview.spatialRois.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={spatialRoiColumns}
-                    dataSource={overview.spatialRois}
-                  />
-                ) : (
-                  <Empty description={spatialCopy.emptyRoi} />
-                ),
-              },
-              {
-                key: 'spatial-overlays',
-                label: spatialCopy.overlayTab,
-                children: overview.spatialOverlays.length ? (
-                  <Table
-                    rowKey="id"
-                    loading={loading}
-                    pagination={ASSET_TABLE_PAGINATION}
-                    columns={spatialOverlayColumns}
-                    dataSource={overview.spatialOverlays}
-                  />
-                ) : (
-                  <Empty description={spatialCopy.emptyOverlay} />
-                ),
-              },
-            ]}
+          <AccountSidebarCards
+            currentUser={currentUser}
+            latestRoleRequest={latestRoleRequest}
+            roleRequests={roleRequests}
+            roleRequestsLoading={roleRequestsLoading}
+            roleRequestSaving={roleRequestSaving}
+            passwordSaving={passwordSaving}
+            passwordForm={passwordForm}
+            roleRequestForm={roleRequestForm}
+            passwordCopy={profileCopy}
+            roleRequestCopy={roleRequestCopy}
+            roleRequestColumns={roleRequestColumns}
+            roleRequestPagination={PROFILE_TABLE_PAGINATION}
+            renderRoleRequestStatusTag={renderRoleRequestStatusTag}
+            latestRoleRequestReviewedAtText={latestRoleRequestReviewedAtText}
+            onChangePassword={() => void handleChangePassword()}
+            onCreateRoleRequest={() => void handleCreateRoleRequest()}
           />
-        ) : (
-          <Empty description={t('common.loading')} />
-        )}
-      </Card>
+        </Col>
+        </Row>
+      ) : null}
 
-      <Modal
-        title={t('assets.uploadDataset')}
+      {isAssetsView ? (
+        <AssetsCatalogCard
+          overview={overview}
+          scope={scope}
+          scopeOptions={assetScopeOptions}
+          sections={assetSections}
+          loading={loading}
+          pagination={ASSET_TABLE_PAGINATION}
+          loadingLabel={t('common.loading')}
+          onScopeChange={setScope}
+        />
+      ) : null}
+
+      {isAccountView ? (
+        <GeeCredentialsSectionCard
+          overview={overview}
+          scope={scope}
+          scopeOptions={assetScopeOptions}
+          loading={loading}
+          columns={geeCredentialColumns}
+          pagination={ASSET_TABLE_PAGINATION}
+          tabLabel={geeCopy.tab}
+          sectionCopy={geeSectionCopy}
+          emptyLabel={geeCopy.empty}
+          loadingLabel={t('common.loading')}
+          onScopeChange={setScope}
+        />
+      ) : null}
+
+      {isWorkspaceSettingsView ? (
+        <WorkspaceEmailSettingsCard
+          form={emailConfigForm}
+          emailSettings={emailSettings}
+          copy={emailConfigCopy}
+          loading={emailConfigLoading}
+          saving={emailConfigSaving}
+          onSave={() => void handleSaveEmailConfig()}
+        />
+      ) : null}
+
+      <DatasetUploadModal
         open={uploadOpen}
+        submitting={submitting}
+        form={uploadForm}
+        selectedUploadKind={selectedUploadKind}
+        datasetNameLabel={t('datasets.table.dataset')}
+        descriptionLabel={t('datasets.description')}
+        kindLabel={t('datasets.table.kind')}
+        fileLabel={t('common.file')}
+        title={t('assets.uploadDataset')}
+        downloadTemplateLabel={t('assets.downloadTemplate')}
+        kindOptions={[
+          { value: 'raster', label: t('dataset.kind.raster') },
+          { value: 'vector', label: t('dataset.kind.vector') },
+          { value: 'table', label: t('dataset.kind.table') },
+          { value: 'artifact', label: t('dataset.kind.artifact') },
+        ]}
         onCancel={() => {
           setUploadOpen(false);
           setSelectedFile(null);
         }}
-        onOk={() => void handleUpload()}
-        confirmLoading={submitting}
-      >
-        <Form
-          form={uploadForm}
-          layout="vertical"
-          initialValues={{ datasetName: '', description: '', kind: 'table' }}
-        >
-          <div className="section-actions">
-            <Button onClick={() => downloadUploadTemplate(selectedUploadKind)}>
-              {t('assets.downloadTemplate')}
-            </Button>
-          </div>
-          <Form.Item name="datasetName" label={t('datasets.table.dataset')} rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="description" label={t('datasets.description')}>
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="kind" label={t('datasets.table.kind')} rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'raster', label: t('dataset.kind.raster') },
-                { value: 'vector', label: t('dataset.kind.vector') },
-                { value: 'table', label: t('dataset.kind.table') },
-                { value: 'artifact', label: t('dataset.kind.artifact') },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label={t('common.file')} required>
-            <input
-              className="file-picker"
-              type="file"
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                setSelectedFile(file);
-                if (file) {
-                  uploadForm.setFieldValue('datasetName', file.name.replace(/\.[^.]+$/, ''));
-                }
-              }}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onSubmit={() => void handleUpload()}
+        onDownloadTemplate={() => downloadUploadTemplate(selectedUploadKind)}
+        onFileChange={(file) => {
+          setSelectedFile(file);
+          if (file) {
+            uploadForm.setFieldValue('datasetName', file.name.replace(/\.[^.]+$/, ''));
+          }
+        }}
+      />
 
-      <Modal
-        title={editingProductId ? productCopy.editTitle : productCopy.createTitle}
-        className="asset-editor-modal"
-        width={920}
+      <ProductEditorModal
         open={productModalOpen}
+        submitting={submitting}
+        editingProductId={editingProductId}
+        form={productForm}
+        copy={productCopy}
+        isAdmin={isAdmin}
+        selectedProductFile={selectedProductFile}
+        productFileInputRef={productFileInputRef}
         onCancel={closeProductModal}
-        onOk={() => void handleSubmitProduct()}
-        confirmLoading={submitting}
-      >
-        <Form
-          form={productForm}
-          layout="vertical"
-          initialValues={{ visibility: 'private' }}
-        >
-          <div className="asset-editor-layout">
-            <section className="asset-editor-section">
-              <div className="asset-editor-section-title">{productCopy.name}</div>
-              <Paragraph className="asset-editor-section-copy">
-                {productCopy.description}
-              </Paragraph>
-              <Form.Item name="name" label={productCopy.name} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="description" label={productCopy.description}>
-                <Input.TextArea rows={5} />
-              </Form.Item>
-              <Form.Item name="category" label={productCopy.category}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="tagsText" label={productCopy.tags} extra={productCopy.tagsHint}>
-                <Input.TextArea rows={4} />
-              </Form.Item>
-            </section>
+        onSubmit={() => void handleSubmitProduct()}
+        onFileChange={(file) => {
+          setSelectedProductFile(file);
+          if (!editingProductId && file) {
+            productForm.setFieldValue('name', file.name.replace(/\.[^.]+$/, ''));
+          }
+        }}
+      />
 
-            <section className="asset-editor-section">
-              <div className="asset-editor-section-title">{productCopy.file}</div>
-              <Paragraph className="asset-editor-section-copy">
-                {productCopy.fileHint}
-              </Paragraph>
-              <Form.Item
-                label={editingProductId ? productCopy.replaceFile : productCopy.file}
-                required={!editingProductId}
-              >
-                <input
-                  ref={productFileInputRef}
-                  className="file-picker"
-                  type="file"
-                  accept=".stp,.step,.igs,.iges"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0] ?? null;
-                    setSelectedProductFile(file);
-                    if (!editingProductId && file) {
-                      productForm.setFieldValue('name', file.name.replace(/\.[^.]+$/, ''));
-                    }
-                  }}
-                />
-                {selectedProductFile ? (
-                  <Text type="secondary">{selectedProductFile.name}</Text>
-                ) : null}
-              </Form.Item>
-              <Form.Item
-                name="highlightsText"
-                label={productCopy.highlights}
-                extra={productCopy.highlightsHint}
-              >
-                <Input.TextArea rows={4} />
-              </Form.Item>
-              <Form.Item
-                name="specificationsText"
-                label={productCopy.specifications}
-                extra={productCopy.specificationsHint}
-              >
-                <Input.TextArea rows={6} />
-              </Form.Item>
-              {isAdmin ? (
-                <Form.Item name="visibility" label={productCopy.visibility}>
-                  <Select
-                    options={[
-                      { value: 'private', label: productCopy.visibilityPrivate },
-                      { value: 'public', label: productCopy.visibilityPublic },
-                    ]}
-                  />
-                </Form.Item>
-              ) : null}
-            </section>
-          </div>
-        </Form>
-      </Modal>
-
-      <Modal
-        title={geeCopy.createTitle}
+      <GeeCredentialModal
         open={credentialOpen}
+        submitting={submitting}
+        form={credentialForm}
+        copy={geeCopy}
         onCancel={() => setCredentialOpen(false)}
-        onOk={() => void handleCreateGeeCredential()}
-        confirmLoading={submitting}
-      >
-        <Form
-          form={credentialForm}
-          layout="vertical"
-          initialValues={{ name: '', description: '', projectId: '', serviceAccountJson: '' }}
-        >
-          <Form.Item name="name" label={geeCopy.name} rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="description" label={geeCopy.description}>
-            <Input.TextArea rows={3} />
-          </Form.Item>
-          <Form.Item name="projectId" label={geeCopy.project}>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="serviceAccountJson"
-            label={geeCopy.serviceAccountJson}
-            rules={[{ required: true }]}
-          >
-            <Input.TextArea rows={12} />
-          </Form.Item>
-        </Form>
-      </Modal>
+        onSubmit={() => void handleCreateGeeCredential()}
+      />
 
-      <Modal
-        title={t('assets.editDataset')}
-        className="asset-editor-modal"
-        width={920}
+      <DatasetEditorModal
         open={Boolean(renameTargetId)}
+        submitting={submitting}
+        form={renameForm}
+        title={t('assets.editDataset')}
+        basicInfoTitle={t('assets.basicInfoSection')}
+        basicInfoCopy={t('assets.basicInfoCopy')}
+        profileInfoTitle={t('assets.profileInfoSection')}
+        profileInfoCopy={t('assets.profileInfoCopy')}
+        datasetNameLabel={t('datasets.table.dataset')}
+        descriptionLabel={t('datasets.description')}
+        originalFileNameLabel={t('datasets.originalFileName')}
+        contentTypeLabel={t('datasets.contentType')}
+        rowCountLabel={t('datasets.rowCount')}
+        rowCountHint={t('assets.rowCountHint')}
+        fieldsLabel={t('datasets.fields')}
+        fieldsHint={t('assets.columnsHint')}
+        sampleRecordLabel={t('datasets.sampleRecord')}
+        sampleRecordHint={t('assets.sampleRecordHint')}
         onCancel={() => setRenameTargetId(null)}
-        onOk={() => void handleRename()}
-        confirmLoading={submitting}
-      >
-        <Form form={renameForm} layout="vertical">
-          <div className="asset-editor-layout">
-            <section className="asset-editor-section">
-              <div className="asset-editor-section-title">{t('assets.basicInfoSection')}</div>
-              <Paragraph className="asset-editor-section-copy">
-                {t('assets.basicInfoCopy')}
-              </Paragraph>
-              <Form.Item
-                name="datasetName"
-                label={t('datasets.table.dataset')}
-                rules={[{ required: true }]}
-              >
-                <Input />
-              </Form.Item>
-              <Form.Item name="description" label={t('datasets.description')}>
-                <Input.TextArea rows={5} />
-              </Form.Item>
-              <Form.Item name="originalFileName" label={t('datasets.originalFileName')}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="contentType" label={t('datasets.contentType')}>
-                <Input />
-              </Form.Item>
-            </section>
-
-            <section className="asset-editor-section">
-              <div className="asset-editor-section-title">{t('assets.profileInfoSection')}</div>
-              <Paragraph className="asset-editor-section-copy">
-                {t('assets.profileInfoCopy')}
-              </Paragraph>
-              <Form.Item
-                name="rowCount"
-                label={t('datasets.rowCount')}
-                extra={t('assets.rowCountHint')}
-              >
-                <Input />
-              </Form.Item>
-              <Form.Item
-                name="columnsText"
-                label={t('datasets.fields')}
-                extra={t('assets.columnsHint')}
-              >
-                <Input.TextArea rows={5} />
-              </Form.Item>
-              <Form.Item
-                name="sampleRecordJson"
-                label={t('datasets.sampleRecord')}
-                extra={t('assets.sampleRecordHint')}
-              >
-                <Input.TextArea rows={8} />
-              </Form.Item>
-            </section>
-          </div>
-        </Form>
-      </Modal>
+        onSubmit={() => void handleRename()}
+      />
     </div>
   );
 }

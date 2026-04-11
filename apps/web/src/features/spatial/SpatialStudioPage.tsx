@@ -1,5 +1,10 @@
 import type { PlatformDataSnapshot } from '@/lib/api';
-import type { AssetScope, SpatialOverlaySummary, SpatialRoiSummary } from '@platform/types';
+import type {
+  AssetInputCandidate,
+  AssetScope,
+  SpatialOverlaySummary,
+  SpatialRoiSummary,
+} from '@platform/types';
 
 import {
   App,
@@ -17,9 +22,17 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '@/auth/useAuth';
+import { loadAssetInputCandidates } from '@/features/asset-flow/api';
+import {
+  createHandoffPath,
+  createWorkflowRoiHandoff,
+  readHandoffFromSearchParams,
+  removeHandoffFromSearchParams,
+} from '@/features/asset-flow/handoff';
 import {
   SpatialMapCanvas,
   type SpatialDraftGeometry,
@@ -38,8 +51,6 @@ import {
   createSpatialRoi,
   deleteSpatialOverlay,
   deleteSpatialRoi,
-  listDatasetVersions,
-  listDatasets,
   listSpatialOverlays,
   listSpatialRois,
   updateSpatialOverlay,
@@ -85,32 +96,6 @@ function parseTags(tagsText: string | undefined): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function overlayCandidateMatches(version: PlatformDataSnapshot['datasetVersions'][number]): boolean {
-  const metadata = version.metadata ?? {};
-  const contentType = String(metadata.content_type ?? '').toLowerCase();
-  const originalFileName = String(metadata.original_file_name ?? '').toLowerCase();
-
-  if (
-    contentType.includes('tiff') ||
-    contentType.includes('geotiff') ||
-    originalFileName.endsWith('.tif') ||
-    originalFileName.endsWith('.tiff')
-  ) {
-    return true;
-  }
-
-  if (
-    contentType.includes('geo+json') ||
-    contentType.endsWith('/json') ||
-    originalFileName.endsWith('.geojson') ||
-    originalFileName.endsWith('.json')
-  ) {
-    return true;
-  }
-
-  return false;
 }
 
 function bboxText(bbox: [number, number, number, number] | undefined): string {
@@ -202,17 +187,20 @@ export function SpatialStudioPage({
   const { message, modal } = App.useApp();
   const { currentUser, token } = useAuth();
   const { locale, t } = useI18n();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [roiForm] = Form.useForm<RoiFormValues>();
   const [overlayForm] = Form.useForm<OverlayFormValues>();
   const [loading, setLoading] = useState(false);
+  const [spatialDataLoaded, setSpatialDataLoaded] = useState(false);
   const [savingRoi, setSavingRoi] = useState(false);
   const [savingOverlay, setSavingOverlay] = useState(false);
   const [rois, setRois] = useState<SpatialRoiSummary[]>([]);
   const [overlays, setOverlays] = useState<SpatialOverlaySummary[]>([]);
-  const [datasets, setDatasets] = useState<PlatformDataSnapshot['datasets']>([]);
-  const [datasetVersions, setDatasetVersions] = useState<PlatformDataSnapshot['datasetVersions']>([]);
+  const [mapOverlayCandidates, setMapOverlayCandidates] = useState<AssetInputCandidate[]>([]);
   const [selectedRoiId, setSelectedRoiId] = useState<string>();
   const [selectedOverlayId, setSelectedOverlayId] = useState<string>();
+  const [previewOverlayCandidateId, setPreviewOverlayCandidateId] = useState<string>();
   const [draftGeometry, setDraftGeometry] = useState<SpatialDraftGeometry>();
   const [drawMode, setDrawMode] = useState<'rectangle' | 'polygon' | null>(null);
   const [baseLayerKey, setBaseLayerKey] = useState<MapBaseLayerKey>(() => readStoredMapBaseLayer());
@@ -225,10 +213,13 @@ export function SpatialStudioPage({
   const [focusRequest, setFocusRequest] = useState<SpatialMapFocusRequest>();
   const [savedCoordinates, setSavedCoordinates] = useState<SavedCoordinatePoint[]>([]);
   const [coordinateHistory, setCoordinateHistory] = useState<CoordinateHistoryItem[]>([]);
+  const processedSpatialLinkRef = useRef<string | null>(null);
   const [hydratedStorageKeys, setHydratedStorageKeys] = useState<{
     saved: string;
     history: string;
   } | null>(null);
+  const watchedOverlayDatasetVersionId = Form.useWatch('datasetVersionId', overlayForm) ?? '';
+  const watchedOverlayOpacity = Form.useWatch('opacity', overlayForm) ?? 0.85;
 
   const copy = useMemo(
     () =>
@@ -334,25 +325,21 @@ export function SpatialStudioPage({
 
   const isAdmin = currentUser?.role === 'ADMIN';
   const scope: AssetScope = isAdmin ? 'all' : 'mine';
-  const datasetNameById = useMemo(
-    () => new Map(datasets.map((item) => [item.id, item.name])),
-    [datasets],
-  );
   const overlayCandidates = useMemo(
     () =>
-      datasetVersions.filter((version) => {
-        const dataset = datasets.find((item) => item.id === version.datasetId);
-        return dataset && ['raster', 'vector'].includes(dataset.kind) && overlayCandidateMatches(version);
-      }),
-    [datasetVersions, datasets],
+      mapOverlayCandidates.filter(
+        (candidate): candidate is AssetInputCandidate & { assetVersion: NonNullable<AssetInputCandidate['assetVersion']> } =>
+          candidate.assetVersion !== undefined,
+      ),
+    [mapOverlayCandidates],
   );
   const overlayOptions = useMemo(
     () =>
-      overlayCandidates.map((version) => ({
-        value: version.id,
-        label: `${datasetNameById.get(version.datasetId) ?? version.datasetId} / v${version.version}`,
+      overlayCandidates.map((candidate) => ({
+        value: candidate.assetVersion.id,
+        label: candidate.title,
       })),
-    [datasetNameById, overlayCandidates],
+    [overlayCandidates],
   );
   const selectedRoi = useMemo(
     () => rois.find((item) => item.id === selectedRoiId),
@@ -361,6 +348,54 @@ export function SpatialStudioPage({
   const selectedOverlay = useMemo(
     () => overlays.find((item) => item.id === selectedOverlayId),
     [overlays, selectedOverlayId],
+  );
+  const previewOverlayCandidate = useMemo(
+    () =>
+      overlayCandidates.find((candidate) => candidate.id === previewOverlayCandidateId),
+    [overlayCandidates, previewOverlayCandidateId],
+  );
+  const previewOverlay = useMemo<SpatialOverlaySummary | undefined>(() => {
+    const assetVersion = previewOverlayCandidate?.assetVersion;
+    const spatialTraits = assetVersion?.spatialTraits;
+    if (!assetVersion || !spatialTraits?.overlayType) {
+      return undefined;
+    }
+
+    const previewId = `preview:${assetVersion.id}`;
+    return {
+      id: previewId,
+      workspaceId: assetVersion.asset.workspaceId,
+      ownerUserId: assetVersion.asset.ownerUserId ?? currentUser?.id ?? 'preview',
+      ownerDisplayName: assetVersion.asset.ownerDisplayName,
+      datasetVersionId: assetVersion.id,
+      datasetId: assetVersion.asset.id,
+      datasetName: assetVersion.asset.name,
+      datasetKind: assetVersion.asset.assetKind as SpatialOverlaySummary['datasetKind'],
+      datasetVersionNumber: assetVersion.versionNumber ?? 1,
+      originalFileName: `${assetVersion.asset.name}.${assetVersion.format}`,
+      contentType: assetVersion.format,
+      bbox: spatialTraits.bbox,
+      previewUrl: spatialTraits.previewUrl,
+      name: `${assetVersion.asset.name} ${assetVersion.versionLabel}`,
+      description: previewOverlayCandidate.description,
+      overlayType: spatialTraits.overlayType,
+      opacity: watchedOverlayOpacity,
+      style: {},
+      visibility: 'private',
+      createdAt: assetVersion.createdAt,
+      updatedAt: assetVersion.createdAt,
+    };
+  }, [currentUser?.id, previewOverlayCandidate, watchedOverlayOpacity]);
+  const mapOverlayRows = useMemo(
+    () => (previewOverlay ? [...overlays, previewOverlay] : overlays),
+    [overlays, previewOverlay],
+  );
+  const mapSelectedOverlayIds = useMemo(
+    () =>
+      previewOverlay
+        ? Array.from(new Set([...selectedOverlayIds, previewOverlay.id]))
+        : selectedOverlayIds,
+    [previewOverlay, selectedOverlayIds],
   );
   const baseLayerOptions = useMemo(() => listMapBaseLayerOptions(locale), [locale]);
   const coordinatePlaceholder =
@@ -392,6 +427,12 @@ export function SpatialStudioPage({
   const coordinateClearedMessage = locale === 'zh-CN' ? '\u5df2\u6e05\u7a7a\u3002' : 'Cleared.';
   const coordinateLabelSwitchText =
     locale === 'zh-CN' ? '\u663e\u793a\u6536\u85cf\u6807\u7b7e' : 'Show Saved Labels';
+  const previewOverlayButtonText = locale === 'zh-CN' ? '预览到地图' : 'Preview On Map';
+  const useRoiInWorkflowText = locale === 'zh-CN' ? '送入工作流' : 'Use In Workflow';
+  const previewOverlayHint =
+    locale === 'zh-CN'
+      ? '来自工作流或资产页的结果会先以临时图层方式出现在地图上。'
+      : 'Incoming workflow or asset outputs appear on the map first as temporary overlays.';
   const coordinateStorageKeys = useMemo(
     () => ({
       saved: `platform.spatial.savedCoordinates.v1.${currentUser?.id ?? 'anonymous'}`,
@@ -402,21 +443,24 @@ export function SpatialStudioPage({
 
   const refreshSpatial = useCallback(async () => {
     if (!token) {
+      setRois([]);
+      setOverlays([]);
+      setMapOverlayCandidates([]);
+      setSpatialDataLoaded(true);
       return;
     }
 
     setLoading(true);
+    setSpatialDataLoaded(false);
     try {
-      const [nextRois, nextOverlays, nextDatasets, nextDatasetVersions] = await Promise.all([
+      const [nextRois, nextOverlays, nextMapOverlayCandidates] = await Promise.all([
         listSpatialRois(token, scope),
         listSpatialOverlays(token, scope),
-        listDatasets(token, isAdmin ? 'all' : 'visible'),
-        listDatasetVersions(token, isAdmin ? 'all' : 'visible'),
+        loadAssetInputCandidates(token, 'map_overlay', isAdmin ? 'all' : 'visible'),
       ]);
       setRois(nextRois);
       setOverlays(nextOverlays);
-      setDatasets(nextDatasets);
-      setDatasetVersions(nextDatasetVersions);
+      setMapOverlayCandidates(nextMapOverlayCandidates);
       setSelectedOverlayIds((current) => {
         const validIds = new Set(nextOverlays.map((item) => item.id));
         return current.filter((id) => validIds.has(id));
@@ -434,6 +478,7 @@ export function SpatialStudioPage({
       message.error(isApiError(error) ? error.message : t('error.request_failed'));
     } finally {
       setLoading(false);
+      setSpatialDataLoaded(true);
     }
   }, [isAdmin, message, scope, t, token]);
 
@@ -457,6 +502,7 @@ export function SpatialStudioPage({
     if (!selectedOverlay) {
       return;
     }
+    setPreviewOverlayCandidateId(undefined);
     overlayForm.setFieldsValue({
       datasetVersionId: selectedOverlay.datasetVersionId,
       name: selectedOverlay.name,
@@ -464,6 +510,78 @@ export function SpatialStudioPage({
       opacity: overlayOpacities[selectedOverlay.id] ?? selectedOverlay.opacity,
     });
   }, [overlayForm, overlayOpacities, selectedOverlay]);
+
+  useEffect(() => {
+    const handoff = readHandoffFromSearchParams(searchParams);
+    const linkedAssetVersionId =
+      handoff?.target === 'spatial' && handoff.inputKind === 'asset_version'
+        ? handoff.assetVersionId
+        : searchParams.get('assetVersionId');
+    if (!linkedAssetVersionId) {
+      processedSpatialLinkRef.current = null;
+      return;
+    }
+    if (!spatialDataLoaded) {
+      return;
+    }
+    const pendingLinkKey = `asset:${linkedAssetVersionId}`;
+    if (processedSpatialLinkRef.current === pendingLinkKey) {
+      return;
+    }
+    processedSpatialLinkRef.current = pendingLinkKey;
+
+    const linkedCandidate = overlayCandidates.find(
+      (candidate) => candidate.assetVersion.id === linkedAssetVersionId,
+    );
+    if (!linkedCandidate) {
+      message.warning(
+        locale === 'zh-CN'
+          ? '该资产当前不能作为地图叠加层使用，或已不在当前可见范围内。'
+          : 'This asset is no longer available as a map overlay in the current scope.',
+      );
+      if (handoff?.target === 'spatial' && handoff.inputKind === 'asset_version') {
+        setSearchParams(removeHandoffFromSearchParams(searchParams), { replace: true });
+        return;
+      }
+
+      const nextSearch = new URLSearchParams(searchParams);
+      nextSearch.delete('assetVersionId');
+      setSearchParams(nextSearch, { replace: true });
+      return;
+    }
+
+    setSelectedOverlayId(undefined);
+    setPreviewOverlayCandidateId(linkedCandidate.id);
+    overlayForm.setFieldsValue({
+      datasetVersionId: linkedCandidate.assetVersion.id,
+      name: `${linkedCandidate.assetVersion.asset.name} ${linkedCandidate.assetVersion.versionLabel}`,
+      description: linkedCandidate.description ?? '',
+      opacity: 0.85,
+    });
+
+    if (linkedCandidate.assetVersion.spatialTraits?.bbox) {
+      setFocusRequest({
+        requestId: Date.now(),
+        bbox: linkedCandidate.assetVersion.spatialTraits.bbox,
+        zoom: 12,
+      });
+    }
+
+    message.success(
+      locale === 'zh-CN'
+        ? '已把上游结果带入空间工作台，可直接预览并保存为 overlay。'
+        : 'The upstream result is ready in Spatial Studio. Preview it on the map or save it as an overlay.',
+    );
+
+    if (handoff?.target === 'spatial' && handoff.inputKind === 'asset_version') {
+      setSearchParams(removeHandoffFromSearchParams(searchParams), { replace: true });
+      return;
+    }
+
+    const nextSearch = new URLSearchParams(searchParams);
+    nextSearch.delete('assetVersionId');
+    setSearchParams(nextSearch, { replace: true });
+  }, [locale, message, overlayCandidates, overlayForm, searchParams, setSearchParams, spatialDataLoaded]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -539,12 +657,50 @@ export function SpatialStudioPage({
 
   const startNewOverlay = () => {
     setSelectedOverlayId(undefined);
+    setPreviewOverlayCandidateId(undefined);
     overlayForm.setFieldsValue({
       datasetVersionId: overlayOptions[0]?.value ?? '',
       name: '',
       description: '',
       opacity: 0.85,
     });
+  };
+
+  const handlePreviewOverlay = () => {
+    const datasetVersionId = overlayForm.getFieldValue('datasetVersionId') as string | undefined;
+    if (!datasetVersionId) {
+      return;
+    }
+
+    const candidate = overlayCandidates.find((item) => item.assetVersion.id === datasetVersionId);
+    if (!candidate) {
+      return;
+    }
+
+    setSelectedOverlayId(undefined);
+    setPreviewOverlayCandidateId(candidate.id);
+    if (candidate.assetVersion.spatialTraits?.bbox) {
+      setFocusRequest({
+        requestId: Date.now(),
+        bbox: candidate.assetVersion.spatialTraits.bbox,
+        zoom: 12,
+      });
+    }
+  };
+
+  const openSelectedRoiInWorkflow = () => {
+    if (!selectedRoiId) {
+      return;
+    }
+    navigate(
+      createHandoffPath(
+        '/workflows',
+        createWorkflowRoiHandoff(selectedRoiId, {
+          label: selectedRoi?.name,
+          source: 'spatial_roi',
+        }),
+      ),
+    );
   };
 
   const handleSaveRoi = async () => {
@@ -653,6 +809,7 @@ export function SpatialStudioPage({
         });
         setSelectedOverlayId(created.id);
       }
+      setPreviewOverlayCandidateId(undefined);
       message.success(copy.overlaySaved);
       await refreshSpatial();
     } catch (error) {
@@ -779,7 +936,7 @@ export function SpatialStudioPage({
         <StatCard label={copy.roiAssets} value={String(rois.length)} detail={copy.mapSelectionHint} />
         <StatCard
           label={copy.activeLayers}
-          value={String(selectedOverlayIds.length)}
+          value={String(mapSelectedOverlayIds.length)}
           detail={copy.availableOverlaySources}
         />
         <StatCard
@@ -848,6 +1005,11 @@ export function SpatialStudioPage({
                 {selectedRoiId ? copy.update : copy.create}
               </Button>
               {selectedRoiId ? (
+                <Button onClick={openSelectedRoiInWorkflow}>
+                  {useRoiInWorkflowText}
+                </Button>
+              ) : null}
+              {selectedRoiId ? (
                 <Button danger onClick={handleDeleteSelectedRoi}>
                   {copy.delete}
                 </Button>
@@ -860,7 +1022,11 @@ export function SpatialStudioPage({
             <Paragraph className="section-copy">{copy.overlayEditorCopy}</Paragraph>
             <Space wrap>
               <Button onClick={startNewOverlay}>{copy.newOverlay}</Button>
+              <Button onClick={handlePreviewOverlay} disabled={!watchedOverlayDatasetVersionId}>
+                {previewOverlayButtonText}
+              </Button>
             </Space>
+            {previewOverlay ? <Paragraph className="section-copy">{previewOverlayHint}</Paragraph> : null}
             <Form
               form={overlayForm}
               layout="vertical"
@@ -909,7 +1075,7 @@ export function SpatialStudioPage({
             </div>
             <Space wrap>
               <Tag>{copy.selectedRoi}: {selectedRoi?.name ?? '-'}</Tag>
-              <Tag>{copy.activeLayers}: {selectedOverlayIds.length}</Tag>
+              <Tag>{copy.activeLayers}: {mapSelectedOverlayIds.length}</Tag>
               <div className="spatial-map-coordinate-search">
                 <span>{coordinateLabel}</span>
                 <Input.Search
@@ -946,7 +1112,7 @@ export function SpatialStudioPage({
           <SpatialMapCanvas
             token={token}
             rois={rois}
-            overlays={overlays}
+            overlays={mapOverlayRows}
             savedCoordinatePoints={savedCoordinates.map((item) => ({
               id: item.id,
               name: item.name,
@@ -956,7 +1122,7 @@ export function SpatialStudioPage({
             showSavedCoordinateLabels={showSavedCoordinateLabels}
             baseLayerKey={baseLayerKey}
             selectedRoiId={selectedRoiId}
-            selectedOverlayIds={selectedOverlayIds}
+            selectedOverlayIds={mapSelectedOverlayIds}
             overlayOpacities={overlayOpacities}
             drawMode={drawMode}
             draftGeometry={draftGeometry}

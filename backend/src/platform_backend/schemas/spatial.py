@@ -47,6 +47,7 @@ class SpatialRoiUpdateRequest(BaseModel):
     geometry: dict[str, Any] | None = None
     style: dict[str, Any] | None = None
     tags: list[str] | None = None
+    visibility: str | None = None
 
 
 class SpatialOverlaySummary(BaseModel):
@@ -89,3 +90,4 @@ class SpatialOverlayUpdateRequest(BaseModel):
     description: str | None = None
     opacity: float | None = Field(default=None, ge=0, le=1)
     style: dict[str, Any] | None = None
+    visibility: str | None = None

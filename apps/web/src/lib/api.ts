@@ -704,6 +704,9 @@ function normalizeWorkflowVersionSummary(input: ApiRecord): WorkflowVersionSumma
     id: getString(input, 'id'),
     workflowId: getString(input, 'workflowId') || getString(input, 'workflow_id'),
     version: getOptionalNumber(input, 'version') ?? 1,
+    visibility:
+      (getOptionalString(input, 'visibility') as WorkflowVersionSummary['visibility'] | undefined) ??
+      'private',
     ownerUserId:
       getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
     ownerDisplayName:
@@ -784,6 +787,8 @@ function normalizeWorkflowRun(input: ApiRecord): WorkflowRunSummary {
     id: getString(input, 'id'),
     workflowVersionId:
       getString(input, 'workflowVersionId') || getString(input, 'workflow_version_id'),
+    workflowName:
+      getOptionalString(input, 'workflowName') ?? getOptionalString(input, 'workflow_name'),
     status: getString(input, 'status') as WorkflowRunSummary['status'],
     startedAt: getOptionalString(input, 'startedAt') ?? getOptionalString(input, 'started_at'),
     finishedAt:
@@ -792,6 +797,17 @@ function normalizeWorkflowRun(input: ApiRecord): WorkflowRunSummary {
     resultDatasetVersionId:
       getOptionalString(input, 'resultDatasetVersionId') ??
       getOptionalString(input, 'result_dataset_version_id'),
+    inputAssetVersionIds:
+      getStringArray<string>(input, 'inputAssetVersionIds').length > 0
+        ? getStringArray<string>(input, 'inputAssetVersionIds')
+        : getStringArray<string>(input, 'input_asset_version_ids'),
+    outputAssetVersionIds:
+      getStringArray<string>(input, 'outputAssetVersionIds').length > 0
+        ? getStringArray<string>(input, 'outputAssetVersionIds')
+        : getStringArray<string>(input, 'output_asset_version_ids'),
+    primaryOutputAssetVersionId:
+      getOptionalString(input, 'primaryOutputAssetVersionId') ??
+      getOptionalString(input, 'primary_output_asset_version_id'),
     metrics: rawMetrics,
     errorMessage,
   };
@@ -1515,6 +1531,27 @@ export async function updateProductAsset(
   return normalizeProductAssetSummary(response);
 }
 
+export async function updateSpatialRoi(
+  token: string,
+  roiId: string,
+  payload: SpatialRoiUpdatePayload,
+): Promise<SpatialRoiSummary> {
+  const response = await requestJson<ApiRecord>(`/spatial/rois/${roiId}`, {
+    method: 'PATCH',
+    token,
+    body: {
+      name: payload.name,
+      description: payload.description,
+      geometry_type: payload.geometryType,
+      geometry: payload.geometry,
+      style: payload.style,
+      tags: payload.tags,
+      visibility: payload.visibility,
+    },
+  });
+  return normalizeSpatialRoiSummary(response);
+}
+
 export async function deleteProductAsset(token: string, productId: string): Promise<void> {
   await requestJson<ApiRecord>(`/products/${productId}`, {
     method: 'DELETE',
@@ -1634,26 +1671,6 @@ export async function createSpatialRoi(
   return normalizeSpatialRoiSummary(response);
 }
 
-export async function updateSpatialRoi(
-  token: string,
-  roiId: string,
-  payload: SpatialRoiUpdatePayload,
-): Promise<SpatialRoiSummary> {
-  const response = await requestJson<ApiRecord>(`/spatial/rois/${roiId}`, {
-    method: 'PATCH',
-    token,
-    body: {
-      name: payload.name,
-      description: payload.description,
-      geometry_type: payload.geometryType,
-      geometry: payload.geometry,
-      style: payload.style,
-      tags: payload.tags,
-    },
-  });
-  return normalizeSpatialRoiSummary(response);
-}
-
 export async function deleteSpatialRoi(token: string, roiId: string): Promise<void> {
   await requestJson<ApiRecord>(`/spatial/rois/${roiId}`, {
     method: 'DELETE',
@@ -1704,6 +1721,7 @@ export async function updateSpatialOverlay(
       description: payload.description,
       opacity: payload.opacity,
       style: payload.style,
+      visibility: payload.visibility,
     },
   });
   return normalizeSpatialOverlaySummary(response);
@@ -1834,6 +1852,23 @@ export async function deleteModelVersion(token: string, modelVersionId: string):
     method: 'DELETE',
     token,
   });
+}
+
+export async function updateModelVersion(
+  token: string,
+  modelVersionId: string,
+  payload: {
+    visibility?: 'private' | 'public' | 'workspace';
+  },
+): Promise<ModelVersionSummary> {
+  const response = await requestJson<ApiRecord>(`/models/versions/${modelVersionId}`, {
+    method: 'PATCH',
+    token,
+    body: {
+      visibility: payload.visibility,
+    },
+  });
+  return normalizeModelVersion(response);
 }
 
 export async function listGeeCredentials(
@@ -2136,6 +2171,23 @@ export async function listWorkflowVersions(
     { token },
   );
   return payload.map(normalizeWorkflowVersionSummary);
+}
+
+export async function updateWorkflowVersion(
+  token: string,
+  workflowVersionId: string,
+  payload: {
+    visibility?: 'private' | 'public';
+  },
+): Promise<WorkflowVersionSummary> {
+  const response = await requestJson<ApiRecord>(`/workflows/versions/${workflowVersionId}`, {
+    method: 'PATCH',
+    token,
+    body: {
+      visibility: payload.visibility,
+    },
+  });
+  return normalizeWorkflowVersionSummary(response);
 }
 
 export async function downloadWorkflowVersion(

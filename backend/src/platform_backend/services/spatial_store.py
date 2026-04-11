@@ -8,6 +8,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from platform_backend.core.visibility import (
+    can_access_by_visibility,
+    can_manage_owned_asset,
+    normalize_visibility,
+)
 from platform_backend.domain_enums import DatasetKind, RoleKey
 from platform_backend.models.entities import (
     Dataset,
@@ -229,11 +234,24 @@ def _overlay_summary(
 
 
 def _can_access_spatial_owner(owner_user_id: str, current_user: UserProfile | User | None) -> bool:
-    if current_user is None:
-        return False
-    if _is_admin_user(current_user):
-        return True
-    return owner_user_id == current_user.id
+    return can_manage_owned_asset(
+        owner_user_id,
+        current_user_id=current_user.id if current_user is not None else None,
+        is_admin=_is_admin_user(current_user),
+    )
+
+
+def _can_access_spatial_visibility(
+    visibility: str,
+    owner_user_id: str,
+    current_user: UserProfile | User | None,
+) -> bool:
+    return can_access_by_visibility(
+        visibility,
+        owner_user_id,
+        current_user_id=current_user.id if current_user is not None else None,
+        is_admin=_is_admin_user(current_user),
+    )
 
 
 def _get_workspace(db: Session, workspace_id: str) -> Workspace:
@@ -253,9 +271,14 @@ def list_spatial_rois(
     if scope == "all":
         if not _is_admin_user(current_user):
             raise PermissionError("Only administrators can list all spatial ROIs.")
-    elif scope in {"mine", "visible"}:
-        if not _is_admin_user(current_user) or scope == "mine":
-            rows = [row for row in rows if row.owner_user_id == current_user.id]
+    elif scope == "mine":
+        rows = [row for row in rows if row.owner_user_id == current_user.id]
+    else:
+        rows = [
+            row
+            for row in rows
+            if _can_access_spatial_visibility(row.visibility, row.owner_user_id, current_user)
+        ]
     owner_names = _owner_name_map(db, {row.owner_user_id for row in rows})
     return [_roi_summary(row, owner_names.get(row.owner_user_id)) for row in rows]
 
@@ -321,6 +344,10 @@ def update_spatial_roi(
         row.style_json = _normalize_style(request.style)
     if request.tags is not None:
         row.tags_json = _normalize_tags(request.tags)
+    if request.visibility is not None:
+        if not _is_admin_user(current_user):
+            raise PermissionError("Only administrators can change spatial ROI visibility.")
+        row.visibility = normalize_visibility(request.visibility, default=row.visibility)
 
     db.commit()
     db.refresh(row)
@@ -352,7 +379,7 @@ def resolve_spatial_roi_bbox(
     row = db.get(SpatialRoi, roi_id)
     if row is None:
         raise LookupError("Spatial ROI not found.")
-    if not _can_access_spatial_owner(row.owner_user_id, current_user):
+    if not _can_access_spatial_visibility(row.visibility, row.owner_user_id, current_user):
         raise PermissionError("You do not have access to this spatial ROI.")
     return list(row.bbox or [])
 
@@ -384,9 +411,14 @@ def list_spatial_overlays(
     if scope == "all":
         if not _is_admin_user(current_user):
             raise PermissionError("Only administrators can list all spatial overlays.")
-    elif scope in {"mine", "visible"}:
-        if not _is_admin_user(current_user) or scope == "mine":
-            rows = [row for row in rows if row.owner_user_id == current_user.id]
+    elif scope == "mine":
+        rows = [row for row in rows if row.owner_user_id == current_user.id]
+    else:
+        rows = [
+            row
+            for row in rows
+            if _can_access_spatial_visibility(row.visibility, row.owner_user_id, current_user)
+        ]
 
     owner_names = _owner_name_map(db, {row.owner_user_id for row in rows})
     summaries: list[SpatialOverlaySummary] = []
@@ -440,6 +472,13 @@ def create_spatial_overlay(
     return _overlay_summary(row, dataset, version, owner_display_name)
 
 
+def _validate_public_overlay_source(version: DatasetVersion) -> None:
+    if _dataset_visibility(version.metadata_json) != "public":
+        raise ValueError(
+            "Spatial overlays can be published only when the source dataset version is public."
+        )
+
+
 def update_spatial_overlay(
     db: Session,
     overlay_id: str,
@@ -468,6 +507,13 @@ def update_spatial_overlay(
         row.opacity = float(request.opacity)
     if request.style is not None:
         row.style_json = _normalize_style(request.style)
+    if request.visibility is not None:
+        if not _is_admin_user(current_user):
+            raise PermissionError("Only administrators can change overlay visibility.")
+        next_visibility = normalize_visibility(request.visibility, default=row.visibility)
+        if next_visibility == "public":
+            _validate_public_overlay_source(version)
+        row.visibility = next_visibility
 
     db.commit()
     db.refresh(row)

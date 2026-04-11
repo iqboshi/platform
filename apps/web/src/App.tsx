@@ -8,9 +8,11 @@ import {
   EnvironmentOutlined,
   FolderOpenOutlined,
   GlobalOutlined,
+  InboxOutlined,
   LogoutOutlined,
   RadarChartOutlined,
   SafetyCertificateOutlined,
+  SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { Button, Card, Layout, Menu, Select, Space, Spin, Tag, Typography } from 'antd';
@@ -49,9 +51,19 @@ const ProductsPage = lazy(() =>
     default: module.ProductsPage,
   })),
 );
-const PersonalAssetsPage = lazy(() =>
-  import('./features/assets/PersonalAssetsPage').then((module) => ({
-    default: module.PersonalAssetsPage,
+const MyAssetsPage = lazy(() =>
+  import('./features/assets/MyAssetsPage').then((module) => ({
+    default: module.MyAssetsPage,
+  })),
+);
+const AccountCenterPage = lazy(() =>
+  import('./features/account/AccountCenterPage').then((module) => ({
+    default: module.AccountCenterPage,
+  })),
+);
+const WorkspaceSettingsPage = lazy(() =>
+  import('./features/workspace-settings/WorkspaceSettingsPage').then((module) => ({
+    default: module.WorkspaceSettingsPage,
   })),
 );
 const ModelsPage = lazy(() =>
@@ -98,10 +110,12 @@ interface ShellMenuItem {
     | 'menu.datasets'
     | 'menu.products'
     | 'menu.spatial'
+    | 'menu.account'
     | 'menu.assets'
     | 'menu.workflows'
     | 'menu.models'
-    | 'menu.approvals';
+    | 'menu.approvals'
+    | 'menu.workspaceSettings';
 }
 
 const menuConfig: ShellMenuItem[] = [
@@ -124,16 +138,26 @@ const menuConfig: ShellMenuItem[] = [
     labelKey: 'menu.approvals',
     permission: 'user.approve',
   },
-  { key: '/assets', icon: <UserOutlined />, section: 'personal', labelKey: 'menu.assets' },
+  {
+    key: '/admin/workspace-settings',
+    icon: <SettingOutlined />,
+    section: 'admin',
+    labelKey: 'menu.workspaceSettings',
+    permission: 'system.configure',
+  },
+  { key: '/account', icon: <UserOutlined />, section: 'personal', labelKey: 'menu.account' },
+  { key: '/assets', icon: <InboxOutlined />, section: 'personal', labelKey: 'menu.assets' },
 ];
 
 function routeKey(pathname: string): string {
   if (pathname.startsWith('/datasets')) return '/datasets';
   if (pathname.startsWith('/products')) return '/products';
   if (pathname.startsWith('/spatial')) return '/spatial';
+  if (pathname.startsWith('/account')) return '/account';
   if (pathname.startsWith('/assets')) return '/assets';
   if (pathname.startsWith('/workflows')) return '/workflows';
   if (pathname.startsWith('/models')) return '/models';
+  if (pathname.startsWith('/admin/workspace-settings')) return '/admin/workspace-settings';
   if (pathname.startsWith('/approvals')) return '/admin/users';
   if (pathname.startsWith('/admin')) return '/admin/users';
   return '/';
@@ -344,7 +368,8 @@ function AppShell({
               <Route path="/datasets" element={<DatasetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/products" element={<ProductsPage />} />
               <Route path="/spatial" element={<SpatialStudioPage snapshot={snapshot} onRefresh={onRefresh} />} />
-              <Route path="/assets" element={<PersonalAssetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
+              <Route path="/account" element={<AccountCenterPage snapshot={snapshot} onRefresh={onRefresh} />} />
+              <Route path="/assets" element={<MyAssetsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route path="/workflows" element={<WorkflowsPage snapshot={snapshot} onRefresh={onRefresh} />} />
               <Route
                 path="/models"
@@ -367,6 +392,14 @@ function AppShell({
                 element={
                   <RequirePermission permission="user.approve">
                     <UserApprovalPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/admin/workspace-settings"
+                element={
+                  <RequirePermission permission="system.configure">
+                    <WorkspaceSettingsPage snapshot={snapshot} onRefresh={onRefresh} />
                   </RequirePermission>
                 }
               />

@@ -36,10 +36,12 @@ export type TranslationKey =
   | 'menu.datasets'
   | 'menu.products'
   | 'menu.spatial'
+  | 'menu.account'
   | 'menu.assets'
   | 'menu.workflows'
   | 'menu.models'
   | 'menu.approvals'
+  | 'menu.workspaceSettings'
   | 'header.workspace'
   | 'header.members'
   | 'header.datasets'
@@ -132,6 +134,7 @@ export type TranslationKey =
   | 'assets.title'
   | 'assets.copy'
   | 'assets.scopeMine'
+  | 'assets.scopeVisible'
   | 'assets.scopeAll'
   | 'assets.tabDatasets'
   | 'assets.tabModels'
@@ -363,10 +366,12 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'menu.datasets': 'Public Datasets',
     'menu.products': 'Products',
     'menu.spatial': 'Spatial Studio',
+    'menu.account': 'Account Center',
     'menu.assets': 'My Assets',
     'menu.workflows': 'Workflows',
     'menu.models': 'Models',
     'menu.approvals': 'Approval Center',
+    'menu.workspaceSettings': 'Workspace Settings',
     'header.workspace': 'Workspace',
     'header.members': 'members',
     'header.datasets': 'datasets',
@@ -474,6 +479,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.copy':
       'Users manage their own assets here. Administrators can switch scope to inspect and manage all users’ assets, and publish selected datasets to the public dataset page.',
     'assets.scopeMine': 'My assets',
+    'assets.scopeVisible': 'Visible assets',
     'assets.scopeAll': 'All users',
     'assets.tabDatasets': 'Datasets & Results',
     'assets.tabModels': 'Models',
@@ -690,6 +696,8 @@ export const messages: Record<LocaleCode, TranslationMap> = {
       'The workspace snapshot could not be loaded. Check the backend service and try again.',
   },
   'zh-CN': {
+    'menu.account': '账户中心',
+    'menu.workspaceSettings': '工作空间设置',
     'app.title': '遥感数据平台',
     'common.loading': '加载中',
     'common.login': '登录',
@@ -826,6 +834,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'assets.copy':
       '普通用户在这里管理自己的资产。管理员可以切换到全部用户视角，统一管理所有人的资产，并将指定数据集发布到公开数据集页面。',
     'assets.scopeMine': '我的资产',
+    'assets.scopeVisible': '可见资产',
     'assets.scopeAll': '全部用户',
     'assets.tabDatasets': '数据集与结果',
     'assets.tabModels': '模型',

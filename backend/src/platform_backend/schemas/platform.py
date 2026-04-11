@@ -206,6 +206,10 @@ class ModelVersionSummary(BaseModel):
     created_at: datetime
 
 
+class ModelVersionUpdateRequest(BaseModel):
+    visibility: str | None = None
+
+
 class ProductAssetSummary(BaseModel):
     id: str
     workspace_id: str
@@ -246,9 +250,13 @@ class TilePreviewResponse(BaseModel):
 class WorkflowRunSummary(BaseModel):
     id: str
     workflow_version_id: str
+    workflow_name: str | None = None
     status: WorkflowRunStatus
     submitted_by: str
     result_dataset_version_id: str | None = None
+    input_asset_version_ids: list[str] = Field(default_factory=list)
+    output_asset_version_ids: list[str] = Field(default_factory=list)
+    primary_output_asset_version_id: str | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
     started_at: datetime | None = None
