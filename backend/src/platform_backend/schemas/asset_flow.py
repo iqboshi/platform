@@ -21,7 +21,15 @@ AssetCapability = Literal[
     "execution_output",
 ]
 AssetConsumer = Literal["workflow_dataset", "workflow_roi", "map_overlay"]
-AssetFormat = Literal["csv", "geojson", "geotiff", "json", "workflow_graph", "roi_geometry", "unknown"]
+AssetFormat = Literal[
+    "csv",
+    "geojson",
+    "geotiff",
+    "json",
+    "workflow_graph",
+    "roi_geometry",
+    "unknown",
+]
 AssetInputCandidateType = Literal["asset_version", "spatial_roi"]
 
 

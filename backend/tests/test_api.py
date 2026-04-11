@@ -1,6 +1,5 @@
 import io
 import json
-import tempfile
 from pathlib import Path
 
 import joblib
@@ -1229,21 +1228,54 @@ def test_sentinel_download_retries_with_larger_scale_after_size_limit(
         "platform_backend.workflows.gee_runtime._build_requests_session",
         lambda: FakeSession(),
     )
-    with tempfile.TemporaryDirectory(dir="backend") as temp_dir:
-        output_path = Path(temp_dir) / "sentinel-scene.tif"
-        details = _download_image(
-            None,
-            image,
-            FakeRegion(),
-            params,
-            output_path,
-        )
+    output_path = Path(__file__).resolve().parent / "_sentinel-scene.tif"
+    written_bytes = bytearray()
+    original_path_open = Path.open
+    original_read_bytes = Path.read_bytes
 
-        assert output_path.read_bytes() == b"FAKE-GEOTIFF-DATA"
-        assert len(image.scales) == 2
-        assert image.scales[1] > image.scales[0]
-        assert details["scale"] == image.scales[1]
-        assert details["scale_adjusted"] is True
+    class FakeWritableFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def write(self, chunk: bytes) -> int:
+            written_bytes.extend(chunk)
+            return len(chunk)
+
+    def fake_path_open(
+        self: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ):
+        if self == output_path and mode == "wb":
+            return FakeWritableFile()
+        return original_path_open(self, mode, buffering, encoding, errors, newline)
+
+    def fake_read_bytes(self: Path) -> bytes:
+        if self == output_path:
+            return bytes(written_bytes)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "open", fake_path_open)
+    monkeypatch.setattr(Path, "read_bytes", fake_read_bytes)
+    details = _download_image(
+        None,
+        image,
+        FakeRegion(),
+        params,
+        output_path,
+    )
+
+    assert output_path.read_bytes() == b"FAKE-GEOTIFF-DATA"
+    assert len(image.scales) == 2
+    assert image.scales[1] > image.scales[0]
+    assert details["scale"] == image.scales[1]
+    assert details["scale_adjusted"] is True
 
 def test_models_endpoint_allows_members_with_model_view_permission(
     client: TestClient,

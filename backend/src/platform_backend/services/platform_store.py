@@ -15,12 +15,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import platform_backend.workflows.gee_runtime as gee_runtime
+from platform_backend.core.settings import get_settings
 from platform_backend.core.visibility import (
     can_access_by_visibility,
     can_manage_owned_asset,
     normalize_visibility,
 )
-from platform_backend.core.settings import get_settings
 from platform_backend.domain_enums import (
     DatasetKind,
     DatasetStatus,
@@ -1791,7 +1791,10 @@ def list_workflow_runs(
     workflow_id_by_version_id = {row.id: row.workflow_id for row in workflow_versions}
     workflow_ids = set(workflow_id_by_version_id.values())
     workflows = {
-        row.id: row.name for row in db.scalars(select(Workflow).where(Workflow.id.in_(workflow_ids))).all()
+        row.id: row.name
+        for row in db.scalars(
+            select(Workflow).where(Workflow.id.in_(workflow_ids))
+        ).all()
     }
     return [
         _workflow_run_summary(

@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from platform_backend.api.deps import require_permission
@@ -12,8 +21,8 @@ from platform_backend.schemas.platform import (
     ApiMessage,
     CustomApiModelCreateRequest,
     ModelSummary,
-    ModelVersionUpdateRequest,
     ModelVersionSummary,
+    ModelVersionUpdateRequest,
     UserProfile,
 )
 from platform_backend.services.platform_store import (
