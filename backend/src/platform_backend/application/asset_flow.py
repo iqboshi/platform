@@ -410,7 +410,8 @@ def list_asset_input_candidates(
                 consumer="workflow_model",
                 candidate_type="model_version",
                 title=(
-                    f"{model_version.model_name or model_version.model_id} / {model_version.version}"
+                    f"{model_version.model_name or model_version.model_id}"
+                    f" / {model_version.version}"
                 ),
                 description=_model_candidate_description(model_version),
                 model_version=model_version,
