@@ -124,17 +124,17 @@
     "dashboard": {
       "titleZh": "账号中心",
       "titleEn": "Account Center",
-      "summaryZh": "管理个人资料、安全设置与个人集成凭证。",
-      "summaryEn": "Manage profile, security settings, and personal integration credentials.",
+      "summaryZh": "管理个人资料、安全设置与账号申请。",
+      "summaryEn": "Manage profile, security settings, and access requests.",
       "actionZh": "打开账号中心",
       "actionEn": "Open account",
       "handoffZh": [
-        "个人凭证应该能被工作流和空间模块直接复用。",
-        "账号资料应与资产内容保持分离，不再混在同一入口。"
+        "账号资料应与可复用资产保持边界清晰，不再混在同一入口。",
+        "角色申请与安全设置应直接反馈到账户状态与可见权限。"
       ],
       "handoffEn": [
-        "Personal credentials should be reusable from workflows and spatial modules.",
-        "Account information should stay separate from asset content."
+        "Account information should stay clearly separated from reusable assets.",
+        "Access requests and security changes should feed back into account state and permissions."
       ]
     }
   },
@@ -147,17 +147,17 @@
     "dashboard": {
       "titleZh": "资产中心",
       "titleEn": "Asset Hub",
-      "summaryZh": "管理可复用输入、流程结果与共享发布状态。",
-      "summaryEn": "Manage reusable inputs, workflow outputs, and shared publication state.",
+      "summaryZh": "管理可复用输入、流程结果、共享能力与发布状态。",
+      "summaryEn": "Manage reusable inputs, workflow outputs, shared capabilities, and publication state.",
       "actionZh": "打开资产中心",
       "actionEn": "Open asset hub",
       "handoffZh": [
         "资产中心应该明确展示每项资产下一步还能送到哪里。",
-        "工作流、地图和模型产出的资产应当统一回流到这里。"
+        "工作流、地图和模型产出的资产，以及 GEE 凭证这类共享能力，都应统一回流到这里。"
       ],
       "handoffEn": [
         "The asset hub should clearly show what each asset can feed next.",
-        "Assets produced by workflows, maps, and models should flow back here."
+        "Assets produced by workflows, maps, and models, plus shared capabilities such as GEE credentials, should flow back here."
       ]
     }
   },

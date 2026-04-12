@@ -8,7 +8,6 @@ interface PersonalAssetsHeaderProps {
   title: string;
   copy: string;
   isAssetsView: boolean;
-  isAccountView: boolean;
   uploadDatasetLabel: string;
   uploadProductLabel: string;
   addCredentialLabel: string;
@@ -27,7 +26,6 @@ export function PersonalAssetsHeader({
   title,
   copy,
   isAssetsView,
-  isAccountView,
   uploadDatasetLabel,
   uploadProductLabel,
   addCredentialLabel,
@@ -52,7 +50,7 @@ export function PersonalAssetsHeader({
           <Space wrap className="section-actions">
             {isAssetsView ? <Button onClick={onUploadDataset}>{uploadDatasetLabel}</Button> : null}
             {isAssetsView ? <Button onClick={onUploadProduct}>{uploadProductLabel}</Button> : null}
-            {isAccountView ? <Button onClick={onAddCredential}>{addCredentialLabel}</Button> : null}
+            {isAssetsView ? <Button onClick={onAddCredential}>{addCredentialLabel}</Button> : null}
             {isAssetsView ? (
               <Button onClick={() => importInputRef.current?.click()}>{importWorkflowLabel}</Button>
             ) : null}

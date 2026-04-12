@@ -98,19 +98,19 @@ This file is generated from the frontend workspace module registry.
 - Route: `/account`
 - Menu key: `menu.account`
 - Permission: `none`
-- Summary (ZH): 管理个人资料、安全设置与个人集成凭证。
-- Summary (EN): Manage profile, security settings, and personal integration credentials.
+- Summary (ZH): 管理个人资料、安全设置与账号申请。
+- Summary (EN): Manage profile, security settings, and access requests.
 - Cross-page handoff notes:
-  - Personal credentials should be reusable from workflows and spatial modules.
-  - Account information should stay separate from asset content.
+  - Account information should stay clearly separated from reusable assets.
+  - Access requests and security changes should feed back into account state and permissions.
 
 ### `assets`
 
 - Route: `/assets`
 - Menu key: `menu.assets`
 - Permission: `none`
-- Summary (ZH): 管理可复用输入、流程结果与共享发布状态。
-- Summary (EN): Manage reusable inputs, workflow outputs, and shared publication state.
+- Summary (ZH): 管理可复用输入、流程结果、共享能力与发布状态。
+- Summary (EN): Manage reusable inputs, workflow outputs, shared capabilities, and publication state.
 - Cross-page handoff notes:
   - The asset hub should clearly show what each asset can feed next.
-  - Assets produced by workflows, maps, and models should flow back here.
+  - Assets produced by workflows, maps, and models, plus shared capabilities such as GEE credentials, should flow back here.

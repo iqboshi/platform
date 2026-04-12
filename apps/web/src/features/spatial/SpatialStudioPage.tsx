@@ -7,6 +7,7 @@ import type {
 } from '@platform/types';
 
 import {
+  Alert,
   App,
   Button,
   Card,
@@ -214,6 +215,11 @@ export function SpatialStudioPage({
   const [savedCoordinates, setSavedCoordinates] = useState<SavedCoordinatePoint[]>([]);
   const [coordinateHistory, setCoordinateHistory] = useState<CoordinateHistoryItem[]>([]);
   const processedSpatialLinkRef = useRef<string | null>(null);
+  const [incomingAssetNotice, setIncomingAssetNotice] = useState<{
+    type: 'success' | 'warning';
+    title: string;
+    description: string;
+  } | null>(null);
   const [hydratedStorageKeys, setHydratedStorageKeys] = useState<{
     saved: string;
     history: string;
@@ -534,6 +540,17 @@ export function SpatialStudioPage({
       (candidate) => candidate.assetVersion.id === linkedAssetVersionId,
     );
     if (!linkedCandidate) {
+      setIncomingAssetNotice({
+        type: 'warning',
+        title:
+          locale === 'zh-CN'
+            ? `未能接收地图输入：${handoff?.label ?? linkedAssetVersionId}`
+            : `Unable to receive map input: ${handoff?.label ?? linkedAssetVersionId}`,
+        description:
+          locale === 'zh-CN'
+            ? '该资产当前不能作为地图叠加层使用，或者已经不在当前可见范围内。'
+            : 'This asset is no longer available as a map overlay in the current scope.',
+      });
       message.warning(
         locale === 'zh-CN'
           ? '该资产当前不能作为地图叠加层使用，或已不在当前可见范围内。'
@@ -567,6 +584,17 @@ export function SpatialStudioPage({
       });
     }
 
+    setIncomingAssetNotice({
+      type: 'success',
+      title:
+        locale === 'zh-CN'
+          ? `已接收地图输入：${handoff?.label ?? linkedCandidate.title}`
+          : `Map input received: ${handoff?.label ?? linkedCandidate.title}`,
+      description:
+        locale === 'zh-CN'
+          ? '该结果已经作为临时预览图层带入当前地图。你可以先检查显示效果，再决定是否保存为正式 overlay 资产。'
+          : 'This result is now loaded as a temporary preview layer. Review it on the map first, then save it as a formal overlay if needed.',
+    });
     message.success(
       locale === 'zh-CN'
         ? '已把上游结果带入空间工作台，可直接预览并保存为 overlay。'
@@ -931,6 +959,18 @@ export function SpatialStudioPage({
           <Paragraph className="section-copy">{copy.body}</Paragraph>
         </div>
       </div>
+
+      {incomingAssetNotice ? (
+        <Alert
+          type={incomingAssetNotice.type}
+          showIcon
+          closable
+          className="workflow-handoff-alert"
+          message={incomingAssetNotice.title}
+          description={incomingAssetNotice.description}
+          onClose={() => setIncomingAssetNotice(null)}
+        />
+      ) : null}
 
       <div className="spatial-stats-grid">
         <StatCard label={copy.roiAssets} value={String(rois.length)} detail={copy.mapSelectionHint} />

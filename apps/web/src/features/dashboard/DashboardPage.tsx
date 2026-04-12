@@ -1,9 +1,7 @@
 import type {
   DashboardAnnouncementItem,
-  DashboardConfig,
   FeedbackTicketStatus,
   FeedbackTicketSummary,
-  WorkflowRunStatus,
 } from '@platform/types';
 import type { PlatformDataSnapshot } from '@/lib/api';
 
@@ -11,57 +9,47 @@ import {
   App,
   Button,
   Card,
-  Col,
-  Collapse,
   Descriptions,
   Empty,
   Form,
   Input,
   Modal,
-  Row,
   Select,
   Space,
   Spin,
-  Switch,
   Table,
   Tag,
   Typography,
 } from 'antd';
-import {
-  BuildOutlined,
-  FolderOpenOutlined,
-  PlusOutlined,
-  RadarChartOutlined,
-  SafetyOutlined,
-  ThunderboltOutlined,
-  UserOutlined,
-} from '@ant-design/icons';
-import { useEffect, useMemo, useState } from 'react';
+import { PlusOutlined } from '@ant-design/icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { isApiError } from '@/auth/errors';
 import { useAuth } from '@/auth/useAuth';
-import { StatCard } from '@/components/StatCard';
+import { LayeredPanelCard, LayeredPanelCardGroup } from '@/components/LayeredPanelCard';
 import { useI18n } from '@/i18n/useI18n';
 import {
   createFeedbackTicket,
   getFeedbackTicket,
-  updateDashboardConfig,
   updateFeedbackTicket,
 } from '@/lib/api';
 import { workflowRunStatusKey } from '@/lib/i18n-helpers';
+import { buildDashboardModuleCards } from '@/lib/workspace-modules';
 
 const { Paragraph, Text, Title } = Typography;
 const { TextArea } = Input;
 
 type DashboardLocale = 'zh-CN' | 'en-US';
 
-type QuickAction = {
+type ActionQueueItem = {
   key: string;
+  priority: 'critical' | 'attention' | 'normal';
+  source: string;
   title: string;
   description: string;
-  href: string;
-  icon: React.ReactNode;
+  actionLabel: string;
+  onAction: () => void;
 };
 
 function formatDateTime(value: string | undefined, locale: DashboardLocale): string {
@@ -83,16 +71,56 @@ function parseDateValue(value: string | undefined): number {
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
+function formatDate(value: string | undefined, locale: DashboardLocale): string {
+  if (!value) {
+    return '-';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString(locale);
+}
+
+function announcementText(
+  announcement: DashboardAnnouncementItem,
+  locale: DashboardLocale,
+  field: 'title' | 'summary' | 'content' | 'tag',
+): string {
+  if (locale === 'zh-CN') {
+    switch (field) {
+      case 'title':
+        return announcement.titleZh;
+      case 'summary':
+        return announcement.summaryZh;
+      case 'content':
+        return announcement.contentZh;
+      case 'tag':
+        return announcement.tagZh ?? '';
+      default:
+        return '';
+    }
+  }
+
+  switch (field) {
+    case 'title':
+      return announcement.titleEn;
+    case 'summary':
+      return announcement.summaryEn;
+    case 'content':
+      return announcement.contentEn;
+    case 'tag':
+      return announcement.tagEn ?? '';
+    default:
+      return '';
+  }
+}
+
 const DASHBOARD_COPY = {
   'zh-CN': {
     heroKicker: '平台总览',
     heroTitle: '用一个首页串起数据、工作流、模型与团队协作。',
-    heroCopy:
-      '这里仍然作为团队进入平台后的总览页，既能快速看到平台状态，也能直接进入核心功能、查看公告与跟进工单。',
-    openWorkflows: '打开工作流',
-    browseDatasets: '浏览公开数据集',
-    openAssetHub: '打开资产中心',
-    editPortal: '管理首页公告',
+    heroCopy: '这里作为团队进入平台后的总览页，先看当前态势，再继续进入各个功能与协作处理。',
     workspaceReady: '工作空间状态',
     workspaceReadyCopy:
       '首页使用实时快照与共享模块注册表构建，但仍保持总览页应有的整体视角。',
@@ -129,6 +157,10 @@ const DASHBOARD_COPY = {
     moduleSectionPersonal: '个人',
     moduleSectionAdmin: '管理',
     noFeatures: '当前没有可显示的模块入口。',
+    heroPinnedAnnouncementTitle: '置顶公告',
+    heroPinnedAnnouncementEmpty: '当前还没有置顶公告。',
+    expandDetails: '展开详情',
+    collapseDetails: '收起详情',
     announcements: '更新公告',
     announcementsCopy: '查看近期的重要更新、已上线能力和使用说明。',
     notificationsTitle: '站内消息',
@@ -190,6 +222,8 @@ const DASHBOARD_COPY = {
     statModelVersionsDetail: '已接入的平台模型与训练权重资产。',
     statFeedback: '活跃工单',
     statFeedbackDetail: '当前仍在跟进中的问题、需求与体验反馈。',
+    statModules: '可见模块',
+    statModulesDetail: '当前角色在平台中可直接进入的功能入口数量。',
     portalEditTitle: '管理首页公告',
     portalEditSuccess: '首页公告已更新。',
     portalAnnouncementsSection: '公告',
@@ -213,11 +247,7 @@ const DASHBOARD_COPY = {
     heroKicker: 'Platform Overview',
     heroTitle: 'Bring data, workflows, models, and collaboration into one overview.',
     heroCopy:
-      'This remains the team overview page: keep the workspace state visible, enter core capabilities quickly, review announcements, and follow up on feedback without losing the big picture.',
-    openWorkflows: 'Open workflows',
-    browseDatasets: 'Browse public datasets',
-    openAssetHub: 'Open asset hub',
-    editPortal: 'Manage overview announcements',
+      'Use this as the team landing surface: scan live signals first, then continue into the rest of the platform and collaboration work.',
     workspaceReady: 'Workspace status',
     workspaceReadyCopy:
       'The page is driven by live snapshot data and the shared module registry, while still preserving an actual overview surface.',
@@ -255,6 +285,10 @@ const DASHBOARD_COPY = {
     moduleSectionPersonal: 'Personal',
     moduleSectionAdmin: 'Admin',
     noFeatures: 'No visible modules are available right now.',
+    heroPinnedAnnouncementTitle: 'Pinned announcement',
+    heroPinnedAnnouncementEmpty: 'There is no pinned announcement right now.',
+    expandDetails: 'Show details',
+    collapseDetails: 'Hide details',
     announcements: 'Announcements',
     announcementsCopy: 'Review recent platform updates, released capabilities, and usage notes.',
     notificationsTitle: 'Inbox',
@@ -318,6 +352,8 @@ const DASHBOARD_COPY = {
     statModelVersionsDetail: 'Packaged models and trained weight assets available on the platform.',
     statFeedback: 'Active tickets',
     statFeedbackDetail: 'Open issues, requests, and UX feedback still under follow-up.',
+    statModules: 'Visible modules',
+    statModulesDetail: 'Entry points currently available to this role.',
     portalEditTitle: 'Manage overview announcements',
     portalEditSuccess: 'Overview announcements updated.',
     portalAnnouncementsSection: 'Announcements',
@@ -408,10 +444,6 @@ function dashboardErrorMessage(error: unknown, fallback: string): string {
   return isApiError(error) ? error.message : fallback;
 }
 
-function nextId(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 export function DashboardPage({
   snapshot,
   onRefresh,
@@ -425,20 +457,15 @@ export function DashboardPage({
   const navigate = useNavigate();
   const [feedbackForm] = Form.useForm();
   const [feedbackDetailForm] = Form.useForm();
-  const [portalForm] = Form.useForm();
   const [feedbackCreateOpen, setFeedbackCreateOpen] = useState(false);
   const [feedbackCreateSaving, setFeedbackCreateSaving] = useState(false);
   const [feedbackDetailOpen, setFeedbackDetailOpen] = useState(false);
   const [feedbackDetailLoading, setFeedbackDetailLoading] = useState(false);
   const [feedbackDetailSaving, setFeedbackDetailSaving] = useState(false);
   const [feedbackDetail, setFeedbackDetail] = useState<FeedbackTicketSummary | null>(null);
-  const [portalEditorOpen, setPortalEditorOpen] = useState(false);
-  const [portalEditorSaving, setPortalEditorSaving] = useState(false);
 
   const copy = DASHBOARD_COPY[locale];
   const canConfigurePortal = hasPermission('system.configure');
-  const canManageModels = hasPermission('model.view');
-  const canApproveUsers = hasPermission('user.approve');
   const isAdmin = canConfigurePortal;
 
   const recentRuns = useMemo(
@@ -449,78 +476,121 @@ export function DashboardPage({
             parseDateValue(right.finishedAt ?? right.startedAt) -
             parseDateValue(left.finishedAt ?? left.startedAt),
         )
-        .slice(0, 6),
+        .slice(0, 4),
     [snapshot.workflowRuns],
   );
   const publicDatasetCount = useMemo(
     () => snapshot.datasets.filter((item) => item.visibility === 'public').length,
     [snapshot.datasets],
   );
+  const publishedAnnouncements = useMemo(
+    () =>
+      [...snapshot.dashboardConfig.announcements]
+        .filter((item) => item.published)
+        .sort((left, right) => {
+          if (left.pinned !== right.pinned) {
+            return left.pinned ? -1 : 1;
+          }
+          return parseDateValue(right.publishedAt) - parseDateValue(left.publishedAt);
+        }),
+    [snapshot.dashboardConfig.announcements],
+  );
+  const pinnedAnnouncement = useMemo(
+    () => publishedAnnouncements.find((item) => item.pinned) ?? publishedAnnouncements[0] ?? null,
+    [publishedAnnouncements],
+  );
   const activeTicketCount = isAdmin
     ? snapshot.feedbackSummary.adminOpenCount + snapshot.feedbackSummary.adminInProgressCount
     : snapshot.feedbackSummary.myActiveCount;
-
-  const quickActions = useMemo<QuickAction[]>(
+  const moduleCards = useMemo(
+    () => buildDashboardModuleCards(snapshot, locale, hasPermission),
+    [hasPermission, locale, snapshot],
+  );
+  const moduleSections = useMemo(
     () =>
       [
         {
-          key: 'datasets',
-          title: copy.quickDatasets,
-          description: copy.quickDatasetsCopy,
-          href: '/datasets',
-          icon: <FolderOpenOutlined />,
-        },
-        {
-          key: 'workflows',
-          title: copy.quickWorkflows,
-          description: copy.quickWorkflowsCopy,
-          href: '/workflows',
-          icon: <ThunderboltOutlined />,
-        },
-        {
-          key: 'products',
-          title: locale === 'zh-CN' ? '产品展示' : 'Products',
+          key: 'workspace',
+          title: copy.moduleSectionWorkspace,
           description:
             locale === 'zh-CN'
-              ? '查看硬件产品页并直接预览 STP / STEP 三维模型。'
-              : 'Open the hardware showcase and preview STP / STEP models directly.',
-          href: '/products',
-          icon: <BuildOutlined />,
+              ? '围绕数据、工作流、模型和地图这些核心生产入口。'
+              : 'Core production surfaces for data, workflows, models, and maps.',
+          items: moduleCards.filter((item) => item.section === 'workspace'),
         },
         {
-          key: 'assets',
-          title: copy.quickAssets,
-          description: copy.quickAssetsCopy,
-          href: '/assets',
-          icon: <UserOutlined />,
-        },
-        {
-          key: 'models',
-          title: copy.quickModels,
-          description: copy.quickModelsCopy,
-          href: '/models',
-          icon: <RadarChartOutlined />,
-        },
-        {
-          key: 'approvals',
-          title: locale === 'zh-CN' ? '审批中心' : 'Approval Center',
+          key: 'personal',
+          title: copy.moduleSectionPersonal,
           description:
             locale === 'zh-CN'
-              ? '处理新账号审批、角色调整和治理入口。'
-              : 'Review new account approvals, role changes, and governance actions.',
-          href: '/admin/users',
-          icon: <SafetyOutlined />,
+              ? '账号、资产和个人集成能力在这里继续衔接。'
+              : 'Account, asset, and personal integration surfaces live here.',
+          items: moduleCards.filter((item) => item.section === 'personal'),
         },
-      ].filter((item) => {
-        if (item.key === 'models') {
-          return canManageModels;
-        }
-        if (item.key === 'approvals') {
-          return canApproveUsers;
-        }
-        return true;
-      }),
-    [canApproveUsers, canManageModels, copy, locale],
+        {
+          key: 'admin',
+          title: copy.moduleSectionAdmin,
+          description:
+            locale === 'zh-CN'
+              ? '治理、审批和工作空间配置能力按权限显示。'
+              : 'Governance, approvals, and workspace settings appear when permitted.',
+          items: moduleCards.filter((item) => item.section === 'admin'),
+        },
+      ].filter((section) => section.items.length > 0),
+    [copy.moduleSectionAdmin, copy.moduleSectionPersonal, copy.moduleSectionWorkspace, locale, moduleCards],
+  );
+  const modulePortalCards = useMemo(
+    () =>
+      moduleSections.flatMap((section) =>
+        section.items.map((item) => ({
+          ...item,
+          sectionKey: section.key,
+          sectionLabel: section.title,
+        })),
+      ),
+    [moduleSections],
+  );
+  const pulseCards = useMemo(
+    () => [
+      {
+        key: 'datasets',
+        value: String(publicDatasetCount),
+        label: copy.statPublicDatasets,
+        detail: copy.statPublicDatasetsDetail,
+      },
+      {
+        key: 'runs',
+        value: String(snapshot.workflowRuns.length),
+        label: copy.statWorkflowRuns,
+        detail: copy.statWorkflowRunsDetail,
+      },
+      {
+        key: 'feedback',
+        value: String(activeTicketCount),
+        label: copy.statFeedback,
+        detail: copy.statFeedbackDetail,
+      },
+      {
+        key: 'modules',
+        value: String(modulePortalCards.length),
+        label: copy.statModules,
+        detail: copy.statModulesDetail,
+      },
+    ],
+    [
+      activeTicketCount,
+      copy.statFeedback,
+      copy.statFeedbackDetail,
+      copy.statModules,
+      copy.statModulesDetail,
+      copy.statPublicDatasets,
+      copy.statPublicDatasetsDetail,
+      copy.statWorkflowRuns,
+      copy.statWorkflowRunsDetail,
+      modulePortalCards.length,
+      publicDatasetCount,
+      snapshot.workflowRuns.length,
+    ],
   );
 
   const feedbackCategoryOptions = useMemo(
@@ -600,41 +670,6 @@ export function DashboardPage({
     [copy, locale],
   );
 
-  const runColumns = useMemo(
-    () => [
-      {
-        title: copy.feedbackFieldTitle,
-        dataIndex: 'id',
-        key: 'id',
-        render: (_value: string, record: (typeof recentRuns)[number]) => (
-          <div>
-            <Text strong>{record.workflowName || record.id.slice(0, 12)}</Text>
-            <div className="dashboard-table-subtle">{record.id.slice(0, 12)}</div>
-          </div>
-        ),
-      },
-      {
-        title: copy.feedbackFieldStatus,
-        dataIndex: 'status',
-        key: 'status',
-        render: (value: WorkflowRunStatus) => <Tag>{t(workflowRunStatusKey(value))}</Tag>,
-      },
-      {
-        title: copy.runsSubmittedBy,
-        dataIndex: 'submittedBy',
-        key: 'submittedBy',
-      },
-      {
-        title: copy.runsStartedAt,
-        dataIndex: 'startedAt',
-        key: 'startedAt',
-        render: (value: string | undefined, record: (typeof recentRuns)[number]) =>
-          formatDateTime(value ?? record.finishedAt, locale),
-      },
-    ],
-    [copy, locale, t],
-  );
-
   useEffect(() => {
     if (!feedbackCreateOpen) {
       feedbackForm.resetFields();
@@ -662,32 +697,116 @@ export function DashboardPage({
     });
   }, [feedbackDetail, feedbackDetailForm, feedbackDetailOpen]);
 
-  useEffect(() => {
-    if (!portalEditorOpen) {
-      return;
-    }
-    portalForm.setFieldsValue({
-      announcements: snapshot.dashboardConfig.announcements,
-    });
-  }, [portalEditorOpen, portalForm, snapshot.dashboardConfig]);
+  const openFeedbackDetail = useCallback(
+    async (ticketId: string) => {
+      if (!token) {
+        message.error(copy.authMissing);
+        return;
+      }
+      setFeedbackDetailOpen(true);
+      setFeedbackDetailLoading(true);
+      try {
+        const payload = await getFeedbackTicket(token, ticketId);
+        setFeedbackDetail(payload);
+      } catch (error) {
+        setFeedbackDetailOpen(false);
+        message.error(dashboardErrorMessage(error, t('error.request_failed')));
+      } finally {
+        setFeedbackDetailLoading(false);
+      }
+    },
+    [copy.authMissing, message, t, token],
+  );
 
-  const openFeedbackDetail = async (ticketId: string) => {
-    if (!token) {
-      message.error(copy.authMissing);
-      return;
+  const actionQueueItems = useMemo<ActionQueueItem[]>(() => {
+    const items: ActionQueueItem[] = [];
+    const failedRuns = recentRuns.filter((item) => item.status === 'failed').slice(0, 2);
+    const activeRun = recentRuns.find((item) => item.status === 'running' || item.status === 'queued');
+    const activeFeedback = snapshot.feedbackTickets.find(
+      (item) => item.status === 'open' || item.status === 'in_progress',
+    );
+
+    failedRuns.forEach((run) => {
+      items.push({
+        key: `run-failed-${run.id}`,
+        priority: 'critical',
+        source: copy.actionQueueSourceWorkflow,
+        title:
+          locale === 'zh-CN'
+            ? `运行失败：${run.workflowName || run.id.slice(0, 12)}`
+            : `Run failed: ${run.workflowName || run.id.slice(0, 12)}`,
+        description:
+          locale === 'zh-CN'
+            ? '这个工作流运行需要回到工作流页检查输入、节点配置或运行日志。'
+            : 'Open workflows to inspect inputs, node configuration, or run logs.',
+        actionLabel: copy.actionQueueActionWorkflow,
+        onAction: () => navigate('/workflows'),
+      });
+    });
+
+    if (activeRun) {
+      items.push({
+        key: `run-active-${activeRun.id}`,
+        priority: 'attention',
+        source: copy.actionQueueSourceWorkflow,
+        title:
+          locale === 'zh-CN'
+            ? `进行中的运行：${activeRun.workflowName || activeRun.id.slice(0, 12)}`
+            : `Active run: ${activeRun.workflowName || activeRun.id.slice(0, 12)}`,
+        description:
+          locale === 'zh-CN'
+            ? '当前仍有工作流在排队或执行中，建议继续关注结果产出。'
+            : 'A workflow is still queued or running. Keep an eye on the output state.',
+        actionLabel: copy.actionQueueActionWorkflow,
+        onAction: () => navigate('/workflows'),
+      });
     }
-    setFeedbackDetailOpen(true);
-    setFeedbackDetailLoading(true);
-    try {
-      const payload = await getFeedbackTicket(token, ticketId);
-      setFeedbackDetail(payload);
-    } catch (error) {
-      setFeedbackDetailOpen(false);
-      message.error(dashboardErrorMessage(error, t('error.request_failed')));
-    } finally {
-      setFeedbackDetailLoading(false);
+
+    if (activeFeedback) {
+      items.push({
+        key: `feedback-${activeFeedback.id}`,
+        priority: activeFeedback.priority === 'high' ? 'critical' : 'attention',
+        source: copy.actionQueueSourceFeedback,
+        title: activeFeedback.title,
+        description:
+          locale === 'zh-CN'
+            ? '这里有一条仍在跟进中的反馈或工单，可以直接打开详情继续处理。'
+            : 'A feedback ticket still needs follow-up. Open it directly from the overview.',
+        actionLabel: copy.actionQueueActionTicket,
+        onAction: () => void openFeedbackDetail(activeFeedback.id),
+      });
     }
-  };
+
+    if (canConfigurePortal && publishedAnnouncements.length === 0) {
+      items.push({
+        key: 'announcement-gap',
+        priority: 'normal',
+        source: copy.actionQueueSourcePortal,
+        title: copy.announcementGapTitle,
+        description: copy.announcementGapDescription,
+        actionLabel: copy.actionQueueActionPortal,
+        onAction: () => navigate('/admin/workspace-settings'),
+      });
+    }
+
+    return items.slice(0, 4);
+  }, [
+    canConfigurePortal,
+    copy.actionQueueActionPortal,
+    copy.actionQueueActionTicket,
+    copy.actionQueueActionWorkflow,
+    copy.actionQueueSourceFeedback,
+    copy.actionQueueSourcePortal,
+    copy.actionQueueSourceWorkflow,
+    copy.announcementGapDescription,
+    copy.announcementGapTitle,
+    locale,
+    navigate,
+    openFeedbackDetail,
+    publishedAnnouncements.length,
+    recentRuns,
+    snapshot.feedbackTickets,
+  ]);
 
   const onCreateFeedback = async () => {
     if (!token) {
@@ -748,47 +867,6 @@ export function DashboardPage({
     }
   };
 
-  const onSavePortalConfig = async () => {
-    if (!token) {
-      message.error(copy.authMissing);
-      return;
-    }
-    try {
-      const values = await portalForm.validateFields();
-      setPortalEditorSaving(true);
-      const payload: DashboardConfig = {
-        featureSections: snapshot.dashboardConfig.featureSections,
-        announcements: (values.announcements ?? []).map(
-          (item: DashboardAnnouncementItem, index: number) => ({
-            id: item.id || nextId(`announcement-${index + 1}`),
-            titleZh: item.titleZh,
-            titleEn: item.titleEn,
-            summaryZh: item.summaryZh,
-            summaryEn: item.summaryEn,
-            contentZh: item.contentZh,
-            contentEn: item.contentEn,
-            tagZh: item.tagZh ?? '',
-            tagEn: item.tagEn ?? '',
-            publishedAt: item.publishedAt,
-            pinned: Boolean(item.pinned),
-            published: Boolean(item.published),
-          }),
-        ),
-      };
-      await updateDashboardConfig(token, payload);
-      message.success(copy.portalEditSuccess);
-      setPortalEditorOpen(false);
-      await onRefresh();
-    } catch (error) {
-      if (!isApiError(error) && error instanceof Error && error.message === 'Validate Error') {
-        return;
-      }
-      message.error(dashboardErrorMessage(error, t('error.request_failed')));
-    } finally {
-      setPortalEditorSaving(false);
-    }
-  };
-
   const detailEditable =
     feedbackDetail !== null &&
     (isAdmin ||
@@ -796,29 +874,117 @@ export function DashboardPage({
 
   const currentUserLabel =
     currentUser?.displayName || currentUser?.email || (locale === 'zh-CN' ? '当前用户' : 'Current user');
+  const actionQueueSummaryItems =
+    actionQueueItems.length > 2 ? actionQueueItems.slice(0, 2) : actionQueueItems;
+  const actionQueueDetailItems = actionQueueItems.slice(2);
+  const recentRunSummaryItems = recentRuns.length > 2 ? recentRuns.slice(0, 2) : recentRuns;
+  const recentRunDetailItems = recentRuns.slice(2);
+  const pinnedAnnouncementTitle = pinnedAnnouncement
+    ? announcementText(pinnedAnnouncement, locale, 'title')
+    : '';
+  const pinnedAnnouncementSummary = pinnedAnnouncement
+    ? announcementText(pinnedAnnouncement, locale, 'summary') || announcementText(pinnedAnnouncement, locale, 'content')
+    : '';
+  const pinnedAnnouncementTag = pinnedAnnouncement ? announcementText(pinnedAnnouncement, locale, 'tag') : '';
+
+  const renderActionQueueList = (items: ActionQueueItem[]) =>
+    items.length > 0 ? (
+      <div className="dashboard-action-list">
+        {items.map((item) => (
+          <div
+            key={item.key}
+            className={`dashboard-action-item dashboard-action-item--${item.priority}`}
+          >
+            <div className="dashboard-action-item-head">
+              <div>
+                <Title level={5} className="dashboard-action-title">
+                  {item.title}
+                </Title>
+                <Paragraph className="dashboard-action-copy">{item.description}</Paragraph>
+              </div>
+              <Space wrap>
+                <Tag>{item.source}</Tag>
+                <Tag
+                  color={
+                    item.priority === 'critical'
+                      ? 'red'
+                      : item.priority === 'attention'
+                        ? 'gold'
+                        : 'default'
+                  }
+                >
+                  {item.priority === 'critical'
+                    ? copy.actionQueuePriorityCritical
+                    : item.priority === 'attention'
+                      ? copy.actionQueuePriorityActive
+                      : copy.actionQueuePriorityNormal}
+                </Tag>
+              </Space>
+            </div>
+            <div className="dashboard-action-foot">
+              <div className="dashboard-action-meta">
+                {locale === 'zh-CN'
+                  ? '从总览直接处理待跟进事项。'
+                  : 'Handle the next important item directly from the overview.'}
+              </div>
+              <Button type="link" onClick={item.onAction}>
+                {item.actionLabel}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <Empty description={copy.actionQueueEmpty} />
+    );
+
+  const renderRunList = (items: typeof recentRuns) =>
+    items.length > 0 ? (
+      <div className="dashboard-run-list">
+        {items.map((run) => (
+          <div key={run.id} className="dashboard-run-item">
+            <div className="dashboard-run-item-head">
+              <Title level={5} className="dashboard-run-title">
+                {run.workflowName || run.id.slice(0, 12)}
+              </Title>
+              <Tag>{t(workflowRunStatusKey(run.status))}</Tag>
+            </div>
+            <div className="dashboard-run-meta">
+              <span>{copy.runsSubmittedBy}: {run.submittedBy}</span>
+              <span>{copy.runsStartedAt}: {formatDateTime(run.startedAt ?? run.finishedAt, locale)}</span>
+            </div>
+            {run.resultDatasetVersionId ? (
+              <div className="dashboard-action-meta">
+                {locale === 'zh-CN'
+                  ? `结果数据集：${run.resultDatasetVersionId}`
+                  : `Result dataset: ${run.resultDatasetVersionId}`}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    ) : (
+      <Empty description={copy.noRuns} />
+    );
 
   return (
-    <div className="page-stack">
+    <div className="page-stack dashboard-page">
       <Card className="panel-card dashboard-hero-panel" variant="borderless">
         <div className="dashboard-hero-layout">
-          <div>
+          <div className="dashboard-hero-main">
             <div className="hero-kicker">{copy.heroKicker}</div>
             <Title level={1} className="hero-title">
               {copy.heroTitle}
             </Title>
             <Paragraph className="hero-copy">{copy.heroCopy}</Paragraph>
-            <div className="dashboard-hero-actions">
-              <Button type="primary" size="large" onClick={() => navigate('/workflows')}>
-                {copy.openWorkflows}
-              </Button>
-              <Button size="large" onClick={() => navigate('/datasets')}>
-                {copy.browseDatasets}
-              </Button>
-              {canConfigurePortal ? (
-                <Button size="large" onClick={() => setPortalEditorOpen(true)}>
-                  {copy.editPortal}
-                </Button>
-              ) : null}
+            <div className="dashboard-pulse-grid">
+              {pulseCards.map((item) => (
+                <div key={item.key} className="dashboard-pulse-card">
+                  <div className="dashboard-pulse-value">{item.value}</div>
+                  <div className="dashboard-pulse-label">{item.label}</div>
+                  <div className="dashboard-pulse-detail">{item.detail}</div>
+                </div>
+              ))}
             </div>
           </div>
           <div className="dashboard-hero-side">
@@ -833,150 +999,178 @@ export function DashboardPage({
                 {currentUser ? <Tag color="geekblue">{currentUserLabel}</Tag> : null}
               </Space>
             </div>
-            <div className="dashboard-feedback-summary">
-              <div className="dashboard-summary-chip">
-                <Text type="secondary">
-                  {isAdmin ? copy.feedbackSummaryOpen : copy.feedbackSummaryMineOpen}
-                </Text>
-                <Title level={4}>
-                  {isAdmin
-                    ? snapshot.feedbackSummary.adminOpenCount
-                    : snapshot.feedbackSummary.myOpenCount}
-                </Title>
-              </div>
-              <div className="dashboard-summary-chip">
-                <Text type="secondary">
-                  {isAdmin ? copy.feedbackSummaryInProgress : copy.feedbackSummaryMineActive}
-                </Text>
-                <Title level={4}>{activeTicketCount}</Title>
-              </div>
+            <div className="dashboard-hero-note dashboard-hero-announcement-card">
+              <div className="panel-kicker">{copy.heroPinnedAnnouncementTitle}</div>
+              {pinnedAnnouncement ? (
+                <div className="dashboard-hero-announcement-body">
+                  <div className="dashboard-hero-announcement-head">
+                    <Title level={4} className="dashboard-hero-announcement-title">
+                      {pinnedAnnouncementTitle}
+                    </Title>
+                    <Space wrap>
+                      <Tag color="gold">{copy.pinned}</Tag>
+                      {pinnedAnnouncementTag ? <Tag>{pinnedAnnouncementTag}</Tag> : null}
+                    </Space>
+                  </div>
+                  <Paragraph className="dashboard-hero-announcement-copy">{pinnedAnnouncementSummary}</Paragraph>
+                  <div className="dashboard-hero-announcement-meta">
+                    {copy.published}: {formatDate(pinnedAnnouncement.publishedAt, locale)}
+                  </div>
+                </div>
+              ) : (
+                <Text type="secondary">{copy.heroPinnedAnnouncementEmpty}</Text>
+              )}
             </div>
           </div>
         </div>
       </Card>
 
-      <div className="dashboard-quick-grid">
-        {quickActions.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className="dashboard-quick-card"
-            onClick={() => navigate(item.href)}
+      <LayeredPanelCardGroup>
+        <div className="dashboard-top-grid">
+          <LayeredPanelCard
+            kicker={copy.actionQueueTitle}
+            title={copy.actionQueueTitle}
+            className="dashboard-panel-card dashboard-top-layer-card dashboard-queue-panel"
+            expandLabel={copy.expandDetails}
+            collapseLabel={copy.collapseDetails}
+            summary={
+              <>
+                <Paragraph className="dashboard-section-copy">{copy.actionQueueCopy}</Paragraph>
+                {renderActionQueueList(actionQueueSummaryItems)}
+              </>
+            }
           >
-            <div className="dashboard-quick-icon">{item.icon}</div>
-            <div className="dashboard-quick-copy">
-              <Text strong>{item.title}</Text>
-              <Paragraph>{item.description}</Paragraph>
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} xl={6}>
-          <StatCard
-            label={copy.statPublicDatasets}
-            value={String(publicDatasetCount)}
-            detail={copy.statPublicDatasetsDetail}
-          />
-        </Col>
-        <Col xs={24} sm={12} xl={6}>
-          <StatCard
-            label={copy.statWorkflowRuns}
-            value={String(snapshot.workflowRuns.length)}
-            detail={copy.statWorkflowRunsDetail}
-          />
-        </Col>
-        <Col xs={24} sm={12} xl={6}>
-          <StatCard
-            label={copy.statModelVersions}
-            value={String(snapshot.modelVersions.length)}
-            detail={copy.statModelVersionsDetail}
-          />
-        </Col>
-        <Col xs={24} sm={12} xl={6}>
-          <StatCard
-            label={copy.statFeedback}
-            value={String(activeTicketCount)}
-            detail={copy.statFeedbackDetail}
-          />
-        </Col>
-      </Row>
-
-      <Row gutter={[20, 20]} align="stretch">
-        <Col xs={24} xl={15}>
-          <Card className="panel-card dashboard-panel-card" variant="borderless">
-            <div className="dashboard-section-head">
-              <div>
-                <div className="panel-kicker">{copy.feedbackTitle}</div>
-                <Title level={3} className="section-title">
-                  {copy.feedbackTitle}
-                </Title>
-                <Paragraph className="dashboard-section-copy">
-                  {isAdmin ? copy.feedbackCopyAdmin : copy.feedbackCopyMember}
-                </Paragraph>
-              </div>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setFeedbackCreateOpen(true)}>
-                {copy.feedbackNew}
+            {actionQueueDetailItems.length > 0 ? renderActionQueueList(actionQueueDetailItems) : null}
+          </LayeredPanelCard>
+          <LayeredPanelCard
+            kicker={copy.runsTitle}
+            title={copy.runsTitle}
+            className="dashboard-panel-card dashboard-top-layer-card dashboard-runs-panel"
+            extra={
+              <Button type="link" onClick={() => navigate('/workflows')}>
+                {copy.actionQueueActionWorkflow}
               </Button>
+            }
+            expandLabel={copy.expandDetails}
+            collapseLabel={copy.collapseDetails}
+            summary={renderRunList(recentRunSummaryItems)}
+          >
+            {recentRunDetailItems.length > 0 ? renderRunList(recentRunDetailItems) : null}
+          </LayeredPanelCard>
+        </div>
+      </LayeredPanelCardGroup>
+
+      <Card className="panel-card dashboard-panel-card dashboard-modules-panel" variant="borderless">
+        <div className="dashboard-section-head">
+          <div>
+            <div className="panel-kicker">{copy.modulesTitle}</div>
+            <Title level={3} className="section-title">
+              {copy.modulesTitle}
+            </Title>
+            <Paragraph className="dashboard-section-copy">{copy.modulesCopy}</Paragraph>
+          </div>
+        </div>
+        {modulePortalCards.length ? (
+          <LayeredPanelCardGroup>
+            <div className="dashboard-module-grid dashboard-module-portal-grid">
+              {modulePortalCards.map((item) => (
+                <LayeredPanelCard
+                  key={item.id}
+                  className={`dashboard-module-card dashboard-module-card--${item.sectionKey}`}
+                  title={item.title}
+                  summary={
+                    <div className="dashboard-module-summary">
+                      <div className="dashboard-module-summary-head">
+                        <div className="dashboard-module-icon">{item.icon}</div>
+                        <div className="dashboard-module-metric">
+                          <div className="dashboard-module-metric-value">{item.metricValue}</div>
+                          <div className="dashboard-module-metric-label">{item.metricLabel}</div>
+                        </div>
+                      </div>
+                      <Space wrap>
+                        <Tag>{item.sectionLabel}</Tag>
+                      </Space>
+                      <div className="dashboard-module-copy">{item.summary}</div>
+                      <div className="dashboard-module-activity">{item.activity}</div>
+                    </div>
+                  }
+                  extra={
+                    <Button type="link" onClick={() => navigate(item.route)}>
+                      {item.actionLabel}
+                    </Button>
+                  }
+                  expandLabel={locale === 'zh-CN' ? '查看衔接' : 'Show handoff'}
+                  collapseLabel={locale === 'zh-CN' ? '收起衔接' : 'Hide handoff'}
+                >
+                  <div className="dashboard-module-flow-title">{copy.moduleFlowTitle}</div>
+                  <div className="dashboard-module-handoff-list">
+                    {item.handoff.map((entry, index) => (
+                      <div key={`${item.id}-handoff-${index}`} className="dashboard-module-handoff-item">
+                        {entry}
+                      </div>
+                    ))}
+                  </div>
+                </LayeredPanelCard>
+              ))}
             </div>
-            <div className="dashboard-feedback-summary">
-              <div className="dashboard-summary-chip">
-                <Text type="secondary">
-                  {isAdmin ? copy.feedbackSummaryOpen : copy.feedbackSummaryMineOpen}
-                </Text>
-                <Title level={4}>
-                  {isAdmin
-                    ? snapshot.feedbackSummary.adminOpenCount
-                    : snapshot.feedbackSummary.myOpenCount}
-                </Title>
-              </div>
-              <div className="dashboard-summary-chip">
-                <Text type="secondary">
-                  {isAdmin ? copy.feedbackSummaryInProgress : copy.feedbackSummaryMineActive}
-                </Text>
-                <Title level={4}>
-                  {isAdmin
-                    ? snapshot.feedbackSummary.adminInProgressCount
-                    : snapshot.feedbackSummary.myActiveCount}
-                </Title>
-              </div>
-            </div>
-            {snapshot.feedbackTickets.length > 0 ? (
-              <Table
-                rowKey="id"
-                className="dashboard-clickable-table"
-                columns={feedbackColumns}
-                dataSource={snapshot.feedbackTickets}
-                pagination={false}
-                onRow={(record) => ({
-                  onClick: () => void openFeedbackDetail(record.id),
-                  className: 'dashboard-clickable-row',
-                })}
-              />
-            ) : (
-              <Empty description={copy.feedbackEmpty} />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} xl={9}>
-          <Card className="panel-card dashboard-panel-card" variant="borderless">
-            <div className="dashboard-section-head">
-              <div>
-                <div className="panel-kicker">{copy.runsTitle}</div>
-                <Title level={3} className="section-title">
-                  {copy.runsTitle}
-                </Title>
-              </div>
-            </div>
-            {recentRuns.length > 0 ? (
-              <Table rowKey="id" columns={runColumns} dataSource={recentRuns} pagination={false} size="small" />
-            ) : (
-              <Empty description={copy.noRuns} />
-            )}
-          </Card>
-        </Col>
-      </Row>
+          </LayeredPanelCardGroup>
+        ) : (
+          <Empty description={copy.noFeatures} />
+        )}
+      </Card>
+
+      <Card className="panel-card dashboard-panel-card dashboard-feedback-panel" variant="borderless">
+        <div className="dashboard-section-head">
+          <div>
+            <div className="panel-kicker">{copy.feedbackTitle}</div>
+            <Title level={3} className="section-title">
+              {copy.feedbackTitle}
+            </Title>
+            <Paragraph className="dashboard-section-copy">
+              {isAdmin ? copy.feedbackCopyAdmin : copy.feedbackCopyMember}
+            </Paragraph>
+          </div>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setFeedbackCreateOpen(true)}>
+            {copy.feedbackNew}
+          </Button>
+        </div>
+        <div className="dashboard-feedback-summary">
+          <div className="dashboard-summary-chip">
+            <Text type="secondary">
+              {isAdmin ? copy.feedbackSummaryOpen : copy.feedbackSummaryMineOpen}
+            </Text>
+            <Title level={4}>
+              {isAdmin ? snapshot.feedbackSummary.adminOpenCount : snapshot.feedbackSummary.myOpenCount}
+            </Title>
+          </div>
+          <div className="dashboard-summary-chip">
+            <Text type="secondary">
+              {isAdmin ? copy.feedbackSummaryInProgress : copy.feedbackSummaryMineActive}
+            </Text>
+            <Title level={4}>
+              {isAdmin
+                ? snapshot.feedbackSummary.adminInProgressCount
+                : snapshot.feedbackSummary.myActiveCount}
+            </Title>
+          </div>
+        </div>
+        {snapshot.feedbackTickets.length > 0 ? (
+          <Table
+            rowKey="id"
+            className="dashboard-clickable-table"
+            columns={feedbackColumns}
+            dataSource={snapshot.feedbackTickets}
+            pagination={{ pageSize: 5, hideOnSinglePage: true }}
+            size="small"
+            onRow={(record) => ({
+              onClick: () => void openFeedbackDetail(record.id),
+              className: 'dashboard-clickable-row',
+            })}
+          />
+        ) : (
+          <Empty description={copy.feedbackEmpty} />
+        )}
+      </Card>
 
       <Modal
         open={feedbackCreateOpen}
@@ -1089,136 +1283,6 @@ export function DashboardPage({
         ) : null}
       </Modal>
 
-      <Modal
-        open={portalEditorOpen}
-        title={copy.portalEditTitle}
-        okText={copy.actionSave}
-        cancelText={copy.actionClose}
-        confirmLoading={portalEditorSaving}
-        onOk={() => void onSavePortalConfig()}
-        onCancel={() => setPortalEditorOpen(false)}
-        width={920}
-        destroyOnHidden
-      >
-        <Form form={portalForm} layout="vertical">
-          <Collapse
-            defaultActiveKey={['announcements']}
-            items={[
-              {
-                key: 'announcements',
-                label: copy.portalAnnouncementsSection,
-                children: (
-                  <Form.List name="announcements">
-                    {(fields, { add, remove }) => (
-                      <div className="dashboard-editor-stack">
-                        {fields.map((field, index) => (
-                          <Card key={field.key} className="dashboard-editor-card" variant="borderless">
-                            <div className="dashboard-editor-card-head">
-                              <Title level={5}>{`${copy.portalAnnouncementCard} ${index + 1}`}</Title>
-                              <Button danger onClick={() => remove(field.name)}>
-                                {copy.actionRemove}
-                              </Button>
-                            </div>
-                            <div className="dashboard-form-grid">
-                              <Form.Item label="ID" name={[field.name, 'id']} rules={[{ required: true, whitespace: true }]}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.feedbackFieldPublishedAt}
-                                name={[field.name, 'publishedAt']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <Input placeholder="2026-04-05" />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.portalTitleZh}
-                                name={[field.name, 'titleZh']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <Input />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.portalTitleEn}
-                                name={[field.name, 'titleEn']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={copy.portalTagZh} name={[field.name, 'tagZh']}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={copy.portalTagEn} name={[field.name, 'tagEn']}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.feedbackFieldPublished}
-                                name={[field.name, 'published']}
-                                valuePropName="checked"
-                              >
-                                <Switch />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.feedbackFieldPinned}
-                                name={[field.name, 'pinned']}
-                                valuePropName="checked"
-                              >
-                                <Switch />
-                              </Form.Item>
-                            </div>
-                            <div className="dashboard-form-grid dashboard-form-grid-compact">
-                              <Form.Item
-                                label={copy.portalSummaryZh}
-                                name={[field.name, 'summaryZh']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <TextArea rows={4} />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.portalSummaryEn}
-                                name={[field.name, 'summaryEn']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <TextArea rows={4} />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.portalContentZh}
-                                name={[field.name, 'contentZh']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <TextArea rows={5} />
-                              </Form.Item>
-                              <Form.Item
-                                label={copy.portalContentEn}
-                                name={[field.name, 'contentEn']}
-                                rules={[{ required: true, whitespace: true }]}
-                              >
-                                <TextArea rows={5} />
-                              </Form.Item>
-                            </div>
-                          </Card>
-                        ))}
-                        <Button
-                          icon={<PlusOutlined />}
-                          onClick={() =>
-                            add({
-                              id: nextId('announcement'),
-                              publishedAt: new Date().toISOString().slice(0, 10),
-                              published: true,
-                              pinned: false,
-                            })
-                          }
-                        >
-                          {copy.portalAnnouncementAdd}
-                        </Button>
-                      </div>
-                    )}
-                  </Form.List>
-                ),
-              },
-            ]}
-          />
-        </Form>
-      </Modal>
     </div>
   );
 }

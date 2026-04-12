@@ -21,17 +21,21 @@ derived_from:
 ## Shared Design Spine
 
 - Modules are registered once and reused across navigation, overview, and generated documentation.
-- Assets are treated as reusable outputs with explicit downstream consumers.
+- Assets are treated as reusable outputs or shared capabilities with explicit downstream consumers.
+- Asset-facing pages should expose the next valid handoff directly instead of forcing download and re-upload loops.
 - Workflow outputs are expected to advertise whether they can feed map overlays, asset catalogs, or later workflow steps.
 - Personal account data, reusable assets, and workspace-wide settings are separated into different pages and responsibilities.
+- GEE credentials belong to the asset hub when they can be shared or promoted to platform defaults, because they participate in downstream workflow execution like other reusable capabilities.
+- The overview is task-oriented: action queue, announcement state, recent runs, and module entry all come from live workspace state instead of duplicated feature copy.
 
 ## Runtime Flows
 
 1. A user enters the workspace through the overview and module registry.
-2. Reusable inputs such as datasets, ROIs, models, and credentials move into workflows.
-3. Workflow runs produce result assets that should flow back into the asset hub.
-4. Overlay-compatible outputs continue into the spatial workspace without manual reformatting.
-5. Published assets remain visible through dataset, product, and overview surfaces.
+2. Reusable inputs such as datasets, ROIs, models, and shared capabilities like GEE credentials move into workflows.
+3. Workflow and spatial pages surface persistent handoff feedback so the receiving side remains visible after route changes.
+4. Workflow runs produce result assets that should flow back into the asset hub.
+5. Overlay-compatible outputs continue into the spatial workspace without manual reformatting.
+6. Published assets remain visible through dataset, product, and overview surfaces.
 
 ## Documentation Rules
 

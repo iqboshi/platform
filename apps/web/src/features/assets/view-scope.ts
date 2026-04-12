@@ -1,6 +1,6 @@
 import type { AssetScope } from '@platform/types';
 
-export type PersonalAssetsPageView = 'assets' | 'account' | 'workspace-settings';
+export type PersonalAssetsPageView = 'assets' | 'account';
 
 export function shouldInitializeAdminAssetScope(view: PersonalAssetsPageView): boolean {
   return view === 'assets' || view === 'account';

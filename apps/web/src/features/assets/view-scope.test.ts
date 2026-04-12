@@ -13,11 +13,6 @@ describe('asset view scope helpers', () => {
     expect(getInitialAssetScopeForView('account', 'ADMIN')).toBe('all');
   });
 
-  it('keeps workspace settings out of asset scope loading', () => {
-    expect(shouldInitializeAdminAssetScope('workspace-settings')).toBe(false);
-    expect(getInitialAssetScopeForView('workspace-settings', 'ADMIN')).toBe('mine');
-  });
-
   it('keeps non-admin users on their own assets', () => {
     expect(getInitialAssetScopeForView('assets', 'MEMBER')).toBe('mine');
     expect(getInitialAssetScopeForView('account', undefined)).toBe('mine');

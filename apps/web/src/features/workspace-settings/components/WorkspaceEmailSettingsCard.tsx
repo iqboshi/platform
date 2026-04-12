@@ -70,27 +70,27 @@ export function WorkspaceEmailSettingsCard({
   const [expanded, setExpanded] = useState(false);
   const isChineseCopy = /[\u4e00-\u9fff]/.test(copy.title);
   const sectionCopy = {
-    deliverySectionTitle: copy.deliverySectionTitle ?? (isChineseCopy ? 'SMTP 发送通道' : 'Delivery channel'),
+    deliverySectionTitle: copy.deliverySectionTitle ?? (isChineseCopy ? 'SMTP 通道' : 'Delivery channel'),
     deliverySectionCopy:
       copy.deliverySectionCopy ??
       (isChineseCopy
-        ? '配置 SMTP 通道是否启用，以及 SSL、主机、端口和超时等连接参数。'
+        ? '配置 SMTP 开关、SSL、主机、端口和超时，用于平台验证码邮件发送。'
         : 'Configure enablement, SSL, host, port, and timeout for SMTP transport.'),
     identitySectionTitle: copy.identitySectionTitle ?? (isChineseCopy ? '发件身份' : 'Sender identity'),
     identitySectionCopy:
       copy.identitySectionCopy ??
       (isChineseCopy
-        ? '维护登录账号、已存储凭证，以及发件邮箱与显示名称。'
+        ? '维护登录账号、存储密码以及收件人实际看到的发件信息。'
         : 'Maintain the sign-in account, stored credential, and sender information.'),
     policySectionTitle: copy.policySectionTitle ?? (isChineseCopy ? '验证策略' : 'Verification policy'),
     policySectionCopy:
       copy.policySectionCopy ??
       (isChineseCopy
-        ? '控制邮件验证码与图形验证码的有效期，以及邮件重发等待时间。'
+        ? '统一设置邮箱验证码和图形验证码的有效期与重发节流。'
         : 'Control expiry and resend timing for email codes and image captcha challenges.'),
   };
-  const expandLabel = copy.expandLabel ?? (isChineseCopy ? '展开配置' : 'Show settings');
-  const collapseLabel = copy.collapseLabel ?? (isChineseCopy ? '收起配置' : 'Collapse');
+  const expandLabel = copy.expandLabel ?? (isChineseCopy ? '展开设置' : 'Show settings');
+  const collapseLabel = copy.collapseLabel ?? (isChineseCopy ? '收起设置' : 'Collapse');
 
   return (
     <div className="workspace-settings-stack">

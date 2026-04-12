@@ -2,7 +2,6 @@ import type { AssetOverview, PlatformDataSnapshot } from '@/lib/api';
 import type {
   AssetScope,
   DatasetKind,
-  EmailSettingsSummary,
   ProductAssetSummary,
   RoleUpgradeRequestSummary,
 } from '@platform/types';
@@ -28,6 +27,15 @@ import {
   createWorkflowDatasetHandoff,
   createWorkflowRoiHandoff,
 } from '@/features/asset-flow/handoff';
+import {
+  buildDatasetNextSteps,
+  buildModelNextSteps,
+  buildProductNextSteps,
+  buildSpatialOverlayNextSteps,
+  buildSpatialRoiNextSteps,
+  isDatasetVersionMapReady,
+} from '@/features/asset-flow/next-steps';
+import { AssetNextStepCell } from '@/features/asset-flow/AssetNextStepCell';
 import { useI18n } from '@/i18n/useI18n';
 import {
   deleteDataset,
@@ -44,7 +52,6 @@ import {
   createRoleUpgradeRequest,
   changeCurrentUserPassword,
   deleteProductAsset,
-  getEmailSettings,
   importWorkflowVersion,
   getImageCaptcha,
   listMyRoleUpgradeRequests,
@@ -53,7 +60,6 @@ import {
   sendEmailVerificationCode,
   updateModelVersion,
   updateProductAsset,
-  updateEmailSettings,
   updateCurrentUserProfile,
   updateDataset,
   updateSpatialOverlay,
@@ -78,9 +84,7 @@ import {
   ProductEditorModal,
 } from './components/AssetModals';
 import { AssetsCatalogCard, type AssetCatalogSection } from './components/AssetsCatalogCard';
-import { GeeCredentialsSectionCard } from './components/GeeCredentialsSectionCard';
 import { PersonalAssetsHeader } from './components/PersonalAssetsHeader';
-import { WorkspaceEmailSettingsCard } from './components/WorkspaceEmailSettingsCard';
 import {
   getInitialAssetScopeForView,
   shouldInitializeAdminAssetScope,
@@ -227,22 +231,6 @@ interface RoleRequestFormValues {
   reason: string;
 }
 
-interface EmailConfigFormValues {
-  emailEnabled: boolean;
-  smtpHost: string;
-  smtpPort: number;
-  smtpUseSsl: boolean;
-  smtpUsername: string;
-  smtpPassword?: string;
-  clearSmtpPassword?: boolean;
-  smtpFromEmail: string;
-  smtpFromName: string;
-  smtpTimeoutSeconds: number;
-  emailCodeExpireMinutes: number;
-  emailCodeResendSeconds: number;
-  imageCaptchaExpireMinutes: number;
-}
-
 export type { PersonalAssetsPageView } from './view-scope';
 
 function initialsForName(name: string | undefined): string {
@@ -252,35 +240,6 @@ function initialsForName(name: string | undefined): string {
   }
   const parts = cleaned.split(/\s+/).slice(0, 2);
   return parts.map((part) => part.charAt(0).toUpperCase()).join('');
-}
-
-function datasetVersionSupportsMapPreview(
-  kind: DatasetKind,
-  latestVersion: AssetOverview['datasetVersions'][number] | undefined,
-): boolean {
-  if (!latestVersion || !['raster', 'vector'].includes(kind)) {
-    return false;
-  }
-
-  const metadata = latestVersion.metadata ?? {};
-  const contentType = String(metadata.content_type ?? '').toLowerCase();
-  const originalFileName = String(metadata.original_file_name ?? '').toLowerCase();
-
-  if (kind === 'raster') {
-    return (
-      contentType.includes('tiff') ||
-      contentType.includes('geotiff') ||
-      originalFileName.endsWith('.tif') ||
-      originalFileName.endsWith('.tiff')
-    );
-  }
-
-  return (
-    contentType.includes('geo+json') ||
-    contentType.endsWith('/json') ||
-    originalFileName.endsWith('.geojson') ||
-    originalFileName.endsWith('.json')
-  );
 }
 
 const ASSET_TABLE_PAGINATION = {
@@ -326,9 +285,6 @@ export function PersonalAssetsPage({
   const [profileSaving, setProfileSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [roleRequestSaving, setRoleRequestSaving] = useState(false);
-  const [emailConfigLoading, setEmailConfigLoading] = useState(false);
-  const [emailConfigSaving, setEmailConfigSaving] = useState(false);
-  const [emailSettings, setEmailSettings] = useState<EmailSettingsSummary | null>(null);
   const [roleRequestsLoading, setRoleRequestsLoading] = useState(false);
   const [roleRequests, setRoleRequests] = useState<RoleUpgradeRequestSummary[]>([]);
   const [profileCaptchaKey, setProfileCaptchaKey] = useState('');
@@ -348,7 +304,6 @@ export function PersonalAssetsPage({
   const [profileForm] = Form.useForm<ProfileFormValues>();
   const [passwordForm] = Form.useForm<PasswordFormValues>();
   const [roleRequestForm] = Form.useForm<RoleRequestFormValues>();
-  const [emailConfigForm] = Form.useForm<EmailConfigFormValues>();
   const selectedUploadKind = Form.useWatch('kind', uploadForm) ?? 'table';
   const watchedProfileEmail = Form.useWatch('email', profileForm) ?? '';
   const watchedAvatarUrl = Form.useWatch('avatarUrl', profileForm) ?? '';
@@ -356,7 +311,6 @@ export function PersonalAssetsPage({
   const watchedOrganization = Form.useWatch('organization', profileForm) ?? '';
   const isAssetsView = view === 'assets';
   const isAccountView = view === 'account';
-  const isWorkspaceSettingsView = view === 'workspace-settings';
   const needsAssetOverview = isAssetsView || isAccountView;
 
   const isAdmin = currentUser?.role === 'ADMIN';
@@ -390,40 +344,27 @@ export function PersonalAssetsPage({
         ? isAssetsView
           ? {
               kicker: '资产中心',
-              title: '集中管理可复用资产与运行结果',
-              copy: '这里只保留资产与结果，不再混入账户资料和平台设置。',
+              title: '集中管理可复用资产、结果与共享能力',
+              copy: '这里统一管理数据集、结果、工作流、产品、空间对象与 GEE 凭证，方便发布、复用与跨页面流转。',
             }
-          : isAccountView
-            ? {
-                kicker: '账户中心',
-                title: '管理个人资料、安全设置与个人集成',
-                copy: '个人资料、密码、角色申请和 GEE 凭据集中到这里，不再和资产管理混在一起。',
-              }
-            : {
-                kicker: '工作空间设置',
-                title: '集中管理平台级邮件与验证配置',
-                copy: '平台设置从个人资产页中拆出，避免资产管理和系统配置互相干扰。',
-              }
+          : {
+              kicker: '账户中心',
+              title: '管理个人资料、安全设置与账号申请',
+              copy: '这里只保留个人资料、密码与角色申请，不再混入可共享资产。',
+            }
         : isAssetsView
           ? {
               kicker: 'Asset Hub',
-              title: 'Manage reusable assets and run outputs',
-              copy: 'This page now focuses on assets and results only.',
+              title: 'Manage reusable assets, outputs, and shared capabilities',
+              copy:
+                'Datasets, results, workflows, products, spatial objects, and GEE credentials now live together for publishing, reuse, and cross-page handoff.',
             }
-          : isAccountView
-            ? {
-                kicker: 'Account Center',
-                title: 'Manage profile, security, and personal integrations',
-                copy:
-                  'Profile, password, role requests, and GEE credentials now live here instead of being mixed into asset management.',
-              }
-            : {
-                kicker: 'Workspace Settings',
-                title: 'Manage platform-wide email and verification settings',
-                copy:
-                  'System settings are now separated from personal assets to reduce page-level responsibility overlap.',
-              },
-    [isAccountView, isAssetsView, locale],
+          : {
+              kicker: 'Account Center',
+              title: 'Manage profile, security, and access requests',
+              copy: 'Profile, password, and role requests stay here without being mixed with reusable assets.',
+            },
+    [isAssetsView, locale],
   );
   const handoffCopy = useMemo(
     () =>
@@ -431,10 +372,12 @@ export function PersonalAssetsPage({
         ? {
             openInWorkflow: '送入工作流',
             openInMap: '打开到地图',
+            nextSteps: '下一步',
           }
         : {
             openInWorkflow: 'Use In Workflow',
             openInMap: 'Open In Map',
+            nextSteps: 'Next Steps',
           },
     [locale],
   );
@@ -482,10 +425,6 @@ export function PersonalAssetsPage({
           setPlatformDefault: 'Set As Platform Default',
         platformDefaultSet: 'Platform default GEE credential updated.',
         };
-  const geeSectionCopy =
-    locale === 'zh-CN'
-      ? '将 Earth Engine 凭证单独管理，避免继续和数据集、模型、工作流等资产混在同一块区域。'
-      : 'Manage Earth Engine credentials in a dedicated area instead of mixing them into the asset catalog.';
   const productCopy =
     locale === 'zh-CN'
       ? {
@@ -692,93 +631,19 @@ export function PersonalAssetsPage({
           reviewedBy: 'Reviewed by',
           reviewedAt: 'Reviewed at',
         };
-  const emailConfigCopy =
-    locale === 'zh-CN'
-      ? {
-          title: '邮件发送配置',
-          copy: '管理员可在这里配置平台发验证码邮件所使用的邮箱账号。下面的说明按 QQ 邮箱优先写，其他邮箱服务商也可按 SMTP 参数替换。',
-          exampleTitle: 'QQ 邮箱推荐填写方式',
-          exampleBody: '主机填 smtp.qq.com，端口填 465，开启 SSL，用户名和发件邮箱都填完整 QQ 邮箱地址，密码处填写 QQ 邮箱授权码而不是登录密码。',
-          enabledLabel: '启用邮件验证功能',
-          enabledHelp: '关闭后，注册验证码和修改邮箱验证码都会停用。',
-          hostLabel: 'SMTP 服务器地址',
-          hostHelp: '邮件服务商提供的 SMTP 地址。QQ 邮箱一般填写 smtp.qq.com。',
-          portLabel: 'SMTP 端口',
-          portHelp: '和加密方式配套使用。QQ 邮箱通常是 465。',
-          sslLabel: '使用 SSL 加密连接',
-          sslHelp: '如果端口是 465，通常应保持开启。',
-          usernameLabel: 'SMTP 登录账号',
-          usernameHelp: '通常填写完整邮箱地址，例如 123456@qq.com。',
-          passwordLabel: 'SMTP 授权码 / 密码',
-          passwordHelp: 'QQ 邮箱这里要填“授权码”，不是 QQ 登录密码。',
-          clearPasswordLabel: '清空已存密码',
-          clearPasswordHelp: '只有在你想删除当前已保存的 SMTP 密码时才需要打开。',
-          fromEmailLabel: '发件邮箱地址',
-          fromEmailHelp: '邮件里展示的发件地址，通常和 SMTP 登录账号一致。',
-          fromNameLabel: '发件人名称',
-          fromNameHelp: '收件人看到的发件人名字，例如 Platform RS Studio。',
-          timeoutLabel: '超时时间（秒）',
-          timeoutHelp: '连接 SMTP 服务器最长等待时间，建议 15 到 30 秒。',
-          codeExpireLabel: '邮箱验证码有效期（分钟）',
-          codeExpireHelp: '用户收到邮件后，验证码可使用多久。通常填 10 分钟。',
-          resendLabel: '验证码重发等待（秒）',
-          resendHelp: '防止频繁请求发送邮件。通常填 60 秒。',
-          captchaExpireLabel: '图片验证码有效期（分钟）',
-          captchaExpireHelp: '发送邮箱验证码前的人机校验码保留多久。通常填 5 分钟。',
-          passwordHint: '留空则保留当前已存密码。',
-          passwordConfigured: '当前已保存 SMTP 密码。',
-          save: '保存邮件配置',
-          saved: '邮件配置已更新。',
-        }
-      : {
-          title: 'Email delivery settings',
-          copy: 'Administrators can configure the mailbox used to send verification emails here. The hints below use QQ Mail as the default example.',
-          exampleTitle: 'Recommended QQ Mail setup',
-          exampleBody: 'Use smtp.qq.com, port 465, keep SSL enabled, set both username and from email to the full QQ mailbox address, and enter the QQ mailbox authorization code instead of the sign-in password.',
-          enabledLabel: 'Enable email verification',
-          enabledHelp: 'Turn this off to disable registration and change-email verification messages.',
-          hostLabel: 'SMTP server host',
-          hostHelp: 'The SMTP host provided by your mail provider. For QQ Mail, use smtp.qq.com.',
-          portLabel: 'SMTP port',
-          portHelp: 'Should match the encryption mode. QQ Mail usually uses 465.',
-          sslLabel: 'Use SSL encryption',
-          sslHelp: 'If you use port 465, this should usually stay enabled.',
-          usernameLabel: 'SMTP sign-in account',
-          usernameHelp: 'Usually the full mailbox address, for example 123456@qq.com.',
-          passwordLabel: 'SMTP password / auth code',
-          passwordHelp: 'For QQ Mail, enter the mailbox authorization code, not the web sign-in password.',
-          clearPasswordLabel: 'Clear stored password',
-          clearPasswordHelp: 'Only turn this on when you want to delete the currently stored SMTP password.',
-          fromEmailLabel: 'From email address',
-          fromEmailHelp: 'The sender address shown in the email. Usually the same as the SMTP username.',
-          fromNameLabel: 'From display name',
-          fromNameHelp: 'The sender name shown to recipients, such as Platform RS Studio.',
-          timeoutLabel: 'Timeout (seconds)',
-          timeoutHelp: 'Maximum wait time for the SMTP connection. 15 to 30 seconds is typical.',
-          codeExpireLabel: 'Email code expiry (minutes)',
-          codeExpireHelp: 'How long the email verification code stays valid. 10 minutes is typical.',
-          resendLabel: 'Resend cooldown (seconds)',
-          resendHelp: 'Prevents repeated send requests. 60 seconds is typical.',
-          captchaExpireLabel: 'Image captcha expiry (minutes)',
-          captchaExpireHelp: 'How long the image captcha stays valid before sending an email code.',
-          passwordHint: 'Leave blank to keep the currently stored password.',
-          passwordConfigured: 'An SMTP password is currently stored.',
-          save: 'Save email settings',
-          saved: 'Email settings updated.',
-        };
   const spatialCopy =
     locale === 'zh-CN'
       ? {
           roiTab: '空间 ROI',
-          overlayTab: '空间图层',
+          overlayTab: '空间叠加层',
           type: '类型',
           bbox: '范围',
           datasetVersion: '数据集版本',
           opacity: '透明度',
-          emptyRoi: '当前范围下还没有空间 ROI 资产。',
-          emptyOverlay: '当前范围下还没有空间叠加图层资产。',
+          emptyRoi: '当前范围下没有空间 ROI 资产。',
+          emptyOverlay: '当前范围下没有空间叠加层资产。',
           roiDeleted: '空间 ROI 已删除。',
-          overlayDeleted: '空间图层已删除。',
+          overlayDeleted: '空间叠加层已删除。',
         }
       : {
           roiTab: 'Spatial ROIs',
@@ -821,36 +686,6 @@ export function PersonalAssetsPage({
     [message, scope, t, token],
   );
 
-  const reloadEmailConfig = useCallback(async () => {
-    if (!isAdmin || !token) {
-      return;
-    }
-
-    try {
-      setEmailConfigLoading(true);
-      const payload = await getEmailSettings(token);
-      setEmailSettings(payload);
-      emailConfigForm.setFieldsValue({
-        emailEnabled: payload.emailEnabled,
-        smtpHost: payload.smtpHost,
-        smtpPort: payload.smtpPort,
-        smtpUseSsl: payload.smtpUseSsl,
-        smtpUsername: payload.smtpUsername,
-        smtpPassword: '',
-        clearSmtpPassword: false,
-        smtpFromEmail: payload.smtpFromEmail,
-        smtpFromName: payload.smtpFromName,
-        smtpTimeoutSeconds: payload.smtpTimeoutSeconds,
-        emailCodeExpireMinutes: payload.emailCodeExpireMinutes,
-        emailCodeResendSeconds: payload.emailCodeResendSeconds,
-        imageCaptchaExpireMinutes: payload.imageCaptchaExpireMinutes,
-      });
-    } catch (error) {
-      message.error(isApiError(error) ? error.message : t('error.request_failed'));
-    } finally {
-      setEmailConfigLoading(false);
-    }
-  }, [emailConfigForm, isAdmin, message, t, token]);
 
   useEffect(() => {
     if (!token || !needsAssetOverview) {
@@ -904,12 +739,6 @@ export function PersonalAssetsPage({
     });
   }, [currentUser, profileForm]);
 
-  useEffect(() => {
-    if (!isWorkspaceSettingsView) {
-      return;
-    }
-    void reloadEmailConfig();
-  }, [isWorkspaceSettingsView, reloadEmailConfig]);
 
   useEffect(() => {
     if (!token || !isAccountView) {
@@ -1076,11 +905,6 @@ export function PersonalAssetsPage({
   };
 
   const handleRefreshPage = useCallback(async () => {
-    if (isWorkspaceSettingsView) {
-      await reloadEmailConfig();
-      return;
-    }
-
     const tasks: Promise<unknown>[] = [];
     if (needsAssetOverview) {
       tasks.push(refreshAssets());
@@ -1089,15 +913,7 @@ export function PersonalAssetsPage({
       tasks.push(reloadRoleRequests(), refreshCurrentUser());
     }
     await Promise.all(tasks);
-  }, [
-    isAccountView,
-    isWorkspaceSettingsView,
-    needsAssetOverview,
-    refreshAssets,
-    refreshCurrentUser,
-    reloadEmailConfig,
-    reloadRoleRequests,
-  ]);
+  }, [isAccountView, needsAssetOverview, refreshAssets, refreshCurrentUser, reloadRoleRequests]);
 
   const openDatasetInWorkflow = useCallback(
     (datasetVersionId: string, label?: string) => {
@@ -1662,42 +1478,6 @@ export function PersonalAssetsPage({
     }
   };
 
-  const handleSaveEmailConfig = async () => {
-    if (!token || !isAdmin) {
-      return;
-    }
-
-    try {
-      setEmailConfigSaving(true);
-      const values = await emailConfigForm.validateFields();
-      const payload = await updateEmailSettings(token, {
-        emailEnabled: values.emailEnabled,
-        smtpHost: values.smtpHost,
-        smtpPort: values.smtpPort,
-        smtpUseSsl: values.smtpUseSsl,
-        smtpUsername: values.smtpUsername,
-        smtpPassword: values.smtpPassword?.trim() ? values.smtpPassword : undefined,
-        clearSmtpPassword: Boolean(values.clearSmtpPassword),
-        smtpFromEmail: values.smtpFromEmail,
-        smtpFromName: values.smtpFromName,
-        smtpTimeoutSeconds: values.smtpTimeoutSeconds,
-        emailCodeExpireMinutes: values.emailCodeExpireMinutes,
-        emailCodeResendSeconds: values.emailCodeResendSeconds,
-        imageCaptchaExpireMinutes: values.imageCaptchaExpireMinutes,
-      });
-      setEmailSettings(payload);
-      emailConfigForm.setFieldsValue({
-        ...values,
-        smtpPassword: '',
-        clearSmtpPassword: false,
-      });
-      message.success(emailConfigCopy.saved);
-    } catch (error) {
-      message.error(isApiError(error) ? error.message : t('error.request_failed'));
-    } finally {
-      setEmailConfigSaving(false);
-    }
-  };
 
   const latestRoleRequest = roleRequests[0];
   const currentRoleLabel = currentUser ? t(roleKey(currentUser.role)) : '-';
@@ -1826,6 +1606,29 @@ export function PersonalAssetsPage({
       ),
     },
     {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: (typeof datasetRows)[number]) => {
+        const latestVersionId = record.latestVersion?.id;
+        const mapReady = isDatasetVersionMapReady(record.kind, record.latestVersion);
+        return (
+          <AssetNextStepCell
+            model={buildDatasetNextSteps(locale, {
+              latestVersionId,
+              mapReady,
+              onOpenInWorkflow: latestVersionId
+                ? () => openDatasetInWorkflow(latestVersionId, record.name)
+                : undefined,
+              onOpenInMap:
+                latestVersionId && mapReady
+                  ? () => openAssetVersionInMap(latestVersionId, record.name)
+                  : undefined,
+            })}
+          />
+        );
+      },
+    },
+    {
       title: t('common.actions'),
       key: 'actions',
       render: (_: unknown, record: (typeof datasetRows)[number]) => {
@@ -1836,16 +1639,6 @@ export function PersonalAssetsPage({
             {latestVersionId ? (
               <Button type="link" onClick={() => token && void downloadDatasetVersion(token, latestVersionId)}>
                 {t('common.download')}
-              </Button>
-            ) : null}
-            {latestVersionId ? (
-              <Button type="link" onClick={() => openDatasetInWorkflow(latestVersionId, record.name)}>
-                {handoffCopy.openInWorkflow}
-              </Button>
-            ) : null}
-            {latestVersionId && datasetVersionSupportsMapPreview(record.kind, record.latestVersion) ? (
-              <Button type="link" onClick={() => openAssetVersionInMap(latestVersionId, record.name)}>
-                {handoffCopy.openInMap}
               </Button>
             ) : null}
             {canManageDataset ? (
@@ -1984,6 +1777,13 @@ export function PersonalAssetsPage({
       dataIndex: 'updatedAt',
     },
     {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: ProductAssetSummary) => (
+        <AssetNextStepCell model={buildProductNextSteps(locale, record)} />
+      ),
+    },
+    {
       title: t('common.actions'),
       key: 'actions',
       render: (_: unknown, record: ProductAssetSummary) => {
@@ -2044,27 +1844,52 @@ export function PersonalAssetsPage({
       title: t('assets.resultDataset'),
       dataIndex: 'resultDatasetVersionId',
       render: (value: string | undefined) =>
-        value && token ? (
-          <Space wrap>
-            <Button type="link" onClick={() => void downloadDatasetVersion(token, value)}>
-              {t('common.download')}
-            </Button>
-            <Button type="link" onClick={() => openDatasetInWorkflow(value, value)}>
-              {handoffCopy.openInWorkflow}
-            </Button>
-            {snapshot.datasetVersions.some(
-              (datasetVersion) =>
-                datasetVersion.id === value &&
-                datasetVersionSupportsMapPreview(
-                  snapshot.datasets.find((dataset) => dataset.id === datasetVersion.datasetId)?.kind ?? 'artifact',
-                  datasetVersion,
-                ),
-            ) ? (
-              <Button type="link" onClick={() => openAssetVersionInMap(value, value)}>
-                {handoffCopy.openInMap}
-              </Button>
-            ) : null}
-          </Space>
+        value ? value : '-',
+    },
+    {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: NonNullable<typeof overview>['workflowRuns'][number]) => {
+        const resultDatasetVersion = snapshot.datasetVersions.find(
+          (datasetVersion) => datasetVersion.id === record.resultDatasetVersionId,
+        );
+        const resultDataset = snapshot.datasets.find(
+          (dataset) => dataset.id === resultDatasetVersion?.datasetId,
+        );
+        const mapReady =
+          resultDatasetVersion !== undefined &&
+          resultDataset !== undefined &&
+          isDatasetVersionMapReady(resultDataset.kind, resultDatasetVersion);
+
+        return (
+          <AssetNextStepCell
+            model={buildDatasetNextSteps(locale, {
+              latestVersionId: record.resultDatasetVersionId,
+              mapReady,
+              missingVersionNote:
+                locale === 'zh-CN'
+                  ? '当前运行还没有输出结果数据集，暂时不能继续送入工作流或地图。'
+                  : 'This workflow run does not have a result dataset yet.',
+              onOpenInWorkflow: record.resultDatasetVersionId
+                ? () => openDatasetInWorkflow(record.resultDatasetVersionId!, record.id)
+                : undefined,
+              onOpenInMap:
+                record.resultDatasetVersionId && mapReady
+                  ? () => openAssetVersionInMap(record.resultDatasetVersionId!, record.id)
+                  : undefined,
+            })}
+          />
+        );
+      },
+    },
+    {
+      title: t('common.actions'),
+      key: 'actions',
+      render: (_: unknown, record: NonNullable<typeof overview>['workflowRuns'][number]) =>
+        record.resultDatasetVersionId && token ? (
+          <Button type="link" onClick={() => void downloadDatasetVersion(token, record.resultDatasetVersionId!)}>
+            {t('common.download')}
+          </Button>
         ) : (
           '-'
         ),
@@ -2097,6 +1922,13 @@ export function PersonalAssetsPage({
         ]
       : []),
     { title: t('common.createdAt'), dataIndex: 'createdAt' },
+    {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: NonNullable<typeof overview>['modelVersions'][number]) => (
+        <AssetNextStepCell model={buildModelNextSteps(locale, record)} />
+      ),
+    },
     {
       title: t('common.actions'),
       key: 'actions',
@@ -2229,15 +2061,23 @@ export function PersonalAssetsPage({
         ]
       : []),
     {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: NonNullable<typeof overview>['spatialRois'][number]) => (
+        <AssetNextStepCell
+          model={buildSpatialRoiNextSteps(locale, {
+            onOpenInWorkflow: () => openSpatialRoiInWorkflow(record.id, record.name),
+          })}
+        />
+      ),
+    },
+    {
       title: t('common.actions'),
       key: 'actions',
       render: (_: unknown, record: NonNullable<typeof overview>['spatialRois'][number]) => {
         const canManageSpatialRoi = isAdmin || currentUser?.id === record.ownerUserId;
         return (
           <Space wrap>
-            <Button type="link" onClick={() => openSpatialRoiInWorkflow(record.id, record.name)}>
-              {handoffCopy.openInWorkflow}
-            </Button>
             {isAdmin ? (
               <Button
                 type="link"
@@ -2308,6 +2148,17 @@ export function PersonalAssetsPage({
         ]
       : []),
     {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: NonNullable<typeof overview>['spatialOverlays'][number]) => (
+        <AssetNextStepCell
+          model={buildSpatialOverlayNextSteps(locale, {
+            onOpenInMap: () => openAssetVersionInMap(record.datasetVersionId, record.name),
+          })}
+        />
+      ),
+    },
+    {
       title: t('common.actions'),
       key: 'actions',
       render: (_: unknown, record: NonNullable<typeof overview>['spatialOverlays'][number]) => {
@@ -2357,6 +2208,7 @@ export function PersonalAssetsPage({
       ? {
           dataGroup: '可复用输入资产',
           automationGroup: '流程与结果',
+          capabilityGroup: '共享能力',
           spatialGroup: '空间资产',
           datasetSummary: `${datasetRows.filter((item) => item.assetType === 'dataset').length} 个输入资产，${datasetRows.filter((item) => item.assetType === 'result').length} 个派生结果`,
           datasetDetail: `${datasetRows.filter((item) => isSharedVisibility(item.visibility)).length} 个已共享数据集可继续跨页面复用`,
@@ -2368,6 +2220,8 @@ export function PersonalAssetsPage({
           runDetail: `${(overview?.workflowRuns ?? []).filter((item) => item.status === 'succeeded').length} 次成功运行`,
           modelSummary: `${overview?.modelVersions.length ?? 0} 个模型版本可直接供工作流调用`,
           modelDetail: `${(overview?.modelVersions ?? []).filter((item) => isSharedVisibility(item.visibility)).length} 个模型已共享`,
+          geeSummary: `${overview?.geeCredentials.length ?? 0} 个 GEE 凭据可作为 Earth Engine 访问能力复用`,
+          geeDetail: `${(overview?.geeCredentials ?? []).filter((item) => item.isPlatformDefault).length} 个凭据已设为平台默认`,
           roiSummary: `${overview?.spatialRois.length ?? 0} 个 ROI 可作为空间输入继续流转`,
           roiDetail: `${(overview?.spatialRois ?? []).filter((item) => item.visibility === 'public').length} 个 ROI 已公开`,
           overlaySummary: `${overview?.spatialOverlays.length ?? 0} 个叠加层记录可复用地图表达`,
@@ -2376,6 +2230,7 @@ export function PersonalAssetsPage({
       : {
           dataGroup: 'Reusable Inputs',
           automationGroup: 'Automation And Results',
+          capabilityGroup: 'Shared Capabilities',
           spatialGroup: 'Spatial Assets',
           datasetSummary: `${datasetRows.filter((item) => item.assetType === 'dataset').length} input assets and ${datasetRows.filter((item) => item.assetType === 'result').length} derived results`,
           datasetDetail: `${datasetRows.filter((item) => isSharedVisibility(item.visibility)).length} shared datasets can continue across pages`,
@@ -2387,6 +2242,8 @@ export function PersonalAssetsPage({
           runDetail: `${(overview?.workflowRuns ?? []).filter((item) => item.status === 'succeeded').length} successful runs`,
           modelSummary: `${overview?.modelVersions.length ?? 0} model versions ready for workflow use`,
           modelDetail: `${(overview?.modelVersions ?? []).filter((item) => isSharedVisibility(item.visibility)).length} shared model versions`,
+          geeSummary: `${overview?.geeCredentials.length ?? 0} GEE credentials reusable as Earth Engine access capabilities`,
+          geeDetail: `${(overview?.geeCredentials ?? []).filter((item) => item.isPlatformDefault).length} credentials set as platform default`,
           roiSummary: `${overview?.spatialRois.length ?? 0} ROIs available as spatial inputs`,
           roiDetail: `${(overview?.spatialRois ?? []).filter((item) => item.visibility === 'public').length} public ROIs`,
           overlaySummary: `${overview?.spatialOverlays.length ?? 0} overlays preserved as reusable map expressions`,
@@ -2451,6 +2308,17 @@ export function PersonalAssetsPage({
       detail: assetSectionCopy.modelDetail,
     },
     {
+      key: 'gee-credentials',
+      label: geeCopy.tab,
+      rows: (overview?.geeCredentials ?? []) as AssetCatalogSection['rows'],
+      columns: geeCredentialColumns as AssetCatalogSection['columns'],
+      emptyLabel: geeCopy.empty,
+      groupKey: 'capabilities',
+      groupLabel: assetSectionCopy.capabilityGroup,
+      summary: assetSectionCopy.geeSummary,
+      detail: assetSectionCopy.geeDetail,
+    },
+    {
       key: 'spatial-rois',
       label: spatialCopy.roiTab,
       rows: (overview?.spatialRois ?? []) as AssetCatalogSection['rows'],
@@ -2480,7 +2348,6 @@ export function PersonalAssetsPage({
         title={pageCopy.title}
         copy={pageCopy.copy}
         isAssetsView={isAssetsView}
-        isAccountView={isAccountView}
         uploadDatasetLabel={t('assets.uploadDataset')}
         uploadProductLabel={productCopy.upload}
         addCredentialLabel={geeCopy.add}
@@ -2562,32 +2429,6 @@ export function PersonalAssetsPage({
         />
       ) : null}
 
-      {isAccountView ? (
-        <GeeCredentialsSectionCard
-          overview={overview}
-          scope={scope}
-          scopeOptions={assetScopeOptions}
-          loading={loading}
-          columns={geeCredentialColumns}
-          pagination={ASSET_TABLE_PAGINATION}
-          tabLabel={geeCopy.tab}
-          sectionCopy={geeSectionCopy}
-          emptyLabel={geeCopy.empty}
-          loadingLabel={t('common.loading')}
-          onScopeChange={setScope}
-        />
-      ) : null}
-
-      {isWorkspaceSettingsView ? (
-        <WorkspaceEmailSettingsCard
-          form={emailConfigForm}
-          emailSettings={emailSettings}
-          copy={emailConfigCopy}
-          loading={emailConfigLoading}
-          saving={emailConfigSaving}
-          onSave={() => void handleSaveEmailConfig()}
-        />
-      ) : null}
 
       <DatasetUploadModal
         open={uploadOpen}

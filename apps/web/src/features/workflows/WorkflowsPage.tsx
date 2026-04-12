@@ -1,14 +1,12 @@
 import type { PlatformDataSnapshot } from '@/lib/api';
 
-import { App, Button, Card, Col, Modal, Progress, Row, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Col, Modal, Progress, Row, Table, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 
 import { isApiError } from '@/auth/errors';
 import { AssetFlowPanel } from '@/features/asset-flow/AssetFlowPanel';
 import {
-  createHandoffPath,
-  createSpatialAssetHandoff,
   readHandoffFromSearchParams,
   removeHandoffFromSearchParams,
 } from '@/features/asset-flow/handoff';
@@ -25,7 +23,6 @@ import {
   validateWorkflow,
 } from '@/lib/api';
 import { parseImportedWorkflowGraph } from '@/lib/workflow-import';
-import { workflowRunStatusKey } from '@/lib/i18n-helpers';
 import type { WorkflowEditorContext } from './node-registry';
 import {
   attachDatasetVersionToWorkflow,
@@ -35,58 +32,12 @@ import { buildWorkflowStats } from './workflow-utils';
 
 const { Paragraph } = Typography;
 
-const RUN_HISTORY_PAGINATION = {
-  pageSize: 8,
-  showSizeChanger: true,
-  pageSizeOptions: ['8', '20', '50'],
-  hideOnSinglePage: true,
-};
-
 const ASSET_IMPORT_PAGINATION = {
   pageSize: 6,
   showSizeChanger: true,
   pageSizeOptions: ['6', '12', '24'],
   hideOnSinglePage: true,
 };
-
-function datasetVersionIsMapReady(
-  datasetVersionId: string | undefined,
-  snapshot: PlatformDataSnapshot,
-): boolean {
-  if (!datasetVersionId) {
-    return false;
-  }
-
-  const version = snapshot.datasetVersions.find((item) => item.id === datasetVersionId);
-  if (!version) {
-    return false;
-  }
-
-  const dataset = snapshot.datasets.find((item) => item.id === version.datasetId);
-  if (!dataset || !['raster', 'vector'].includes(dataset.kind)) {
-    return false;
-  }
-
-  const metadata = version.metadata ?? {};
-  const contentType = String(metadata.content_type ?? '').toLowerCase();
-  const originalFileName = String(metadata.original_file_name ?? '').toLowerCase();
-
-  if (dataset.kind === 'raster') {
-    return (
-      contentType.includes('tiff') ||
-      contentType.includes('geotiff') ||
-      originalFileName.endsWith('.tif') ||
-      originalFileName.endsWith('.tiff')
-    );
-  }
-
-  return (
-    contentType.includes('geo+json') ||
-    contentType.endsWith('/json') ||
-    originalFileName.endsWith('.geojson') ||
-    originalFileName.endsWith('.json')
-  );
-}
 
 export function WorkflowsPage({
   snapshot,
@@ -98,7 +49,6 @@ export function WorkflowsPage({
   const { message, modal } = App.useApp();
   const { currentUser, hasPermission, token } = useAuth();
   const { locale, t } = useI18n();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const platformOwnerLabel = t('assets.platformOwner');
   const renderVisibilityTag = useCallback(
@@ -128,6 +78,11 @@ export function WorkflowsPage({
   const [runProgressMessage, setRunProgressMessage] = useState('');
   const runProgressTimerRef = useRef<number | null>(null);
   const [assetFlowRefreshSignal, setAssetFlowRefreshSignal] = useState(0);
+  const [handoffNotice, setHandoffNotice] = useState<{
+    type: 'success' | 'warning';
+    title: string;
+    description: string;
+  } | null>(null);
   const stats = useMemo(
     () => buildWorkflowStats(snapshot.workflowCatalog, draftWorkflowVersion),
     [draftWorkflowVersion, snapshot.workflowCatalog],
@@ -281,61 +236,20 @@ export function WorkflowsPage({
     let changed = false;
     if (linkedDatasetVersionId) {
       const datasetVersionExists = snapshot.datasetVersions.some(
-          (item) => item.id === linkedDatasetVersionId,
-        );
-        if (!datasetVersionExists) {
-          message.warning(
-            locale === 'zh-CN'
-              ? '该数据版本已不存在，或不在当前可见范围内。'
-              : 'This dataset version is no longer available in the current scope.',
-          );
-        } else {
-          const linkedDatasetResult = attachDatasetVersionToWorkflow(
-            nextWorkflowVersion,
-            linkedDatasetVersionId,
-            snapshot.workflowCatalog,
-            workflowEditorContext,
-          );
-          if (linkedDatasetResult.applied) {
-            nextWorkflowVersion = linkedDatasetResult.workflowVersion;
-            changed = true;
-            message.success(runTableCopy.datasetLinked);
-          } else {
-            message.warning(runTableCopy.datasetLinkMissing);
-          }
-        }
-    } else if (linkedRoiId) {
-        const roiExists = spatialRois.some((item) => item.id === linkedRoiId);
-        if (!roiExists) {
-          message.warning(
-            locale === 'zh-CN'
-              ? '该 ROI 已不存在，或不在当前可见范围内。'
-              : 'This ROI is no longer available in the current scope.',
-          );
-        } else {
-          const linkedRoiResult = attachSavedRoiToWorkflow(
-            nextWorkflowVersion,
-            linkedRoiId,
-            snapshot.workflowCatalog,
-            workflowEditorContext,
-          );
-          if (linkedRoiResult.applied) {
-            nextWorkflowVersion = linkedRoiResult.workflowVersion;
-            changed = true;
-            message.success(runTableCopy.roiLinked);
-          } else {
-            message.warning(runTableCopy.roiLinkMissing);
-          }
-        }
-    }
-
-    /*
-    const linkedDatasetVersionId = searchParams.get('datasetVersionId');
-    if (!consumedHandoff && linkedDatasetVersionId) {
-      const datasetVersionExists = snapshot.datasetVersions.some(
         (item) => item.id === linkedDatasetVersionId,
       );
       if (!datasetVersionExists) {
+        setHandoffNotice({
+          type: 'warning',
+          title:
+            locale === 'zh-CN'
+              ? `未能接收数据输入：${handoff?.label ?? linkedDatasetVersionId}`
+              : `Unable to receive dataset input: ${handoff?.label ?? linkedDatasetVersionId}`,
+          description:
+            locale === 'zh-CN'
+              ? '该数据版本已不存在，或已经不在当前用户可见范围内。'
+              : 'This dataset version is no longer available in the current scope.',
+        });
         message.warning(
           locale === 'zh-CN'
             ? '该数据版本已不存在，或不在当前可见范围内。'
@@ -351,21 +265,48 @@ export function WorkflowsPage({
         if (linkedDatasetResult.applied) {
           nextWorkflowVersion = linkedDatasetResult.workflowVersion;
           changed = true;
+          setHandoffNotice({
+            type: 'success',
+            title:
+              locale === 'zh-CN'
+                ? `已接收数据输入：${handoff?.label ?? linkedDatasetVersionId}`
+                : `Dataset input received: ${handoff?.label ?? linkedDatasetVersionId}`,
+            description:
+              locale === 'zh-CN'
+                ? linkedDatasetResult.createdStarter
+                  ? '当前草稿里原本没有数据集起点，系统已自动补入一个数据集源节点并绑定该版本。'
+                  : '该数据版本已经绑定到当前工作流草稿中的可接收节点。'
+                : linkedDatasetResult.createdStarter
+                  ? 'The draft had no dataset starter node, so one was created automatically and bound to this version.'
+                  : 'This dataset version has been bound to an existing compatible node in the current draft.',
+          });
           message.success(runTableCopy.datasetLinked);
         } else {
+          setHandoffNotice({
+            type: 'warning',
+            title:
+              locale === 'zh-CN'
+                ? `未能接收数据输入：${handoff?.label ?? linkedDatasetVersionId}`
+                : `Unable to receive dataset input: ${handoff?.label ?? linkedDatasetVersionId}`,
+            description: runTableCopy.datasetLinkMissing,
+          });
           message.warning(runTableCopy.datasetLinkMissing);
         }
       }
-      nextSearch.delete('datasetVersionId');
-    }
-
-    const linkedRoiId = searchParams.get('roiId');
-    if (!consumedHandoff && linkedRoiId) {
-      if (!spatialRoisLoaded) {
-        return;
-      }
+    } else if (linkedRoiId) {
       const roiExists = spatialRois.some((item) => item.id === linkedRoiId);
       if (!roiExists) {
+        setHandoffNotice({
+          type: 'warning',
+          title:
+            locale === 'zh-CN'
+              ? `未能接收 ROI：${handoff?.label ?? linkedRoiId}`
+              : `Unable to receive ROI: ${handoff?.label ?? linkedRoiId}`,
+          description:
+            locale === 'zh-CN'
+              ? '该 ROI 已不存在，或已经不在当前用户可见范围内。'
+              : 'This ROI is no longer available in the current scope.',
+        });
         message.warning(
           locale === 'zh-CN'
             ? '该 ROI 已不存在，或不在当前可见范围内。'
@@ -381,15 +322,35 @@ export function WorkflowsPage({
         if (linkedRoiResult.applied) {
           nextWorkflowVersion = linkedRoiResult.workflowVersion;
           changed = true;
+          setHandoffNotice({
+            type: 'success',
+            title:
+              locale === 'zh-CN'
+                ? `已接收 ROI：${handoff?.label ?? linkedRoiId}`
+                : `ROI received: ${handoff?.label ?? linkedRoiId}`,
+            description:
+              locale === 'zh-CN'
+                ? linkedRoiResult.createdStarter
+                  ? '当前草稿里原本没有 Sentinel ROI 起点，系统已自动补入对应源节点并绑定该 ROI。'
+                  : '该 ROI 已经绑定到当前工作流草稿中的可接收节点。'
+                : linkedRoiResult.createdStarter
+                  ? 'The draft had no compatible Sentinel ROI starter, so one was created automatically and bound to this ROI.'
+                  : 'This ROI has been bound to an existing compatible node in the current draft.',
+          });
           message.success(runTableCopy.roiLinked);
         } else {
+          setHandoffNotice({
+            type: 'warning',
+            title:
+              locale === 'zh-CN'
+                ? `未能接收 ROI：${handoff?.label ?? linkedRoiId}`
+                : `Unable to receive ROI: ${handoff?.label ?? linkedRoiId}`,
+            description: runTableCopy.roiLinkMissing,
+          });
           message.warning(runTableCopy.roiLinkMissing);
         }
       }
-      nextSearch.delete('roiId');
     }
-
-    */
     if (changed) {
       draftWorkflowVersionRef.current = nextWorkflowVersion;
       setDraftWorkflowVersion(nextWorkflowVersion);
@@ -642,20 +603,6 @@ export function WorkflowsPage({
     applySelectedWorkflow();
   };
 
-  const openResultInMap = useCallback(
-    (assetVersionId: string) => {
-      navigate(
-        createHandoffPath(
-          '/spatial',
-          createSpatialAssetHandoff(assetVersionId, {
-            source: 'workflow_run_history',
-          }),
-        ),
-      );
-    },
-    [navigate],
-  );
-
   return (
     <div className="page-stack">
       <input
@@ -705,6 +652,18 @@ export function WorkflowsPage({
         </div>
       </div>
 
+      {handoffNotice ? (
+        <Alert
+          type={handoffNotice.type}
+          showIcon
+          closable
+          className="workflow-handoff-alert"
+          message={handoffNotice.title}
+          description={handoffNotice.description}
+          onClose={() => setHandoffNotice(null)}
+        />
+      ) : null}
+
       <Row gutter={[20, 20]}>
         <Col xs={24} md={8}>
           <StatCard
@@ -743,58 +702,6 @@ export function WorkflowsPage({
         authToken={token}
         onWorkflowChange={setDraftWorkflowVersion}
       />
-
-      <Card className="panel-card" variant="borderless">
-        <div className="panel-kicker">{t('workflows.runHistory')}</div>
-        <Table
-          rowKey="id"
-          pagination={RUN_HISTORY_PAGINATION}
-          dataSource={snapshot.workflowRuns}
-          columns={[
-            { title: t('workflows.runId'), dataIndex: 'id' },
-            { title: t('workflows.workflowVersion'), dataIndex: 'workflowVersionId' },
-            {
-              title: t('common.status'),
-              dataIndex: 'status',
-              render: (status: PlatformDataSnapshot['workflowRuns'][number]['status']) => (
-                <Tag color={status === 'running' ? 'processing' : status === 'succeeded' ? 'green' : 'default'}>
-                  {t(workflowRunStatusKey(status))}
-                </Tag>
-              ),
-            },
-            { title: t('workflows.submittedBy'), dataIndex: 'submittedBy' },
-            {
-              title: runTableCopy.resultDataset,
-              dataIndex: 'resultDatasetVersionId',
-              render: (value: string | undefined) =>
-                value ? (
-                  <Row gutter={[8, 8]}>
-                    <Col span={24}>{value}</Col>
-                    {datasetVersionIsMapReady(value, snapshot) ? (
-                      <Col span={24}>
-                        <Button size="small" onClick={() => openResultInMap(value)}>
-                          {runTableCopy.openInMap}
-                        </Button>
-                      </Col>
-                    ) : null}
-                  </Row>
-                ) : (
-                  '-'
-                ),
-            },
-            {
-              title: runTableCopy.metrics,
-              dataIndex: 'metrics',
-              render: (metrics: Record<string, unknown> | undefined) =>
-                metrics && Object.keys(metrics).length ? (
-                  <pre className="json-block">{JSON.stringify(metrics, null, 2)}</pre>
-                ) : (
-                  '-'
-                ),
-            },
-          ]}
-        />
-      </Card>
 
       <AssetFlowPanel
         token={token}

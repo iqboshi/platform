@@ -1,12 +1,14 @@
 import type { AssetVersionRef } from '@platform/types';
 
-import { Button, Card, Col, Empty, Row, Space, Spin, Table, Tag, Typography } from 'antd';
+import { Card, Col, Empty, Row, Space, Spin, Table, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { StatCard } from '@/components/StatCard';
 import { useI18n } from '@/i18n/useI18n';
 import { workflowRunStatusKey } from '@/lib/i18n-helpers';
+import { AssetNextStepCell } from './AssetNextStepCell';
+import { buildAssetVersionRefNextSteps } from './next-steps';
 import {
   createHandoffPath,
   createSpatialAssetHandoff,
@@ -50,19 +52,6 @@ function statusColor(status: string): string {
   return 'default';
 }
 
-function consumerColor(consumer: string): string {
-  if (consumer === 'map_overlay') {
-    return 'green';
-  }
-  if (consumer === 'workflow_dataset') {
-    return 'blue';
-  }
-  if (consumer === 'workflow_roi') {
-    return 'gold';
-  }
-  return 'default';
-}
-
 export function AssetFlowPanel({
   token,
   scope,
@@ -95,8 +84,7 @@ export function AssetFlowPanel({
             edgesDetail: '输入资产和输出结果之间的可追踪连接。',
             reusableOutputs: '可继续复用的输出',
             reusableOutputsCopy: '把工作流输出直接送到其他功能页，不再要求先下载再上传。',
-            consumers: '可进入页面',
-            actions: '快捷操作',
+            nextSteps: '下一步',
             openInMap: '在地图中打开',
             useInWorkflow: '作为工作流输入',
             executionTable: '执行流',
@@ -127,8 +115,7 @@ export function AssetFlowPanel({
             reusableOutputs: 'Reusable Outputs',
             reusableOutputsCopy:
               'Promote workflow outputs into the next page directly instead of downloading and uploading again.',
-            consumers: 'Next Pages',
-            actions: 'Actions',
+            nextSteps: 'Next Steps',
             openInMap: 'Open In Map',
             useInWorkflow: 'Use In Workflow',
             executionTable: 'Execution Stream',
@@ -272,41 +259,21 @@ export function AssetFlowPanel({
                   ),
                 },
                 {
-                  title: copy.consumers,
-                  dataIndex: 'consumableBy',
-                  render: (value: string[]) =>
-                    value.length ? (
-                      <Space wrap>
-                        {value.map((consumer) => (
-                          <Tag key={consumer} color={consumerColor(consumer)}>
-                            {consumer === 'map_overlay'
-                              ? copy.openInMap
-                              : consumer === 'workflow_dataset'
-                                ? copy.useInWorkflow
-                                : consumer}
-                          </Tag>
-                        ))}
-                      </Space>
-                    ) : (
-                      '-'
-                    ),
-                },
-                {
-                  title: copy.actions,
+                  title: copy.nextSteps,
                   key: 'actions',
                   render: (_value, record: AssetVersionRef) => (
-                    <Space wrap>
-                      {record.consumableBy.includes('map_overlay') ? (
-                        <Button size="small" onClick={() => openInMap(record.id)}>
-                          {copy.openInMap}
-                        </Button>
-                      ) : null}
-                      {record.consumableBy.includes('workflow_dataset') ? (
-                        <Button size="small" onClick={() => openInWorkflow(record.id)}>
-                          {copy.useInWorkflow}
-                        </Button>
-                      ) : null}
-                    </Space>
+                    <AssetNextStepCell
+                      model={buildAssetVersionRefNextSteps(locale, {
+                        assetVersion: record,
+                        onOpenInWorkflow: record.consumableBy.includes('workflow_dataset')
+                          ? () => openInWorkflow(record.id)
+                          : undefined,
+                        onOpenInMap:
+                          record.consumableBy.includes('map_overlay') || record.spatialTraits?.overlayType
+                            ? () => openInMap(record.id)
+                            : undefined,
+                      })}
+                    />
                   ),
                 },
               ]}
