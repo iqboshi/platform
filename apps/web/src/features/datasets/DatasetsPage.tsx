@@ -88,6 +88,7 @@ export function DatasetsPage({
   const { message } = App.useApp();
   const { currentUser, token } = useAuth();
   const { locale, t } = useI18n();
+  const isChineseLocale = locale === 'zh-CN';
   const platformOwnerLabel = t('assets.platformOwner');
   const publicDatasets = useMemo(
     () => snapshot.datasets.filter((item) => item.visibility === 'public'),
@@ -112,6 +113,7 @@ export function DatasetsPage({
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | undefined>(
     publicDatasets[0]?.id,
   );
+  const [detailExpanded, setDetailExpanded] = useState(false);
 
   useEffect(() => {
     setSelectedDatasetId((current) => {
@@ -154,6 +156,13 @@ export function DatasetsPage({
         minute: '2-digit',
       }).format(new Date(selectedDataset.updatedAt))
     : '-';
+  const detailToggleLabel = detailExpanded
+    ? isChineseLocale
+      ? '收起详情'
+      : 'Collapse'
+    : isChineseLocale
+      ? '展开详情'
+      : 'Show details';
 
   const onDownloadVersion = async (datasetVersionId: string | undefined) => {
     if (!token || !datasetVersionId) {
@@ -265,11 +274,18 @@ export function DatasetsPage({
                   <Title level={3} className="public-dataset-title">
                     {selectedDataset?.name ?? '-'}
                   </Title>
-                  <Paragraph className="public-dataset-description">
+                  <Paragraph
+                    className={[
+                      'public-dataset-description',
+                      detailExpanded ? '' : 'public-dataset-description-clamped',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
                     {selectedDescription}
                   </Paragraph>
                 </div>
-                <Space wrap>
+                <Space wrap className="public-dataset-detail-actions">
                   <Button
                     type="primary"
                     disabled={!selectedVersion}
@@ -282,75 +298,84 @@ export function DatasetsPage({
                       {t('datasets.unpublish')}
                     </Button>
                   ) : null}
+                  <Button
+                    className="public-dataset-detail-toggle"
+                    onClick={() => setDetailExpanded((current) => !current)}
+                    aria-expanded={detailExpanded}
+                  >
+                    {detailToggleLabel}
+                  </Button>
                 </Space>
               </div>
 
-              <Descriptions column={2}>
-                <Descriptions.Item label={t('datasets.version')}>
-                  {selectedVersion?.version ?? '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('common.status')}>
-                  <Tag color={selectedStatus === 'ready' ? 'green' : 'processing'}>
-                    {selectedStatus ? t(datasetStatusKey(selectedStatus)) : '-'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.owner')}>
-                  {selectedDataset?.ownerDisplayName ?? platformOwnerLabel}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.visibility')}>
-                  <Tag color="blue">{t('datasets.visibilityPublic')}</Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.table.kind')}>
-                  {selectedDataset ? t(datasetKindKey(selectedDataset.kind)) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.updatedAt')}>
-                  {selectedUpdatedAt}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.originalFileName')}>
-                  {getMetadataString(selectedMetadata, 'original_file_name') ?? '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.contentType')}>
-                  {getMetadataString(selectedMetadata, 'content_type') ?? '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.fileSize')}>
-                  {formatFileSize(getMetadataNumber(selectedMetadata, 'size_bytes'))}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.rowCount')}>
-                  {getMetadataNumber(selectedMetadata, 'row_count') ?? '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.columnCount')}>
-                  {selectedColumns.length || '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.assetPath')}>
-                  {selectedVersion?.assetPath ?? '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.description')} span={2}>
-                  <Paragraph className="public-dataset-description-block">
-                    {selectedDescription}
-                  </Paragraph>
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.fields')} span={2}>
-                  {selectedColumns.length ? (
-                    <div className="public-dataset-field-tags">
-                      {selectedColumns.map((column) => (
-                        <Tag key={column}>{column}</Tag>
-                      ))}
-                    </div>
-                  ) : (
-                    <Text>-</Text>
-                  )}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.sampleRecord')} span={2}>
-                  {selectedSampleRow ? (
-                    <pre className="json-block">{JSON.stringify(selectedSampleRow, null, 2)}</pre>
-                  ) : (
-                    <Text>-</Text>
-                  )}
-                </Descriptions.Item>
-                <Descriptions.Item label={t('datasets.metadata')} span={2}>
-                  <pre className="json-block">{JSON.stringify(selectedMetadata, null, 2)}</pre>
-                </Descriptions.Item>
-              </Descriptions>
+              {detailExpanded ? (
+                <Descriptions column={2}>
+                  <Descriptions.Item label={t('datasets.version')}>
+                    {selectedVersion?.version ?? '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('common.status')}>
+                    <Tag color={selectedStatus === 'ready' ? 'green' : 'processing'}>
+                      {selectedStatus ? t(datasetStatusKey(selectedStatus)) : '-'}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.owner')}>
+                    {selectedDataset?.ownerDisplayName ?? platformOwnerLabel}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.visibility')}>
+                    <Tag color="blue">{t('datasets.visibilityPublic')}</Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.table.kind')}>
+                    {selectedDataset ? t(datasetKindKey(selectedDataset.kind)) : '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.updatedAt')}>
+                    {selectedUpdatedAt}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.originalFileName')}>
+                    {getMetadataString(selectedMetadata, 'original_file_name') ?? '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.contentType')}>
+                    {getMetadataString(selectedMetadata, 'content_type') ?? '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.fileSize')}>
+                    {formatFileSize(getMetadataNumber(selectedMetadata, 'size_bytes'))}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.rowCount')}>
+                    {getMetadataNumber(selectedMetadata, 'row_count') ?? '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.columnCount')}>
+                    {selectedColumns.length || '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.assetPath')}>
+                    {selectedVersion?.assetPath ?? '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.description')} span={2}>
+                    <Paragraph className="public-dataset-description-block">
+                      {selectedDescription}
+                    </Paragraph>
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.fields')} span={2}>
+                    {selectedColumns.length ? (
+                      <div className="public-dataset-field-tags">
+                        {selectedColumns.map((column) => (
+                          <Tag key={column}>{column}</Tag>
+                        ))}
+                      </div>
+                    ) : (
+                      <Text>-</Text>
+                    )}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.sampleRecord')} span={2}>
+                    {selectedSampleRow ? (
+                      <pre className="json-block">{JSON.stringify(selectedSampleRow, null, 2)}</pre>
+                    ) : (
+                      <Text>-</Text>
+                    )}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('datasets.metadata')} span={2}>
+                    <pre className="json-block">{JSON.stringify(selectedMetadata, null, 2)}</pre>
+                  </Descriptions.Item>
+                </Descriptions>
+              ) : null}
             </Card>
           </Col>
         </Row>

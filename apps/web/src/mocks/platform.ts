@@ -6,6 +6,7 @@ import type {
   FeedbackTicketSummaryCounts,
   GeeCredentialSummary,
   ModelVersionSummary,
+  ProductAssetSummary,
   WorkspaceSummary,
   WorkflowNodeCatalogItem,
   WorkflowRunSummary,
@@ -514,6 +515,7 @@ const modelVersions: ModelVersionSummary[] = [
 ];
 
 const geeCredentials: GeeCredentialSummary[] = [];
+const products: ProductAssetSummary[] = [];
 
 const dashboardConfig: DashboardConfig = {
   featureSections: [
@@ -597,6 +599,7 @@ export const platformMock = {
   workflowTemplates,
   workflowVersion,
   workflowRuns,
+  products,
   modelVersions,
   dashboardConfig,
   feedbackTickets,

@@ -1,0 +1,212 @@
+[
+  {
+    "id": "datasets",
+    "route": "/datasets",
+    "section": "workspace",
+    "menuLabelKey": "menu.datasets",
+    "iconKey": "datasets",
+    "dashboard": {
+      "titleZh": "数据集",
+      "titleEn": "Datasets",
+      "summaryZh": "管理数据集、结构化表格和可复用的数据输入。",
+      "summaryEn": "Manage datasets, structured tables, and reusable data inputs.",
+      "actionZh": "打开数据集",
+      "actionEn": "Open datasets",
+      "handoffZh": [
+        "结构化数据集可以直接送入工作流作为输入。",
+        "支持空间格式的数据版本可以继续进入地图与叠加层流程。"
+      ],
+      "handoffEn": [
+        "Structured datasets can flow directly into workflows as inputs.",
+        "Spatial-ready dataset versions can continue into map and overlay flows."
+      ]
+    }
+  },
+  {
+    "id": "products",
+    "route": "/products",
+    "section": "workspace",
+    "menuLabelKey": "menu.products",
+    "iconKey": "products",
+    "dashboard": {
+      "titleZh": "产品展示",
+      "titleEn": "Products",
+      "summaryZh": "查看产品资料、三维预览与可公开展示的产品资产。",
+      "summaryEn": "Browse product records, 3D previews, and publishable showcase assets.",
+      "actionZh": "打开产品",
+      "actionEn": "Open products",
+      "handoffZh": [
+        "公开产品可以继续作为对外展示资产复用。",
+        "产品文件与元数据仍然回流到资产中心统一管理。"
+      ],
+      "handoffEn": [
+        "Published products remain reusable as showcase assets.",
+        "Product files and metadata should still flow back to the asset hub."
+      ]
+    }
+  },
+  {
+    "id": "spatial",
+    "route": "/spatial",
+    "section": "workspace",
+    "menuLabelKey": "menu.spatial",
+    "iconKey": "spatial",
+    "dashboard": {
+      "titleZh": "空间工作台",
+      "titleEn": "Spatial Studio",
+      "summaryZh": "可视化地图叠加层、ROI 与空间分析结果。",
+      "summaryEn": "Visualize map overlays, ROIs, and spatial analysis outputs.",
+      "actionZh": "打开空间工作台",
+      "actionEn": "Open spatial studio",
+      "handoffZh": [
+        "符合 overlay 输入结构的工作流输出应当可以直接在地图中打开。",
+        "保存的 ROI 可以继续送入工作流作为空间输入。"
+      ],
+      "handoffEn": [
+        "Workflow outputs that match the overlay contract should open directly on the map.",
+        "Saved ROIs can feed workflows as spatial inputs."
+      ]
+    }
+  },
+  {
+    "id": "workflows",
+    "route": "/workflows",
+    "section": "workspace",
+    "menuLabelKey": "menu.workflows",
+    "iconKey": "workflows",
+    "dashboard": {
+      "titleZh": "工作流",
+      "titleEn": "Workflows",
+      "summaryZh": "编排数据处理、模型推理与结果产出链路。",
+      "summaryEn": "Compose data preparation, model inference, and result delivery chains.",
+      "actionZh": "打开工作流",
+      "actionEn": "Open workflows",
+      "handoffZh": [
+        "数据集、ROI、模型和个人凭证都应该能直接送入工作流。",
+        "符合条件的工作流输出应当能直接回流到地图或资产中心。"
+      ],
+      "handoffEn": [
+        "Datasets, ROIs, models, and personal credentials should all feed workflows.",
+        "Qualified workflow outputs should hand off directly to maps or the asset hub."
+      ]
+    }
+  },
+  {
+    "id": "models",
+    "route": "/models",
+    "section": "workspace",
+    "menuLabelKey": "menu.models",
+    "permission": "model.view",
+    "iconKey": "models",
+    "dashboard": {
+      "titleZh": "模型中心",
+      "titleEn": "Models",
+      "summaryZh": "管理模型版本、训练产物和外部 API 模型配置。",
+      "summaryEn": "Inspect model versions, training artifacts, and external API model configs.",
+      "actionZh": "打开模型中心",
+      "actionEn": "Open models",
+      "handoffZh": [
+        "模型版本应该能够直接进入工作流推理节点。",
+        "训练输出应该回流为可复用的模型资产。"
+      ],
+      "handoffEn": [
+        "Model versions should feed workflow inference nodes directly.",
+        "Training outputs should flow back into reusable model assets."
+      ]
+    }
+  },
+  {
+    "id": "account",
+    "route": "/account",
+    "section": "personal",
+    "menuLabelKey": "menu.account",
+    "iconKey": "account",
+    "dashboard": {
+      "titleZh": "账号中心",
+      "titleEn": "Account Center",
+      "summaryZh": "管理个人资料、安全设置与个人集成凭证。",
+      "summaryEn": "Manage profile, security settings, and personal integration credentials.",
+      "actionZh": "打开账号中心",
+      "actionEn": "Open account",
+      "handoffZh": [
+        "个人凭证应该能被工作流和空间模块直接复用。",
+        "账号资料应与资产内容保持分离，不再混在同一入口。"
+      ],
+      "handoffEn": [
+        "Personal credentials should be reusable from workflows and spatial modules.",
+        "Account information should stay separate from asset content."
+      ]
+    }
+  },
+  {
+    "id": "assets",
+    "route": "/assets",
+    "section": "personal",
+    "menuLabelKey": "menu.assets",
+    "iconKey": "assets",
+    "dashboard": {
+      "titleZh": "资产中心",
+      "titleEn": "Asset Hub",
+      "summaryZh": "管理可复用输入、流程结果与共享发布状态。",
+      "summaryEn": "Manage reusable inputs, workflow outputs, and shared publication state.",
+      "actionZh": "打开资产中心",
+      "actionEn": "Open asset hub",
+      "handoffZh": [
+        "资产中心应该明确展示每项资产下一步还能送到哪里。",
+        "工作流、地图和模型产出的资产应当统一回流到这里。"
+      ],
+      "handoffEn": [
+        "The asset hub should clearly show what each asset can feed next.",
+        "Assets produced by workflows, maps, and models should flow back here."
+      ]
+    }
+  },
+  {
+    "id": "approvals",
+    "route": "/admin/users",
+    "section": "admin",
+    "menuLabelKey": "menu.approvals",
+    "permission": "user.approve",
+    "iconKey": "approvals",
+    "dashboard": {
+      "titleZh": "审批中心",
+      "titleEn": "Approvals",
+      "summaryZh": "处理账号审批、角色变更与治理动作。",
+      "summaryEn": "Review account approvals, role changes, and governance actions.",
+      "actionZh": "打开审批中心",
+      "actionEn": "Open approvals",
+      "handoffZh": [
+        "审批结果应直接影响首页可见模块与入口状态。",
+        "治理动作完成后也应回写到总览状态。"
+      ],
+      "handoffEn": [
+        "Approval outcomes should change visible modules and entry points on the overview.",
+        "Governance actions should also flow back into overview state."
+      ]
+    }
+  },
+  {
+    "id": "workspace-settings",
+    "route": "/admin/workspace-settings",
+    "section": "admin",
+    "menuLabelKey": "menu.workspaceSettings",
+    "permission": "system.configure",
+    "iconKey": "settings",
+    "dashboard": {
+      "titleZh": "工作空间设置",
+      "titleEn": "Workspace Settings",
+      "summaryZh": "维护首页公告、平台邮件和工作空间级配置。",
+      "summaryEn": "Maintain overview announcements, platform email, and workspace-level settings.",
+      "actionZh": "打开工作空间设置",
+      "actionEn": "Open settings",
+      "handoffZh": [
+        "公告内容应直接进入总览首页，不再和功能介绍重复堆叠。",
+        "系统级配置应继续与账号页、资产页保持边界清晰。"
+      ],
+      "handoffEn": [
+        "Announcement content should feed the overview directly instead of duplicating feature copy.",
+        "System settings should stay clearly separated from account and asset pages."
+      ]
+    }
+  }
+]

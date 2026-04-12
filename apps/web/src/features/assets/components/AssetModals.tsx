@@ -1,4 +1,4 @@
-import { Button, Form, Input, Modal, Select, Typography } from 'antd';
+import { Form, Input, Modal, Select, Typography } from 'antd';
 import type { FormInstance } from 'antd';
 import type { RefObject } from 'react';
 
@@ -14,11 +14,9 @@ interface DatasetUploadModalProps {
   kindLabel: string;
   fileLabel: string;
   title: string;
-  downloadTemplateLabel: string;
   kindOptions: Array<{ value: string; label: string }>;
   onCancel: () => void;
   onSubmit: () => void;
-  onDownloadTemplate: () => void;
   onFileChange: (file: File | null) => void;
 }
 
@@ -32,11 +30,9 @@ export function DatasetUploadModal({
   kindLabel,
   fileLabel,
   title,
-  downloadTemplateLabel,
   kindOptions,
   onCancel,
   onSubmit,
-  onDownloadTemplate,
   onFileChange,
 }: DatasetUploadModalProps) {
   return (
@@ -46,9 +42,6 @@ export function DatasetUploadModal({
         layout="vertical"
         initialValues={{ datasetName: '', description: '', kind: selectedUploadKind }}
       >
-        <div className="section-actions">
-          <Button onClick={onDownloadTemplate}>{downloadTemplateLabel}</Button>
-        </div>
         <Form.Item name="datasetName" label={datasetNameLabel} rules={[{ required: true }]}>
           <Input />
         </Form.Item>

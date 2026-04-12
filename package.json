@@ -12,6 +12,8 @@
     "lint": "npm run lint --workspace @platform/web",
     "test:web": "npm run test --workspace @platform/web",
     "openapi:export": "python scripts/export_openapi.py",
+    "docs:modules": "python scripts/export_module_catalog.py",
+    "docs:validate": "python scripts/validate_docs.py",
     "bootstrap": "npm install --workspaces"
   }
 }

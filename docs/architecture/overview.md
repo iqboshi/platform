@@ -1,37 +1,40 @@
+---
+source_of_truth: manual
+last_verified_at: 2026-04-12
+owned_by: platform-team
+derived_from:
+  - apps/web/src/App.tsx
+  - apps/web/src/lib/workspace-modules.tsx
+  - backend/src/platform_backend/api
+  - backend/src/platform_backend/services/platform_store.py
+---
+
 # Architecture Overview
 
 ## System Boundaries
 
-- `apps/web`: operator-facing UI for datasets, workflows, and model runs
-- `backend/api`: REST API and orchestration boundary
-- `backend/worker`: async execution for ingestion, split jobs, and inference
-- `backend/tiler`: tile preview boundary for raster outputs
+- `apps/web`: operator-facing workspace UI, module navigation, overview, and cross-page handoff entry.
+- `backend/src/platform_backend/api`: REST boundary for assets, workflows, models, settings, and feedback.
+- `backend/src/platform_backend/services`: asset visibility, platform settings, and orchestration-facing domain logic.
+- `backend/src/platform_backend/workflows`: workflow execution and GEE runtime integration.
 
-## Core Flows
+## Shared Design Spine
 
-1. Upload dataset through a presigned object-storage session
-2. Confirm upload and create a `DatasetVersion`
-3. Run ingestion or split job in the worker
-4. Publish preview URLs and metadata for the UI
-5. Build or run workflows against datasets and model versions
+- Modules are registered once and reused across navigation, overview, and generated documentation.
+- Assets are treated as reusable outputs with explicit downstream consumers.
+- Workflow outputs are expected to advertise whether they can feed map overlays, asset catalogs, or later workflow steps.
+- Personal account data, reusable assets, and workspace-wide settings are separated into different pages and responsibilities.
 
-## Stage-1 Refactor Spine
+## Runtime Flows
 
-- `AssetFlow` now treats dataset versions and workflow versions as reusable versioned assets
-- `Execution` is the shared runtime view for workflow runs and their produced outputs
-- Result datasets carry standardized lineage metadata:
-  `source_execution_id`, `source_workflow_version_id`, and `upstream_asset_version_ids`
-- The new `/api/v1/asset-flow/overview` endpoint exposes the first vertical slice:
-  dataset input -> workflow execution -> result artifact
-- `/api/v1/asset-flow/input-candidates` now exposes consumer-oriented cross-page handoff:
-  reusable dataset outputs -> workflow inputs, reusable workflow outputs -> map overlays,
-  and saved ROIs -> workflow inputs
+1. A user enters the workspace through the overview and module registry.
+2. Reusable inputs such as datasets, ROIs, models, and credentials move into workflows.
+3. Workflow runs produce result assets that should flow back into the asset hub.
+4. Overlay-compatible outputs continue into the spatial workspace without manual reformatting.
+5. Published assets remain visible through dataset, product, and overview surfaces.
 
-## Design Rules
+## Documentation Rules
 
-- Every important asset is versioned
-- Workflows are immutable once versioned
-- Jobs are append-only operational records
-- Preview services do not mutate source data
-- Configuration stays environment-driven
-- Cross-page reuse is explicit: every reusable output advertises which pages can consume it next
+- API contracts are generated, not narrated manually.
+- Module capabilities come from the shared module registry.
+- Architecture docs should capture boundaries and flow constraints, not volatile UI copy.

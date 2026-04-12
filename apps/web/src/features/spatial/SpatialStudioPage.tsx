@@ -1265,12 +1265,14 @@ export function SpatialStudioPage({
           <Card className="panel-card spatial-panel-card" variant="borderless">
             <div className="panel-kicker">{coordinateToolsTitle}</div>
             <div className="spatial-coordinate-bookmark-toolbar">
-              <Input
-                value={coordinateNameInput}
-                placeholder={coordinateNamePlaceholder}
-                addonBefore={coordinateNameLabel}
-                onChange={(event) => setCoordinateNameInput(event.target.value)}
-              />
+              <Space.Compact block className="spatial-coordinate-name-compact">
+                <div className="spatial-coordinate-name-prefix">{coordinateNameLabel}</div>
+                <Input
+                  value={coordinateNameInput}
+                  placeholder={coordinateNamePlaceholder}
+                  onChange={(event) => setCoordinateNameInput(event.target.value)}
+                />
+              </Space.Compact>
               <Space wrap>
                 <Button type="primary" onClick={handleSaveCoordinatePoint}>
                   {coordinateSaveButtonText}

@@ -3,17 +3,8 @@ import type { PermissionKey } from '@platform/types';
 
 import {
   AppstoreOutlined,
-  BuildOutlined,
-  DeploymentUnitOutlined,
-  EnvironmentOutlined,
-  FolderOpenOutlined,
   GlobalOutlined,
-  InboxOutlined,
   LogoutOutlined,
-  RadarChartOutlined,
-  SafetyCertificateOutlined,
-  SettingOutlined,
-  UserOutlined,
 } from '@ant-design/icons';
 import { Button, Card, Layout, Menu, Select, Space, Spin, Tag, Typography } from 'antd';
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
@@ -21,10 +12,12 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 
 import { AuthProvider } from './auth/AuthProvider';
 import { useAuth } from './auth/useAuth';
+import { GlobalNotificationCenter } from './components/GlobalNotificationCenter';
 import { I18nProvider } from './i18n/I18nProvider';
 import { useI18n } from './i18n/useI18n';
 import { loadPlatformData, type PlatformDataSnapshot } from './lib/api';
 import { roleKey } from './lib/i18n-helpers';
+import { isWorkspaceModuleVisible, workspaceModules } from './lib/workspace-modules';
 
 const DashboardPage = lazy(() =>
   import('./features/dashboard/DashboardPage').then((module) => ({
@@ -99,55 +92,6 @@ const UserApprovalPage = lazy(() =>
 
 const { Content, Sider } = Layout;
 const { Title, Paragraph, Text } = Typography;
-
-interface ShellMenuItem {
-  key: string;
-  permission?: PermissionKey;
-  icon: ReactNode;
-  section: 'workspace' | 'admin' | 'personal';
-  labelKey:
-    | 'menu.overview'
-    | 'menu.datasets'
-    | 'menu.products'
-    | 'menu.spatial'
-    | 'menu.account'
-    | 'menu.assets'
-    | 'menu.workflows'
-    | 'menu.models'
-    | 'menu.approvals'
-    | 'menu.workspaceSettings';
-}
-
-const menuConfig: ShellMenuItem[] = [
-  { key: '/', icon: <AppstoreOutlined />, section: 'workspace', labelKey: 'menu.overview' },
-  { key: '/datasets', icon: <FolderOpenOutlined />, section: 'workspace', labelKey: 'menu.datasets' },
-  { key: '/products', icon: <BuildOutlined />, section: 'workspace', labelKey: 'menu.products' },
-  { key: '/spatial', icon: <EnvironmentOutlined />, section: 'workspace', labelKey: 'menu.spatial' },
-  { key: '/workflows', icon: <DeploymentUnitOutlined />, section: 'workspace', labelKey: 'menu.workflows' },
-  {
-    key: '/models',
-    icon: <RadarChartOutlined />,
-    section: 'workspace',
-    labelKey: 'menu.models',
-    permission: 'model.view',
-  },
-  {
-    key: '/admin/users',
-    icon: <SafetyCertificateOutlined />,
-    section: 'admin',
-    labelKey: 'menu.approvals',
-    permission: 'user.approve',
-  },
-  {
-    key: '/admin/workspace-settings',
-    icon: <SettingOutlined />,
-    section: 'admin',
-    labelKey: 'menu.workspaceSettings',
-    permission: 'system.configure',
-  },
-  { key: '/account', icon: <UserOutlined />, section: 'personal', labelKey: 'menu.account' },
-  { key: '/assets', icon: <InboxOutlined />, section: 'personal', labelKey: 'menu.assets' },
-];
 
 function routeKey(pathname: string): string {
   if (pathname.startsWith('/datasets')) return '/datasets';
@@ -236,37 +180,44 @@ function AppShell({
   );
   const workspaceMenuItems = useMemo<MenuProps['items']>(
     () =>
-      menuConfig
-        .filter((item) => item.section === 'workspace')
-        .filter((item) => (item.permission ? hasPermission(item.permission) : true))
-        .map((item) => ({
-          key: item.key,
-          icon: item.icon,
-          label: t(item.labelKey),
-        })),
+      [
+        {
+          key: '/',
+          icon: <AppstoreOutlined />,
+          label: t('menu.overview'),
+        },
+        ...workspaceModules
+          .filter((item) => item.section === 'workspace')
+          .filter((item) => isWorkspaceModuleVisible(item, hasPermission))
+          .map((item) => ({
+            key: item.route,
+            icon: item.icon,
+            label: t(item.menuLabelKey),
+          })),
+      ],
     [hasPermission, t],
   );
   const adminMenuItems = useMemo<MenuProps['items']>(
     () =>
-      menuConfig
+      workspaceModules
         .filter((item) => item.section === 'admin')
-        .filter((item) => (item.permission ? hasPermission(item.permission) : true))
+        .filter((item) => isWorkspaceModuleVisible(item, hasPermission))
         .map((item) => ({
-          key: item.key,
+          key: item.route,
           icon: item.icon,
-          label: t(item.labelKey),
+          label: t(item.menuLabelKey),
         })),
     [hasPermission, t],
   );
   const personalMenuItems = useMemo<MenuProps['items']>(
     () =>
-      menuConfig
+      workspaceModules
         .filter((item) => item.section === 'personal')
-        .filter((item) => (item.permission ? hasPermission(item.permission) : true))
+        .filter((item) => isWorkspaceModuleVisible(item, hasPermission))
         .map((item) => ({
-          key: item.key,
+          key: item.route,
           icon: item.icon,
-          label: t(item.labelKey),
+          label: t(item.menuLabelKey),
         })),
     [hasPermission, t],
   );
@@ -319,8 +270,13 @@ function AppShell({
             <div className="nav-bottom-panel">
               {currentUser ? (
                 <div className="nav-profile-card">
-                  <div className="nav-profile-name">{currentUser.displayName}</div>
-                  <div className="nav-profile-role">{t(roleKey(currentUser.role))}</div>
+                  <div className="nav-profile-head">
+                    <div className="nav-profile-identity">
+                      <div className="nav-profile-name">{currentUser.displayName}</div>
+                      <div className="nav-profile-role">{t(roleKey(currentUser.role))}</div>
+                    </div>
+                    <GlobalNotificationCenter snapshot={snapshot} onRefresh={onRefresh} />
+                  </div>
                   <div className="nav-profile-tools">
                     <Select
                       value={locale}

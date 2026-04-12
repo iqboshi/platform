@@ -1,26 +1,29 @@
+---
+source_of_truth: generated
+last_verified_at: 2026-04-12
+owned_by: platform-backend
+derived_from:
+  - scripts/export_openapi.py
+  - docs/api/openapi.json
+  - backend/src/platform_backend/api
+---
+
 # API Notes
 
-## Versioning
+## Source Of Truth
 
-- Primary API base path: `/api/v1`
-- Tile endpoints remain under `/tiles/*`
-- The frontend is prepared to consume OpenAPI-generated contracts later
+- Runtime API behavior is defined in backend route and schema code.
+- `docs/api/openapi.json` is the generated contract snapshot for consumers.
+- Do not hand-maintain endpoint field details here.
 
-## Current Modules
-
-- `auth`
-- `workspaces`
-- `datasets`
-- `dataset-versions`
-- `splits`
-- `workflows`
-- `workflow-runs`
-- `models`
-- `jobs`
-- `tiles`
-
-## Export Contract
+## Export Commands
 
 ```powershell
 python .\scripts\export_openapi.py
 ```
+
+## Usage
+
+- Treat this directory as generated-interface documentation.
+- If routes, payloads, or response shapes change, regenerate `openapi.json`.
+- Cross-page handoff behavior should be documented in generated module and asset-flow docs, not duplicated here.

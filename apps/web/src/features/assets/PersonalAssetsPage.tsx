@@ -69,7 +69,6 @@ import {
   workflowRunStatusKey,
 } from '@/lib/i18n-helpers';
 import { parseImportedWorkflowGraph } from '@/lib/workflow-import';
-import { downloadUploadTemplate } from '../datasets/upload-templates';
 import { AccountProfileCard } from './components/AccountProfileCard';
 import { AccountSidebarCards } from './components/AccountSidebarCards';
 import {
@@ -2353,6 +2352,47 @@ export function PersonalAssetsPage({
     },
   ];
 
+  const assetSectionCopy =
+    locale === 'zh-CN'
+      ? {
+          dataGroup: '可复用输入资产',
+          automationGroup: '流程与结果',
+          spatialGroup: '空间资产',
+          datasetSummary: `${datasetRows.filter((item) => item.assetType === 'dataset').length} 个输入资产，${datasetRows.filter((item) => item.assetType === 'result').length} 个派生结果`,
+          datasetDetail: `${datasetRows.filter((item) => isSharedVisibility(item.visibility)).length} 个已共享数据集可继续跨页面复用`,
+          workflowSummary: `${overview?.workflowVersions.length ?? 0} 个工作流版本可沉淀为标准化流程资产`,
+          workflowDetail: `${(overview?.workflowVersions ?? []).filter((item) => isSharedVisibility(item.visibility)).length} 个已共享工作流版本`,
+          productSummary: `${productRows.length} 个产品资产纳入统一资产库`,
+          productDetail: `${productRows.filter((item) => isSharedVisibility(item.visibility)).length} 个产品已发布到展示面`,
+          runSummary: `${overview?.workflowRuns.length ?? 0} 次运行记录沉淀到结果中心`,
+          runDetail: `${(overview?.workflowRuns ?? []).filter((item) => item.status === 'succeeded').length} 次成功运行`,
+          modelSummary: `${overview?.modelVersions.length ?? 0} 个模型版本可直接供工作流调用`,
+          modelDetail: `${(overview?.modelVersions ?? []).filter((item) => isSharedVisibility(item.visibility)).length} 个模型已共享`,
+          roiSummary: `${overview?.spatialRois.length ?? 0} 个 ROI 可作为空间输入继续流转`,
+          roiDetail: `${(overview?.spatialRois ?? []).filter((item) => item.visibility === 'public').length} 个 ROI 已公开`,
+          overlaySummary: `${overview?.spatialOverlays.length ?? 0} 个叠加层记录可复用地图表达`,
+          overlayDetail: `${(overview?.spatialOverlays ?? []).filter((item) => item.visibility === 'public').length} 个叠加层已公开`,
+        }
+      : {
+          dataGroup: 'Reusable Inputs',
+          automationGroup: 'Automation And Results',
+          spatialGroup: 'Spatial Assets',
+          datasetSummary: `${datasetRows.filter((item) => item.assetType === 'dataset').length} input assets and ${datasetRows.filter((item) => item.assetType === 'result').length} derived results`,
+          datasetDetail: `${datasetRows.filter((item) => isSharedVisibility(item.visibility)).length} shared datasets can continue across pages`,
+          workflowSummary: `${overview?.workflowVersions.length ?? 0} workflow versions stored as reusable process assets`,
+          workflowDetail: `${(overview?.workflowVersions ?? []).filter((item) => isSharedVisibility(item.visibility)).length} shared workflow versions`,
+          productSummary: `${productRows.length} product assets managed in the shared library`,
+          productDetail: `${productRows.filter((item) => isSharedVisibility(item.visibility)).length} products published to the showcase`,
+          runSummary: `${overview?.workflowRuns.length ?? 0} workflow runs archived into the result center`,
+          runDetail: `${(overview?.workflowRuns ?? []).filter((item) => item.status === 'succeeded').length} successful runs`,
+          modelSummary: `${overview?.modelVersions.length ?? 0} model versions ready for workflow use`,
+          modelDetail: `${(overview?.modelVersions ?? []).filter((item) => isSharedVisibility(item.visibility)).length} shared model versions`,
+          roiSummary: `${overview?.spatialRois.length ?? 0} ROIs available as spatial inputs`,
+          roiDetail: `${(overview?.spatialRois ?? []).filter((item) => item.visibility === 'public').length} public ROIs`,
+          overlaySummary: `${overview?.spatialOverlays.length ?? 0} overlays preserved as reusable map expressions`,
+          overlayDetail: `${(overview?.spatialOverlays ?? []).filter((item) => item.visibility === 'public').length} public overlays`,
+        };
+
   const assetSections: AssetCatalogSection[] = [
     {
       key: 'datasets',
@@ -2360,6 +2400,11 @@ export function PersonalAssetsPage({
       rows: datasetRows as AssetCatalogSection['rows'],
       columns: datasetColumns as AssetCatalogSection['columns'],
       emptyLabel: t('assets.empty'),
+      groupKey: 'data',
+      groupLabel: assetSectionCopy.dataGroup,
+      summary: assetSectionCopy.datasetSummary,
+      detail: assetSectionCopy.datasetDetail,
+      defaultExpanded: true,
     },
     {
       key: 'workflows',
@@ -2367,6 +2412,10 @@ export function PersonalAssetsPage({
       rows: (overview?.workflowVersions ?? []) as AssetCatalogSection['rows'],
       columns: workflowColumns as AssetCatalogSection['columns'],
       emptyLabel: t('assets.empty'),
+      groupKey: 'automation',
+      groupLabel: assetSectionCopy.automationGroup,
+      summary: assetSectionCopy.workflowSummary,
+      detail: assetSectionCopy.workflowDetail,
     },
     {
       key: 'products',
@@ -2374,6 +2423,10 @@ export function PersonalAssetsPage({
       rows: productRows as AssetCatalogSection['rows'],
       columns: productColumns as AssetCatalogSection['columns'],
       emptyLabel: productCopy.empty,
+      groupKey: 'data',
+      groupLabel: assetSectionCopy.dataGroup,
+      summary: assetSectionCopy.productSummary,
+      detail: assetSectionCopy.productDetail,
     },
     {
       key: 'runs',
@@ -2381,6 +2434,10 @@ export function PersonalAssetsPage({
       rows: (overview?.workflowRuns ?? []) as AssetCatalogSection['rows'],
       columns: runColumns as AssetCatalogSection['columns'],
       emptyLabel: t('assets.empty'),
+      groupKey: 'automation',
+      groupLabel: assetSectionCopy.automationGroup,
+      summary: assetSectionCopy.runSummary,
+      detail: assetSectionCopy.runDetail,
     },
     {
       key: 'models',
@@ -2388,6 +2445,10 @@ export function PersonalAssetsPage({
       rows: (overview?.modelVersions ?? []) as AssetCatalogSection['rows'],
       columns: modelColumns as AssetCatalogSection['columns'],
       emptyLabel: t('assets.empty'),
+      groupKey: 'data',
+      groupLabel: assetSectionCopy.dataGroup,
+      summary: assetSectionCopy.modelSummary,
+      detail: assetSectionCopy.modelDetail,
     },
     {
       key: 'spatial-rois',
@@ -2395,6 +2456,10 @@ export function PersonalAssetsPage({
       rows: (overview?.spatialRois ?? []) as AssetCatalogSection['rows'],
       columns: spatialRoiColumns as AssetCatalogSection['columns'],
       emptyLabel: spatialCopy.emptyRoi,
+      groupKey: 'spatial',
+      groupLabel: assetSectionCopy.spatialGroup,
+      summary: assetSectionCopy.roiSummary,
+      detail: assetSectionCopy.roiDetail,
     },
     {
       key: 'spatial-overlays',
@@ -2402,6 +2467,10 @@ export function PersonalAssetsPage({
       rows: (overview?.spatialOverlays ?? []) as AssetCatalogSection['rows'],
       columns: spatialOverlayColumns as AssetCatalogSection['columns'],
       emptyLabel: spatialCopy.emptyOverlay,
+      groupKey: 'spatial',
+      groupLabel: assetSectionCopy.spatialGroup,
+      summary: assetSectionCopy.overlaySummary,
+      detail: assetSectionCopy.overlayDetail,
     },
   ];
   return (
@@ -2412,7 +2481,7 @@ export function PersonalAssetsPage({
         copy={pageCopy.copy}
         isAssetsView={isAssetsView}
         isAccountView={isAccountView}
-        uploadLabel={t('common.upload')}
+        uploadDatasetLabel={t('assets.uploadDataset')}
         uploadProductLabel={productCopy.upload}
         addCredentialLabel={geeCopy.add}
         importWorkflowLabel={t('assets.importWorkflow')}
@@ -2530,7 +2599,6 @@ export function PersonalAssetsPage({
         kindLabel={t('datasets.table.kind')}
         fileLabel={t('common.file')}
         title={t('assets.uploadDataset')}
-        downloadTemplateLabel={t('assets.downloadTemplate')}
         kindOptions={[
           { value: 'raster', label: t('dataset.kind.raster') },
           { value: 'vector', label: t('dataset.kind.vector') },
@@ -2542,7 +2610,6 @@ export function PersonalAssetsPage({
           setSelectedFile(null);
         }}
         onSubmit={() => void handleUpload()}
-        onDownloadTemplate={() => downloadUploadTemplate(selectedUploadKind)}
         onFileChange={(file) => {
           setSelectedFile(file);
           if (file) {

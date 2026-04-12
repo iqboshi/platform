@@ -1,11 +1,9 @@
 import type {
   DashboardAnnouncementItem,
   DashboardConfig,
-  DashboardFeatureItem,
-  FeedbackTicketCategory,
-  FeedbackTicketPriority,
   FeedbackTicketStatus,
   FeedbackTicketSummary,
+  WorkflowRunStatus,
 } from '@platform/types';
 import type { PlatformDataSnapshot } from '@/lib/api';
 
@@ -30,10 +28,7 @@ import {
   Typography,
 } from 'antd';
 import {
-  AppstoreOutlined,
-  BellOutlined,
   BuildOutlined,
-  BulbOutlined,
   FolderOpenOutlined,
   PlusOutlined,
   RadarChartOutlined,
@@ -69,14 +64,6 @@ type QuickAction = {
   icon: React.ReactNode;
 };
 
-function pickLocalizedValue(
-  locale: DashboardLocale,
-  valueZh: string | undefined,
-  valueEn: string | undefined,
-): string {
-  return locale === 'zh-CN' ? valueZh ?? valueEn ?? '' : valueEn ?? valueZh ?? '';
-}
-
 function formatDateTime(value: string | undefined, locale: DashboardLocale): string {
   if (!value) {
     return '-';
@@ -96,36 +83,19 @@ function parseDateValue(value: string | undefined): number {
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
-function featureIcon(iconKey: string) {
-  switch (iconKey) {
-    case 'datasets':
-      return <FolderOpenOutlined />;
-    case 'workflows':
-      return <ThunderboltOutlined />;
-    case 'models':
-      return <RadarChartOutlined />;
-    case 'assets':
-      return <UserOutlined />;
-    case 'governance':
-      return <SafetyOutlined />;
-    case 'announcements':
-      return <BellOutlined />;
-    case 'insights':
-      return <BulbOutlined />;
-    default:
-      return <AppstoreOutlined />;
-  }
-}
-
 const DASHBOARD_COPY = {
   'zh-CN': {
     heroKicker: '平台总览',
     heroTitle: '用一个首页串起数据、工作流、模型与团队协作。',
     heroCopy:
-      '这里不再只是一个统计看板，而是团队进入平台后的运营门户。成员可以快速进入核心模块、查看更新公告，并通过意见工单持续推动平台完善。',
+      '这里仍然作为团队进入平台后的总览页，既能快速看到平台状态，也能直接进入核心功能、查看公告与跟进工单。',
     openWorkflows: '打开工作流',
     browseDatasets: '浏览公开数据集',
-    editPortal: '编辑门户内容',
+    openAssetHub: '打开资产中心',
+    editPortal: '管理首页公告',
+    workspaceReady: '工作空间状态',
+    workspaceReadyCopy:
+      '首页使用实时快照与共享模块注册表构建，但仍保持总览页应有的整体视角。',
     quickDatasets: '公开数据集',
     quickDatasetsCopy: '查看平台对外展示的数据资产、简介和可下载版本。',
     quickWorkflows: '工作流中心',
@@ -134,12 +104,38 @@ const DASHBOARD_COPY = {
     quickAssetsCopy: '统一管理自己的数据集、结果、工作流和凭证资产。',
     quickModels: '模型中心',
     quickModelsCopy: '查看平台内置模型、训练产物和外部 API 模型配置。',
-    features: '功能介绍',
-    featuresCopy: '通过结构化功能卡片，快速理解平台当前已经落地的核心能力。',
-    noFeatures: '当前还没有启用的功能卡片。',
+    features: '核心模块',
+    featuresCopy: '这里保留平台主功能区的总览入口，并展示各模块可直接衔接的下游去向。',
+    actionQueueTitle: '行动队列',
+    actionQueueCopy:
+      '把运行异常、进行中的流程、待处理工单和首页维护提醒放在同一个列表里优先处理。',
+    actionQueueEmpty: '当前没有待跟进事项。',
+    actionQueueActionWorkflow: '前往工作流',
+    actionQueueActionTicket: '查看工单',
+    actionQueueActionPortal: '编辑公告',
+    actionQueueSourceWorkflow: '工作流',
+    actionQueueSourceFeedback: '反馈',
+    actionQueueSourcePortal: '首页维护',
+    actionQueuePriorityCritical: '优先处理',
+    actionQueuePriorityActive: '进行中',
+    actionQueuePriorityNormal: '提醒',
+    announcementGapTitle: '首页还没有已发布公告',
+    announcementGapDescription: '建议补充至少一条公告，用于说明最近更新、已上线能力或运营提醒。',
+    modulesTitle: '模块入口',
+    modulesCopy:
+      '模块卡片统一来自共享注册表，后续新增功能后这里只需要补模块定义，不再单独维护首页入口。',
+    moduleFlowTitle: '可直接衔接',
+    moduleSectionWorkspace: '工作区',
+    moduleSectionPersonal: '个人',
+    moduleSectionAdmin: '管理',
+    noFeatures: '当前没有可显示的模块入口。',
     announcements: '更新公告',
     announcementsCopy: '查看近期的重要更新、已上线能力和使用说明。',
-    noAnnouncements: '当前还没有已发布的公告。',
+    notificationsTitle: '站内消息',
+    notificationsUnread: '{{count}} 条未读消息',
+    notificationsReady: '查看公告通知',
+    noAnnouncements: '当前还没有已发布公告。',
+    moreAnnouncements: '另有 {{count}} 条已发布公告',
     pinned: '置顶',
     published: '已发布',
     viewDetails: '查看详情',
@@ -151,8 +147,6 @@ const DASHBOARD_COPY = {
     feedbackNewSuccess: '反馈工单已提交。',
     feedbackUpdateSuccess: '反馈工单已更新。',
     feedbackEmpty: '当前没有反馈工单。',
-    feedbackRecentAdmin: '最近工单',
-    feedbackRecentMine: '我的工单',
     feedbackSummaryOpen: '待处理',
     feedbackSummaryInProgress: '处理中',
     feedbackSummaryMineOpen: '我的待处理',
@@ -167,8 +161,6 @@ const DASHBOARD_COPY = {
     feedbackFieldAdminReply: '管理员回复',
     feedbackFieldCreatedAt: '创建时间',
     feedbackFieldUpdatedAt: '更新时间',
-    feedbackFieldHref: '跳转路径',
-    feedbackFieldIcon: '图标',
     feedbackFieldPublishedAt: '发布日期',
     feedbackFieldPublished: '发布',
     feedbackFieldPinned: '置顶',
@@ -186,34 +178,10 @@ const DASHBOARD_COPY = {
     feedbackStatusResolved: '已解决',
     feedbackStatusClosed: '已关闭',
     feedbackDetailTitle: '工单详情',
-    portalEditTitle: '编辑首页门户内容',
-    portalEditSuccess: '门户内容已更新。',
-    portalFeaturesSection: '功能介绍卡片',
-    portalAnnouncementsSection: '更新公告',
-    portalFeatureAdd: '新增功能卡片',
-    portalAnnouncementAdd: '新增公告',
-    portalFeatureCard: '功能卡片',
-    portalAnnouncementCard: '公告',
-    portalButtonLabel: '按钮文案',
-    portalTitleZh: '中文标题',
-    portalTitleEn: '英文标题',
-    portalSummaryZh: '中文简介',
-    portalSummaryEn: '英文简介',
-    portalContentZh: '中文正文',
-    portalContentEn: '英文正文',
-    portalTagZh: '中文标签',
-    portalTagEn: '英文标签',
-    portalEnabled: '启用',
-    openSection: '进入模块',
     runsTitle: '最近运行记录',
     noRuns: '当前还没有工作流运行记录。',
     runsSubmittedBy: '提交人',
     runsStartedAt: '开始时间',
-    runsFinishedAt: '结束时间',
-    runsResult: '结果产物',
-    runsError: '错误信息',
-    workspaceReady: '工作空间在线',
-    workspaceReadyCopy: '首页已经切换为运营门户模式，便于团队快速理解能力边界并开始协作。',
     statPublicDatasets: '公开数据集',
     statPublicDatasetsDetail: '面向团队展示的数据资产数量。',
     statWorkflowRuns: '工作流运行',
@@ -222,22 +190,37 @@ const DASHBOARD_COPY = {
     statModelVersionsDetail: '已接入的平台模型与训练权重资产。',
     statFeedback: '活跃工单',
     statFeedbackDetail: '当前仍在跟进中的问题、需求与体验反馈。',
+    portalEditTitle: '管理首页公告',
+    portalEditSuccess: '首页公告已更新。',
+    portalAnnouncementsSection: '公告',
+    portalAnnouncementAdd: '新增公告',
+    portalAnnouncementCard: '公告',
+    portalTitleZh: '中文标题',
+    portalTitleEn: '英文标题',
+    portalSummaryZh: '中文摘要',
+    portalSummaryEn: '英文摘要',
+    portalContentZh: '中文正文',
+    portalContentEn: '英文正文',
+    portalTagZh: '中文标签',
+    portalTagEn: '英文标签',
     actionSave: '保存',
     actionClose: '关闭',
     actionRemove: '移除',
     authMissing: '登录状态已失效，请重新登录。',
     ticketMeta: '工单信息',
-    portalRoutePlaceholder: '/workflows',
-    portalIconPlaceholder: 'datasets / workflows / models / assets',
   },
   'en-US': {
-    heroKicker: 'Operations Portal',
-    heroTitle: 'Bring data, workflows, models, and collaboration into one entry point.',
+    heroKicker: 'Platform Overview',
+    heroTitle: 'Bring data, workflows, models, and collaboration into one overview.',
     heroCopy:
-      'This is no longer just a statistics board. It is the workspace landing page where users enter the platform, jump into core modules, read release notes, and keep the feedback loop active.',
+      'This remains the team overview page: keep the workspace state visible, enter core capabilities quickly, review announcements, and follow up on feedback without losing the big picture.',
     openWorkflows: 'Open workflows',
     browseDatasets: 'Browse public datasets',
-    editPortal: 'Edit portal content',
+    openAssetHub: 'Open asset hub',
+    editPortal: 'Manage overview announcements',
+    workspaceReady: 'Workspace status',
+    workspaceReadyCopy:
+      'The page is driven by live snapshot data and the shared module registry, while still preserving an actual overview surface.',
     quickDatasets: 'Public datasets',
     quickDatasetsCopy: 'Review published assets, curated descriptions, and downloadable versions.',
     quickWorkflows: 'Workflow center',
@@ -246,12 +229,39 @@ const DASHBOARD_COPY = {
     quickAssetsCopy: 'Manage your datasets, outputs, workflows, and credentials in one place.',
     quickModels: 'Model center',
     quickModelsCopy: 'Inspect packaged models, trained weights, and external API model configs.',
-    features: 'Capability highlights',
-    featuresCopy: 'Use structured cards to understand the core capabilities already delivered.',
-    noFeatures: 'No enabled feature cards are configured right now.',
-    announcements: 'Release notes',
-    announcementsCopy: 'Review recent platform updates, live capabilities, and usage notes.',
+    features: 'Core modules',
+    featuresCopy: 'Keep the main module overview here and expose what each module can hand off to next.',
+    actionQueueTitle: 'Action queue',
+    actionQueueCopy:
+      'Put run failures, in-flight processes, open tickets, and homepage maintenance reminders into one prioritized list.',
+    actionQueueEmpty: 'There is nothing that currently needs follow-up.',
+    actionQueueActionWorkflow: 'Open workflows',
+    actionQueueActionTicket: 'Open ticket',
+    actionQueueActionPortal: 'Edit announcements',
+    actionQueueSourceWorkflow: 'Workflow',
+    actionQueueSourceFeedback: 'Feedback',
+    actionQueueSourcePortal: 'Homepage',
+    actionQueuePriorityCritical: 'Needs priority',
+    actionQueuePriorityActive: 'In progress',
+    actionQueuePriorityNormal: 'Reminder',
+    announcementGapTitle: 'There is no published announcement on the overview',
+    announcementGapDescription:
+      'Publish at least one announcement to reflect recent changes, operational notes, or newly released capabilities.',
+    modulesTitle: 'Module portal',
+    modulesCopy:
+      'These cards come from the shared registry. New capabilities should only need a module definition instead of separate overview maintenance.',
+    moduleFlowTitle: 'Can hand off to',
+    moduleSectionWorkspace: 'Workspace',
+    moduleSectionPersonal: 'Personal',
+    moduleSectionAdmin: 'Admin',
+    noFeatures: 'No visible modules are available right now.',
+    announcements: 'Announcements',
+    announcementsCopy: 'Review recent platform updates, released capabilities, and usage notes.',
+    notificationsTitle: 'Inbox',
+    notificationsUnread: '{{count}} unread messages',
+    notificationsReady: 'Open announcement notices',
     noAnnouncements: 'No published announcements are available right now.',
+    moreAnnouncements: '{{count}} more published announcements',
     pinned: 'Pinned',
     published: 'Published',
     viewDetails: 'View details',
@@ -265,8 +275,6 @@ const DASHBOARD_COPY = {
     feedbackNewSuccess: 'Feedback ticket submitted.',
     feedbackUpdateSuccess: 'Feedback ticket updated.',
     feedbackEmpty: 'No feedback tickets are available.',
-    feedbackRecentAdmin: 'Recent tickets',
-    feedbackRecentMine: 'My tickets',
     feedbackSummaryOpen: 'Open',
     feedbackSummaryInProgress: 'In progress',
     feedbackSummaryMineOpen: 'My open tickets',
@@ -281,8 +289,6 @@ const DASHBOARD_COPY = {
     feedbackFieldAdminReply: 'Admin reply',
     feedbackFieldCreatedAt: 'Created at',
     feedbackFieldUpdatedAt: 'Updated at',
-    feedbackFieldHref: 'Target route',
-    feedbackFieldIcon: 'Icon',
     feedbackFieldPublishedAt: 'Publish date',
     feedbackFieldPublished: 'Published',
     feedbackFieldPinned: 'Pinned',
@@ -300,35 +306,10 @@ const DASHBOARD_COPY = {
     feedbackStatusResolved: 'Resolved',
     feedbackStatusClosed: 'Closed',
     feedbackDetailTitle: 'Ticket details',
-    portalEditTitle: 'Edit dashboard portal content',
-    portalEditSuccess: 'Portal content updated.',
-    portalFeaturesSection: 'Feature highlight cards',
-    portalAnnouncementsSection: 'Announcements',
-    portalFeatureAdd: 'Add feature card',
-    portalAnnouncementAdd: 'Add announcement',
-    portalFeatureCard: 'Feature card',
-    portalAnnouncementCard: 'Announcement',
-    portalButtonLabel: 'Button label',
-    portalTitleZh: 'Chinese title',
-    portalTitleEn: 'English title',
-    portalSummaryZh: 'Chinese summary',
-    portalSummaryEn: 'English summary',
-    portalContentZh: 'Chinese content',
-    portalContentEn: 'English content',
-    portalTagZh: 'Chinese tag',
-    portalTagEn: 'English tag',
-    portalEnabled: 'Enabled',
-    openSection: 'Open section',
     runsTitle: 'Recent workflow runs',
     noRuns: 'No workflow runs are available yet.',
     runsSubmittedBy: 'Submitted by',
     runsStartedAt: 'Started at',
-    runsFinishedAt: 'Finished at',
-    runsResult: 'Result artifact',
-    runsError: 'Error',
-    workspaceReady: 'Workspace online',
-    workspaceReadyCopy:
-      'The landing page now works as an operations-style portal so teams can understand the platform and move faster.',
     statPublicDatasets: 'Public datasets',
     statPublicDatasetsDetail: 'Published assets visible to the team.',
     statWorkflowRuns: 'Workflow runs',
@@ -337,19 +318,30 @@ const DASHBOARD_COPY = {
     statModelVersionsDetail: 'Packaged models and trained weight assets available on the platform.',
     statFeedback: 'Active tickets',
     statFeedbackDetail: 'Open issues, requests, and UX feedback still under follow-up.',
+    portalEditTitle: 'Manage overview announcements',
+    portalEditSuccess: 'Overview announcements updated.',
+    portalAnnouncementsSection: 'Announcements',
+    portalAnnouncementAdd: 'Add announcement',
+    portalAnnouncementCard: 'Announcement',
+    portalTitleZh: 'Chinese title',
+    portalTitleEn: 'English title',
+    portalSummaryZh: 'Chinese summary',
+    portalSummaryEn: 'English summary',
+    portalContentZh: 'Chinese content',
+    portalContentEn: 'English content',
+    portalTagZh: 'Chinese tag',
+    portalTagEn: 'English tag',
     actionSave: 'Save',
     actionClose: 'Close',
     actionRemove: 'Remove',
     authMissing: 'Authentication is missing. Please sign in again.',
     ticketMeta: 'Ticket meta',
-    portalRoutePlaceholder: '/workflows',
-    portalIconPlaceholder: 'datasets / workflows / models / assets',
   },
 } as const;
 
 type DashboardCopy = (typeof DASHBOARD_COPY)[keyof typeof DASHBOARD_COPY];
 
-function feedbackCategoryLabel(category: FeedbackTicketCategory, copy: DashboardCopy): string {
+function feedbackCategoryLabel(category: string, copy: DashboardCopy): string {
   switch (category) {
     case 'bug':
       return copy.feedbackCategoryBug;
@@ -364,7 +356,7 @@ function feedbackCategoryLabel(category: FeedbackTicketCategory, copy: Dashboard
   }
 }
 
-function feedbackPriorityLabel(priority: FeedbackTicketPriority, copy: DashboardCopy): string {
+function feedbackPriorityLabel(priority: string, copy: DashboardCopy): string {
   switch (priority) {
     case 'low':
       return copy.feedbackPriorityLow;
@@ -372,6 +364,17 @@ function feedbackPriorityLabel(priority: FeedbackTicketPriority, copy: Dashboard
       return copy.feedbackPriorityHigh;
     default:
       return copy.feedbackPriorityMedium;
+  }
+}
+
+function feedbackPriorityColor(priority: string): string {
+  switch (priority) {
+    case 'low':
+      return 'default';
+    case 'high':
+      return 'red';
+    default:
+      return 'gold';
   }
 }
 
@@ -385,17 +388,6 @@ function feedbackStatusLabel(status: FeedbackTicketStatus, copy: DashboardCopy):
       return copy.feedbackStatusClosed;
     default:
       return copy.feedbackStatusOpen;
-  }
-}
-
-function feedbackPriorityColor(priority: FeedbackTicketPriority): string {
-  switch (priority) {
-    case 'low':
-      return 'default';
-    case 'high':
-      return 'red';
-    default:
-      return 'gold';
   }
 }
 
@@ -434,7 +426,6 @@ export function DashboardPage({
   const [feedbackForm] = Form.useForm();
   const [feedbackDetailForm] = Form.useForm();
   const [portalForm] = Form.useForm();
-  const [announcementOpen, setAnnouncementOpen] = useState<DashboardAnnouncementItem | null>(null);
   const [feedbackCreateOpen, setFeedbackCreateOpen] = useState(false);
   const [feedbackCreateSaving, setFeedbackCreateSaving] = useState(false);
   const [feedbackDetailOpen, setFeedbackDetailOpen] = useState(false);
@@ -450,29 +441,13 @@ export function DashboardPage({
   const canApproveUsers = hasPermission('user.approve');
   const isAdmin = canConfigurePortal;
 
-  const displayedFeatures = useMemo(
-    () => snapshot.dashboardConfig.featureSections.filter((item) => item.enabled),
-    [snapshot.dashboardConfig.featureSections],
-  );
-  const displayedAnnouncements = useMemo(
-    () =>
-      [...snapshot.dashboardConfig.announcements]
-        .filter((item) => item.published)
-        .sort((left, right) => {
-          if (left.pinned !== right.pinned) {
-            return left.pinned ? -1 : 1;
-          }
-          return parseDateValue(right.publishedAt) - parseDateValue(left.publishedAt);
-        }),
-    [snapshot.dashboardConfig.announcements],
-  );
   const recentRuns = useMemo(
     () =>
       [...snapshot.workflowRuns]
         .sort(
           (left, right) =>
-            parseDateValue(right.startedAt ?? right.finishedAt) -
-            parseDateValue(left.startedAt ?? left.finishedAt),
+            parseDateValue(right.finishedAt ?? right.startedAt) -
+            parseDateValue(left.finishedAt ?? left.startedAt),
         )
         .slice(0, 6),
     [snapshot.workflowRuns],
@@ -531,7 +506,7 @@ export function DashboardPage({
           title: locale === 'zh-CN' ? '审批中心' : 'Approval Center',
           description:
             locale === 'zh-CN'
-              ? '处理新账号审批、角色调整和管理员侧治理入口。'
+              ? '处理新账号审批、角色调整和治理入口。'
               : 'Review new account approvals, role changes, and governance actions.',
           href: '/admin/users',
           icon: <SafetyOutlined />,
@@ -558,6 +533,7 @@ export function DashboardPage({
     ],
     [copy],
   );
+
   const feedbackPriorityOptions = useMemo(
     () => [
       { value: 'low', label: copy.feedbackPriorityLow },
@@ -566,6 +542,7 @@ export function DashboardPage({
     ],
     [copy],
   );
+
   const feedbackStatusOptions = useMemo(
     () => [
       { value: 'open', label: copy.feedbackStatusOpen },
@@ -575,19 +552,6 @@ export function DashboardPage({
     ],
     [copy],
   );
-  const iconOptions = useMemo(
-    () => [
-      { value: 'datasets', label: 'datasets' },
-      { value: 'workflows', label: 'workflows' },
-      { value: 'models', label: 'models' },
-      { value: 'assets', label: 'assets' },
-      { value: 'governance', label: 'governance' },
-      { value: 'announcements', label: 'announcements' },
-      { value: 'insights', label: 'insights' },
-    ],
-    [],
-  );
-
   const feedbackColumns = useMemo(
     () => [
       {
@@ -614,10 +578,8 @@ export function DashboardPage({
         title: copy.feedbackFieldPriority,
         dataIndex: 'priority',
         key: 'priority',
-        render: (value: FeedbackTicketPriority) => (
-          <Tag color={feedbackPriorityColor(value)}>
-            {feedbackPriorityLabel(value, copy)}
-          </Tag>
+        render: (value: string) => (
+          <Tag color={feedbackPriorityColor(value)}>{feedbackPriorityLabel(value, copy)}</Tag>
         ),
       },
       {
@@ -644,13 +606,18 @@ export function DashboardPage({
         title: copy.feedbackFieldTitle,
         dataIndex: 'id',
         key: 'id',
-        render: (value: string) => <Text code>{value.slice(0, 12)}</Text>,
+        render: (_value: string, record: (typeof recentRuns)[number]) => (
+          <div>
+            <Text strong>{record.workflowName || record.id.slice(0, 12)}</Text>
+            <div className="dashboard-table-subtle">{record.id.slice(0, 12)}</div>
+          </div>
+        ),
       },
       {
         title: copy.feedbackFieldStatus,
         dataIndex: 'status',
         key: 'status',
-        render: (value: string) => <Tag>{t(workflowRunStatusKey(value as never))}</Tag>,
+        render: (value: WorkflowRunStatus) => <Tag>{t(workflowRunStatusKey(value))}</Tag>,
       },
       {
         title: copy.runsSubmittedBy,
@@ -661,7 +628,8 @@ export function DashboardPage({
         title: copy.runsStartedAt,
         dataIndex: 'startedAt',
         key: 'startedAt',
-        render: (value: string | undefined) => formatDateTime(value, locale),
+        render: (value: string | undefined, record: (typeof recentRuns)[number]) =>
+          formatDateTime(value ?? record.finishedAt, locale),
       },
     ],
     [copy, locale, t],
@@ -699,7 +667,6 @@ export function DashboardPage({
       return;
     }
     portalForm.setFieldsValue({
-      featureSections: snapshot.dashboardConfig.featureSections,
       announcements: snapshot.dashboardConfig.announcements,
     });
   }, [portalEditorOpen, portalForm, snapshot.dashboardConfig]);
@@ -790,20 +757,7 @@ export function DashboardPage({
       const values = await portalForm.validateFields();
       setPortalEditorSaving(true);
       const payload: DashboardConfig = {
-        featureSections: (values.featureSections ?? []).map(
-          (item: DashboardFeatureItem, index: number) => ({
-            id: item.id || nextId(`feature-${index + 1}`),
-            titleZh: item.titleZh,
-            titleEn: item.titleEn,
-            summaryZh: item.summaryZh,
-            summaryEn: item.summaryEn,
-            buttonLabelZh: item.buttonLabelZh,
-            buttonLabelEn: item.buttonLabelEn,
-            href: item.href,
-            iconKey: item.iconKey,
-            enabled: Boolean(item.enabled),
-          }),
-        ),
+        featureSections: snapshot.dashboardConfig.featureSections,
         announcements: (values.announcements ?? []).map(
           (item: DashboardAnnouncementItem, index: number) => ({
             id: item.id || nextId(`announcement-${index + 1}`),
@@ -840,6 +794,9 @@ export function DashboardPage({
     (isAdmin ||
       (feedbackDetail.status !== 'resolved' && feedbackDetail.status !== 'closed'));
 
+  const currentUserLabel =
+    currentUser?.displayName || currentUser?.email || (locale === 'zh-CN' ? '当前用户' : 'Current user');
+
   return (
     <div className="page-stack">
       <Card className="panel-card dashboard-hero-panel" variant="borderless">
@@ -873,7 +830,7 @@ export function DashboardPage({
                 <Tag color={snapshot.source === 'api' ? 'green' : 'gold'}>
                   {snapshot.source.toUpperCase()}
                 </Tag>
-                {currentUser ? <Tag color="geekblue">{currentUser.displayName}</Tag> : null}
+                {currentUser ? <Tag color="geekblue">{currentUserLabel}</Tag> : null}
               </Space>
             </div>
             <div className="dashboard-feedback-summary">
@@ -947,97 +904,6 @@ export function DashboardPage({
       </Row>
 
       <Row gutter={[20, 20]} align="stretch">
-        <Col xs={24} xl={14}>
-          <Card className="panel-card dashboard-panel-card" variant="borderless">
-            <div className="dashboard-section-head">
-              <div>
-                <div className="panel-kicker">{copy.features}</div>
-                <Title level={3} className="section-title">
-                  {copy.features}
-                </Title>
-                <Paragraph className="dashboard-section-copy">{copy.featuresCopy}</Paragraph>
-              </div>
-            </div>
-            {displayedFeatures.length > 0 ? (
-              <div className="dashboard-feature-grid">
-                {displayedFeatures.map((item) => (
-                  <Card key={item.id} className="dashboard-feature-card" variant="borderless">
-                    <div className="dashboard-feature-icon">{featureIcon(item.iconKey)}</div>
-                    <div className="dashboard-feature-body">
-                      <Tag>{item.iconKey}</Tag>
-                      <Title level={4}>
-                        {pickLocalizedValue(locale, item.titleZh, item.titleEn)}
-                      </Title>
-                      <Paragraph className="dashboard-feature-copy">
-                        {pickLocalizedValue(locale, item.summaryZh, item.summaryEn)}
-                      </Paragraph>
-                      <Button type="link" onClick={() => navigate(item.href)}>
-                        {pickLocalizedValue(locale, item.buttonLabelZh, item.buttonLabelEn) ||
-                          copy.openSection}
-                      </Button>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <Empty description={copy.noFeatures} />
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} xl={10}>
-          <Card className="panel-card dashboard-panel-card" variant="borderless">
-            <div className="dashboard-section-head">
-              <div>
-                <div className="panel-kicker">{copy.announcements}</div>
-                <Title level={3} className="section-title">
-                  {copy.announcements}
-                </Title>
-                <Paragraph className="dashboard-section-copy">{copy.announcementsCopy}</Paragraph>
-              </div>
-            </div>
-            {displayedAnnouncements.length > 0 ? (
-              <div className="dashboard-announcement-list">
-                {displayedAnnouncements.slice(0, 4).map((item) => (
-                  <div
-                    key={item.id}
-                    className="dashboard-announcement-item"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setAnnouncementOpen(item)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setAnnouncementOpen(item);
-                      }
-                    }}
-                  >
-                    <div className="dashboard-announcement-head">
-                      <Space wrap>
-                        {item.pinned ? <Tag color="gold">{copy.pinned}</Tag> : null}
-                        <Tag>{pickLocalizedValue(locale, item.tagZh, item.tagEn) || copy.published}</Tag>
-                      </Space>
-                      <Text className="dashboard-announcement-date">
-                        {formatDateTime(item.publishedAt, locale)}
-                      </Text>
-                    </div>
-                    <Title level={5}>
-                      {pickLocalizedValue(locale, item.titleZh, item.titleEn)}
-                    </Title>
-                    <Paragraph className="dashboard-announcement-copy">
-                      {pickLocalizedValue(locale, item.summaryZh, item.summaryEn)}
-                    </Paragraph>
-                    <Button type="link">{copy.viewDetails}</Button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <Empty description={copy.noAnnouncements} />
-            )}
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={[20, 20]} align="stretch">
         <Col xs={24} xl={15}>
           <Card className="panel-card dashboard-panel-card" variant="borderless">
             <div className="dashboard-section-head">
@@ -1104,47 +970,13 @@ export function DashboardPage({
               </div>
             </div>
             {recentRuns.length > 0 ? (
-              <Table
-                rowKey="id"
-                columns={runColumns}
-                dataSource={recentRuns}
-                pagination={false}
-                size="small"
-              />
+              <Table rowKey="id" columns={runColumns} dataSource={recentRuns} pagination={false} size="small" />
             ) : (
               <Empty description={copy.noRuns} />
             )}
           </Card>
         </Col>
       </Row>
-
-      <Modal
-        open={announcementOpen !== null}
-        title={
-          announcementOpen
-            ? pickLocalizedValue(locale, announcementOpen.titleZh, announcementOpen.titleEn)
-            : copy.announcements
-        }
-        footer={<Button onClick={() => setAnnouncementOpen(null)}>{copy.actionClose}</Button>}
-        onCancel={() => setAnnouncementOpen(null)}
-        width={720}
-        destroyOnHidden
-      >
-        {announcementOpen ? (
-          <div className="dashboard-announcement-modal">
-            <Space wrap>
-              {announcementOpen.pinned ? <Tag color="gold">{copy.pinned}</Tag> : null}
-              <Tag>{pickLocalizedValue(locale, announcementOpen.tagZh, announcementOpen.tagEn)}</Tag>
-              <Text className="dashboard-announcement-date">
-                {formatDateTime(announcementOpen.publishedAt, locale)}
-              </Text>
-            </Space>
-            <Paragraph className="dashboard-announcement-modal-copy">
-              {pickLocalizedValue(locale, announcementOpen.contentZh, announcementOpen.contentEn)}
-            </Paragraph>
-          </div>
-        ) : null}
-      </Modal>
 
       <Modal
         open={feedbackCreateOpen}
@@ -1265,72 +1097,13 @@ export function DashboardPage({
         confirmLoading={portalEditorSaving}
         onOk={() => void onSavePortalConfig()}
         onCancel={() => setPortalEditorOpen(false)}
-        width={1080}
+        width={920}
         destroyOnHidden
       >
         <Form form={portalForm} layout="vertical">
           <Collapse
-            defaultActiveKey={['features', 'announcements']}
+            defaultActiveKey={['announcements']}
             items={[
-              {
-                key: 'features',
-                label: copy.portalFeaturesSection,
-                children: (
-                  <Form.List name="featureSections">
-                    {(fields, { add, remove }) => (
-                      <div className="dashboard-editor-stack">
-                        {fields.map((field, index) => (
-                          <Card key={field.key} className="dashboard-editor-card" variant="borderless">
-                            <div className="dashboard-editor-card-head">
-                              <Title level={5}>{`${copy.portalFeatureCard} ${index + 1}`}</Title>
-                              <Button danger onClick={() => remove(field.name)}>
-                                {copy.actionRemove}
-                              </Button>
-                            </div>
-                            <div className="dashboard-form-grid">
-                              <Form.Item label="ID" name={[field.name, 'id']} rules={[{ required: true, whitespace: true }]}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={copy.feedbackFieldIcon} name={[field.name, 'iconKey']} rules={[{ required: true }]}>
-                                <Select options={iconOptions} placeholder={copy.portalIconPlaceholder} />
-                              </Form.Item>
-                              <Form.Item label={copy.portalTitleZh} name={[field.name, 'titleZh']} rules={[{ required: true, whitespace: true }]}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={copy.portalTitleEn} name={[field.name, 'titleEn']} rules={[{ required: true, whitespace: true }]}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={copy.portalButtonLabel} name={[field.name, 'buttonLabelZh']} rules={[{ required: true, whitespace: true }]}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={`${copy.portalButtonLabel} EN`} name={[field.name, 'buttonLabelEn']} rules={[{ required: true, whitespace: true }]}>
-                                <Input />
-                              </Form.Item>
-                              <Form.Item label={copy.feedbackFieldHref} name={[field.name, 'href']} rules={[{ required: true, whitespace: true }]}>
-                                <Input placeholder={copy.portalRoutePlaceholder} />
-                              </Form.Item>
-                              <Form.Item label={copy.portalEnabled} name={[field.name, 'enabled']} valuePropName="checked">
-                                <Switch />
-                              </Form.Item>
-                            </div>
-                            <div className="dashboard-form-grid dashboard-form-grid-compact">
-                              <Form.Item label={copy.portalSummaryZh} name={[field.name, 'summaryZh']} rules={[{ required: true, whitespace: true }]}>
-                                <TextArea rows={4} />
-                              </Form.Item>
-                              <Form.Item label={copy.portalSummaryEn} name={[field.name, 'summaryEn']} rules={[{ required: true, whitespace: true }]}>
-                                <TextArea rows={4} />
-                              </Form.Item>
-                            </div>
-                          </Card>
-                        ))}
-                        <Button icon={<PlusOutlined />} onClick={() => add({ id: nextId('feature'), iconKey: 'datasets', enabled: true })}>
-                          {copy.portalFeatureAdd}
-                        </Button>
-                      </div>
-                    )}
-                  </Form.List>
-                ),
-              },
               {
                 key: 'announcements',
                 label: copy.portalAnnouncementsSection,
@@ -1350,13 +1123,25 @@ export function DashboardPage({
                               <Form.Item label="ID" name={[field.name, 'id']} rules={[{ required: true, whitespace: true }]}>
                                 <Input />
                               </Form.Item>
-                              <Form.Item label={copy.feedbackFieldPublishedAt} name={[field.name, 'publishedAt']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.feedbackFieldPublishedAt}
+                                name={[field.name, 'publishedAt']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <Input placeholder="2026-04-05" />
                               </Form.Item>
-                              <Form.Item label={copy.portalTitleZh} name={[field.name, 'titleZh']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.portalTitleZh}
+                                name={[field.name, 'titleZh']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <Input />
                               </Form.Item>
-                              <Form.Item label={copy.portalTitleEn} name={[field.name, 'titleEn']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.portalTitleEn}
+                                name={[field.name, 'titleEn']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <Input />
                               </Form.Item>
                               <Form.Item label={copy.portalTagZh} name={[field.name, 'tagZh']}>
@@ -1365,24 +1150,48 @@ export function DashboardPage({
                               <Form.Item label={copy.portalTagEn} name={[field.name, 'tagEn']}>
                                 <Input />
                               </Form.Item>
-                              <Form.Item label={copy.feedbackFieldPublished} name={[field.name, 'published']} valuePropName="checked">
+                              <Form.Item
+                                label={copy.feedbackFieldPublished}
+                                name={[field.name, 'published']}
+                                valuePropName="checked"
+                              >
                                 <Switch />
                               </Form.Item>
-                              <Form.Item label={copy.feedbackFieldPinned} name={[field.name, 'pinned']} valuePropName="checked">
+                              <Form.Item
+                                label={copy.feedbackFieldPinned}
+                                name={[field.name, 'pinned']}
+                                valuePropName="checked"
+                              >
                                 <Switch />
                               </Form.Item>
                             </div>
                             <div className="dashboard-form-grid dashboard-form-grid-compact">
-                              <Form.Item label={copy.portalSummaryZh} name={[field.name, 'summaryZh']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.portalSummaryZh}
+                                name={[field.name, 'summaryZh']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <TextArea rows={4} />
                               </Form.Item>
-                              <Form.Item label={copy.portalSummaryEn} name={[field.name, 'summaryEn']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.portalSummaryEn}
+                                name={[field.name, 'summaryEn']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <TextArea rows={4} />
                               </Form.Item>
-                              <Form.Item label={copy.portalContentZh} name={[field.name, 'contentZh']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.portalContentZh}
+                                name={[field.name, 'contentZh']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <TextArea rows={5} />
                               </Form.Item>
-                              <Form.Item label={copy.portalContentEn} name={[field.name, 'contentEn']} rules={[{ required: true, whitespace: true }]}>
+                              <Form.Item
+                                label={copy.portalContentEn}
+                                name={[field.name, 'contentEn']}
+                                rules={[{ required: true, whitespace: true }]}
+                              >
                                 <TextArea rows={5} />
                               </Form.Item>
                             </div>

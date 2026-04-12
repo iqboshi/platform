@@ -3,7 +3,6 @@ import type { CadViewerModel, ModelRotation } from './product-viewer-runtime';
 import {
   App,
   Button,
-  Card,
   Col,
   Descriptions,
   Empty,
@@ -15,7 +14,6 @@ import {
   Typography,
 } from 'antd';
 import {
-  BuildOutlined,
   DownloadOutlined,
   LoadingOutlined,
   ReloadOutlined,
@@ -32,6 +30,7 @@ import {
 } from '@/lib/api';
 import type { ProductAssetSummary } from '@platform/types';
 import { useI18n } from '@/i18n/useI18n';
+import { LayeredPanelCard } from '@/components/LayeredPanelCard';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -78,7 +77,14 @@ const PRODUCT_COPY = {
     unsupported: '仅支持 STP / STEP / IGS / IGES 文件。',
     loadFailed: '产品模型加载失败，请检查文件内容或稍后重试。',
     listLoadFailed: '公开产品列表加载失败，请稍后重试。',
+    accessibleCount: '可访问',
     visibilityPublic: '公开',
+    visibilityPrivate: '私有',
+    specificationsTitle: '规格参数',
+    specificationsEmpty: '暂无规格参数。',
+    tagsTitle: '标签',
+    expandDetails: '展开详情',
+    collapseDetails: '收起详情',
   },
   'en-US': {
     kicker: 'Product Showcase',
@@ -124,8 +130,14 @@ const PRODUCT_COPY = {
     unsupported: 'Only STP / STEP / IGS / IGES files are supported.',
     loadFailed: 'Failed to load the product model. Check the file contents or try again later.',
     listLoadFailed: 'Failed to load public products. Please try again later.',
+    accessibleCount: 'Accessible',
     visibilityPublic: 'Public',
     visibilityPrivate: 'Private',
+    specificationsTitle: 'Specifications',
+    specificationsEmpty: 'No specifications were provided.',
+    tagsTitle: 'Tags',
+    expandDetails: 'Expand details',
+    collapseDetails: 'Collapse details',
   },
 } as const;
 
@@ -184,6 +196,10 @@ function disposeViewerModel(model: CadViewerModel | null) {
   productViewerRuntime.disposeCadViewerModel(model);
 }
 
+function isPrivateProduct(visibility: ProductAssetSummary['visibility'] | undefined): boolean {
+  return visibility === 'private';
+}
+
 export function ProductsPage() {
   const { message } = App.useApp();
   const { token } = useAuth();
@@ -213,6 +229,26 @@ export function ProductsPage() {
       null,
     [activeProductId, products],
   );
+  const productCounts = useMemo(() => {
+    const privateCount = products.filter((item) => isPrivateProduct(item.visibility)).length;
+    return {
+      total: products.length,
+      privateCount,
+      publicCount: products.length - privateCount,
+    };
+  }, [products]);
+  const activeHighlights = activeProduct?.highlights ?? [];
+  const highlightPreview = activeHighlights.slice(0, 2);
+  const activeSpecifications = useMemo(
+    () => Object.entries(activeProduct?.specifications ?? {}),
+    [activeProduct?.specifications],
+  );
+  const specificationPreview = activeSpecifications.slice(0, 3);
+  const activeVisibilityLabel = activeProduct
+    ? isPrivateProduct(activeProduct.visibility)
+      ? copy.visibilityPrivate
+      : copy.visibilityPublic
+    : null;
 
   const replaceViewerModel = useCallback((nextModel: CadViewerModel | null) => {
     setViewerModel((previous) => {
@@ -343,6 +379,15 @@ export function ProductsPage() {
     );
   }, [activeProduct, copy.loadFailed, message, token]);
 
+  const renderVisibilityTag = useCallback(
+    (visibility: ProductAssetSummary['visibility'] | undefined) => (
+      <Tag color={isPrivateProduct(visibility) ? 'default' : 'blue'}>
+        {isPrivateProduct(visibility) ? copy.visibilityPrivate : copy.visibilityPublic}
+      </Tag>
+    ),
+    [copy.visibilityPrivate, copy.visibilityPublic],
+  );
+
   return (
     <div className="page-stack">
       <section className="hero-panel">
@@ -358,13 +403,30 @@ export function ProductsPage() {
 
       <Row gutter={[20, 20]} align="stretch">
         <Col xs={24} xl={9}>
-          <Card className="panel-card product-panel-card" variant="borderless">
-            <div className="panel-kicker">{copy.libraryTitle}</div>
-            <Title level={3} className="section-title">
-              {copy.libraryTitle}
-            </Title>
-            <Paragraph className="section-copy">{copy.libraryCopy}</Paragraph>
-            <div className="section-actions">
+          <LayeredPanelCard
+            className="product-panel-card"
+            kicker={copy.libraryTitle}
+            title={copy.libraryTitle}
+            summary={
+              <div className="product-library-summary-stack">
+                <Paragraph className="section-copy">{copy.libraryCopy}</Paragraph>
+                <div className="product-library-metrics">
+                  <div className="product-summary-chip">
+                    <Text type="secondary">{copy.accessibleCount}</Text>
+                    <Title level={4}>{productCounts.total}</Title>
+                  </div>
+                  <div className="product-summary-chip">
+                    <Text type="secondary">{copy.visibilityPublic}</Text>
+                    <Title level={4}>{productCounts.publicCount}</Title>
+                  </div>
+                  <div className="product-summary-chip">
+                    <Text type="secondary">{copy.visibilityPrivate}</Text>
+                    <Title level={4}>{productCounts.privateCount}</Title>
+                  </div>
+                </div>
+              </div>
+            }
+            extra={
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => void refreshProducts()}
@@ -372,7 +434,11 @@ export function ProductsPage() {
               >
                 {copy.refreshLibrary}
               </Button>
-            </div>
+            }
+            defaultExpanded
+            expandLabel={copy.expandDetails}
+            collapseLabel={copy.collapseDetails}
+          >
             {products.length ? (
               <div className="product-library-list">
                 {products.map((product) => {
@@ -401,7 +467,7 @@ export function ProductsPage() {
                         {product.description || copy.noDetails}
                       </Paragraph>
                       <Space wrap size={[8, 8]}>
-                        <Tag>{copy.visibilityPublic}</Tag>
+                        {renderVisibilityTag(product.visibility)}
                         {product.ownerDisplayName ? <Tag>{product.ownerDisplayName}</Tag> : null}
                         {(product.tags ?? []).map((tag) => (
                           <Tag key={`${product.id}-${tag}`}>{tag}</Tag>
@@ -421,103 +487,140 @@ export function ProductsPage() {
                 }
               />
             )}
-          </Card>
+          </LayeredPanelCard>
         </Col>
 
         <Col xs={24} xl={15}>
-          <Card className="panel-card product-panel-card" variant="borderless">
-            <div className="product-viewer-head">
-              <div>
-                <div className="panel-kicker">{copy.viewerTitle}</div>
-                <Title level={3} className="section-title">
-                  {activeProduct?.name ?? copy.viewerTitle}
-                </Title>
-                <Paragraph className="section-copy">{copy.viewerCopy}</Paragraph>
-              </div>
-              <Space wrap>
-                {activeProduct ? (
-                  <Tag icon={<BuildOutlined />}>{copy.publicProduct}</Tag>
-                ) : null}
-                <div className="product-viewer-toggle">
-                  <RotateRightOutlined />
-                  <span>{copy.autoRotate}</span>
-                  <Switch checked={autoRotate} onChange={setAutoRotate} />
+          <div className="product-page-stack">
+            <LayeredPanelCard
+              className="product-panel-card product-viewer-card"
+              kicker={copy.viewerTitle}
+              title={activeProduct?.name ?? copy.viewerTitle}
+              summary={
+                <div className="product-viewer-summary">
+                  <Paragraph className="section-copy">{copy.viewerCopy}</Paragraph>
+                  {activeProduct ? (
+                    <Space wrap size={[8, 8]}>
+                      {renderVisibilityTag(activeProduct.visibility)}
+                      {activeProduct.ownerDisplayName ? <Tag>{activeProduct.ownerDisplayName}</Tag> : null}
+                      {activeProduct.category ? <Tag>{activeProduct.category}</Tag> : null}
+                    </Space>
+                  ) : null}
+                  <div className="product-viewer-stage">
+                    {modelLoading ? (
+                      <div className="product-viewer-loading">
+                        <Spin indicator={<LoadingOutlined spin />} size="large" />
+                      </div>
+                    ) : viewerModel ? (
+                      <Suspense
+                        fallback={
+                          <div className="product-viewer-loading">
+                            <Spin indicator={<LoadingOutlined spin />} size="large" />
+                          </div>
+                        }
+                      >
+                        <ProductScene
+                          key={viewerRevision}
+                          model={viewerModel}
+                          autoRotate={autoRotate}
+                          rotation={modelRotation}
+                        />
+                      </Suspense>
+                    ) : (
+                      <Empty
+                        description={
+                          <div>
+                            <div>{copy.viewerEmpty}</div>
+                            <Text type="secondary">{copy.viewerEmptyCopy}</Text>
+                          </div>
+                        }
+                      />
+                    )}
+                  </div>
+                  {loadError ? <div className="product-error-banner">{loadError}</div> : null}
                 </div>
-                {activeProduct ? (
-                  <Button
-                    icon={<ReloadOutlined />}
-                    onClick={() => void loadProductModel(activeProduct)}
-                    loading={modelLoading}
-                  >
-                    {copy.reloadModel}
-                  </Button>
-                ) : null}
-                {activeProduct ? (
-                  <Button icon={<DownloadOutlined />} onClick={handleDownload}>
-                    {copy.downloadModel}
-                  </Button>
-                ) : null}
-              </Space>
-            </div>
-
-            <div className="product-viewer-stage">
-              {modelLoading ? (
-                <div className="product-viewer-loading">
-                  <Spin indicator={<LoadingOutlined spin />} size="large" />
+              }
+              extra={
+                <Space wrap>
+                  <div className="product-viewer-toggle">
+                    <RotateRightOutlined />
+                    <span>{copy.autoRotate}</span>
+                    <Switch checked={autoRotate} onChange={setAutoRotate} disabled={!activeProduct} />
+                  </div>
+                  {activeProduct ? (
+                    <Button
+                      icon={<ReloadOutlined />}
+                      onClick={() => void loadProductModel(activeProduct)}
+                      loading={modelLoading}
+                    >
+                      {copy.reloadModel}
+                    </Button>
+                  ) : null}
+                  {activeProduct ? (
+                    <Button icon={<DownloadOutlined />} onClick={handleDownload}>
+                      {copy.downloadModel}
+                    </Button>
+                  ) : null}
+                </Space>
+              }
+              expandLabel={copy.expandDetails}
+              collapseLabel={copy.collapseDetails}
+            >
+              {activeProduct ? (
+                <div className="product-orientation-panel">
+                  <Text type="secondary">{copy.orientation}</Text>
+                  <Space wrap size={[8, 8]}>
+                    <Button size="small" onClick={() => rotateModel('x', Math.PI / 2)}>
+                      {copy.rotateX}
+                    </Button>
+                    <Button size="small" onClick={() => rotateModel('y', Math.PI / 2)}>
+                      {copy.rotateY}
+                    </Button>
+                    <Button size="small" onClick={() => rotateModel('z', Math.PI / 2)}>
+                      {copy.rotateZ}
+                    </Button>
+                    <Button size="small" onClick={() => rotateModel('x', Math.PI)}>
+                      {copy.flipModel}
+                    </Button>
+                    <Button size="small" onClick={resetModelRotation}>
+                      {copy.resetOrientation}
+                    </Button>
+                  </Space>
                 </div>
-              ) : viewerModel ? (
-                <Suspense
-                  fallback={
-                    <div className="product-viewer-loading">
-                      <Spin indicator={<LoadingOutlined spin />} size="large" />
+              ) : null}
+            </LayeredPanelCard>
+
+            <div className="product-detail-grid">
+              <LayeredPanelCard
+                className="product-detail-card"
+                kicker={activeProduct?.category || copy.productDetails}
+                title={copy.productDetails}
+                summary={
+                  activeProduct ? (
+                    <div className="product-detail-summary">
+                      <Paragraph className="product-detail-description">
+                        {activeProduct.description || copy.noDetails}
+                      </Paragraph>
+                      <Space wrap size={[8, 8]}>
+                        {activeVisibilityLabel ? (
+                          <Tag color={isPrivateProduct(activeProduct.visibility) ? 'default' : 'blue'}>
+                            {activeVisibilityLabel}
+                          </Tag>
+                        ) : null}
+                        {activeProduct.ownerDisplayName ? <Tag>{activeProduct.ownerDisplayName}</Tag> : null}
+                        {(activeProduct.tags ?? []).map((tag) => (
+                          <Tag key={`${activeProduct.id}-${tag}`}>{tag}</Tag>
+                        ))}
+                      </Space>
                     </div>
-                  }
-                >
-                  <ProductScene
-                    key={viewerRevision}
-                    model={viewerModel}
-                    autoRotate={autoRotate}
-                    rotation={modelRotation}
-                  />
-                </Suspense>
-              ) : (
-                <Empty
-                  description={
-                    <div>
-                      <div>{copy.viewerEmpty}</div>
-                      <Text type="secondary">{copy.viewerEmptyCopy}</Text>
-                    </div>
-                  }
-                />
-              )}
-            </div>
-
-            {loadError ? <div className="product-error-banner">{loadError}</div> : null}
-
-            {activeProduct ? (
-              <Space wrap size={[8, 8]}>
-                <Text type="secondary">{copy.orientation}</Text>
-                <Button size="small" onClick={() => rotateModel('x', Math.PI / 2)}>
-                  {copy.rotateX}
-                </Button>
-                <Button size="small" onClick={() => rotateModel('y', Math.PI / 2)}>
-                  {copy.rotateY}
-                </Button>
-                <Button size="small" onClick={() => rotateModel('z', Math.PI / 2)}>
-                  {copy.rotateZ}
-                </Button>
-                <Button size="small" onClick={() => rotateModel('x', Math.PI)}>
-                  {copy.flipModel}
-                </Button>
-                <Button size="small" onClick={resetModelRotation}>
-                  {copy.resetOrientation}
-                </Button>
-              </Space>
-            ) : null}
-
-            <div className="product-meta-grid">
-              <Card className="panel-card product-meta-card" variant="borderless">
-                <Title level={5}>{copy.productDetails}</Title>
+                  ) : (
+                    <Text type="secondary">{copy.noDetails}</Text>
+                  )
+                }
+                defaultExpanded
+                expandLabel={copy.expandDetails}
+                collapseLabel={copy.collapseDetails}
+              >
                 {activeProduct ? (
                   <Descriptions
                     size="small"
@@ -536,25 +639,125 @@ export function ProductsPage() {
                       {
                         key: 'visibility',
                         label: copy.visibility,
-                        children: copy.visibilityPublic,
+                        children: activeVisibilityLabel ?? '-',
                       },
                       {
                         key: 'updatedAt',
                         label: copy.updatedAt,
                         children: formatDateTime(locale, activeProduct.updatedAt),
                       },
+                      {
+                        key: 'tags',
+                        label: copy.tagsTitle,
+                        children:
+                          activeProduct.tags?.length ? (
+                            <Space wrap size={[8, 8]}>
+                              {activeProduct.tags.map((tag) => (
+                                <Tag key={`${activeProduct.id}-detail-${tag}`}>{tag}</Tag>
+                              ))}
+                            </Space>
+                          ) : (
+                            '-'
+                          ),
+                      },
                     ]}
                   />
                 ) : (
                   <Text type="secondary">{copy.noDetails}</Text>
                 )}
-              </Card>
+              </LayeredPanelCard>
 
-              <Card className="panel-card product-meta-card" variant="borderless">
-                <Title level={5}>{copy.highlightsTitle}</Title>
-                {activeProduct?.highlights?.length ? (
+              <LayeredPanelCard
+                className="product-detail-card"
+                kicker={copy.fileDetails}
+                title={copy.fileDetails}
+                summary={
+                  activeProduct ? (
+                    <div className="product-file-stat-grid">
+                      <div className="product-file-stat">
+                        <Text type="secondary">{copy.fileSize}</Text>
+                        <strong>{formatBytes(activeProduct.sizeBytes)}</strong>
+                      </div>
+                      <div className="product-file-stat">
+                        <Text type="secondary">{copy.meshCount}</Text>
+                        <strong>{viewerModel?.meshCount?.toLocaleString() ?? '-'}</strong>
+                      </div>
+                      <div className="product-file-stat">
+                        <Text type="secondary">{copy.triangleCount}</Text>
+                        <strong>{viewerModel?.triangleCount?.toLocaleString() ?? '-'}</strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <Text type="secondary">{copy.noDetails}</Text>
+                  )
+                }
+                expandLabel={copy.expandDetails}
+                collapseLabel={copy.collapseDetails}
+              >
+                {activeProduct ? (
+                  <Descriptions
+                    size="small"
+                    column={2}
+                    items={[
+                      {
+                        key: 'originalFileName',
+                        label: copy.originalFileName,
+                        children: activeProduct.originalFileName,
+                      },
+                      {
+                        key: 'fileSize',
+                        label: copy.fileSize,
+                        children: formatBytes(activeProduct.sizeBytes),
+                      },
+                      {
+                        key: 'meshCount',
+                        label: copy.meshCount,
+                        children: viewerModel?.meshCount?.toLocaleString() ?? '-',
+                      },
+                      {
+                        key: 'triangleCount',
+                        label: copy.triangleCount,
+                        children: viewerModel?.triangleCount?.toLocaleString() ?? '-',
+                      },
+                      {
+                        key: 'parser',
+                        label: copy.parser,
+                        children: copy.parserValue,
+                      },
+                    ]}
+                  />
+                ) : (
+                  <Text type="secondary">{copy.noDetails}</Text>
+                )}
+              </LayeredPanelCard>
+
+              <LayeredPanelCard
+                className="product-detail-card"
+                kicker={copy.highlightsTitle}
+                title={copy.highlightsTitle}
+                summary={
+                  highlightPreview.length ? (
+                    <div className="product-highlight-list product-highlight-list-compact">
+                      {highlightPreview.map((item) => (
+                        <div key={item} className="product-highlight-item">
+                          <span className="product-highlight-dot" />
+                          <span>{item}</span>
+                        </div>
+                      ))}
+                      {activeHighlights.length > highlightPreview.length ? (
+                        <Text type="secondary">{`+${activeHighlights.length - highlightPreview.length}`}</Text>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <Text type="secondary">{copy.noDetails}</Text>
+                  )
+                }
+                expandLabel={copy.expandDetails}
+                collapseLabel={copy.collapseDetails}
+              >
+                {activeHighlights.length ? (
                   <div className="product-highlight-list">
-                    {activeProduct.highlights.map((item) => (
+                    {activeHighlights.map((item) => (
                       <div key={item} className="product-highlight-item">
                         <span className="product-highlight-dot" />
                         <span>{item}</span>
@@ -564,74 +767,45 @@ export function ProductsPage() {
                 ) : (
                   <Text type="secondary">{copy.noDetails}</Text>
                 )}
-              </Card>
-            </div>
+              </LayeredPanelCard>
 
-            <Card className="panel-card product-meta-card" variant="borderless">
-              <Title level={5}>{copy.fileDetails}</Title>
-              {activeProduct ? (
-                <Descriptions
-                  size="small"
-                  column={2}
-                  items={[
-                    {
-                      key: 'originalFileName',
-                      label: copy.originalFileName,
-                      children: activeProduct.originalFileName,
-                    },
-                    {
-                      key: 'fileSize',
-                      label: copy.fileSize,
-                      children: formatBytes(activeProduct.sizeBytes),
-                    },
-                    {
-                      key: 'meshCount',
-                      label: copy.meshCount,
-                      children: viewerModel?.meshCount?.toLocaleString() ?? '-',
-                    },
-                    {
-                      key: 'triangleCount',
-                      label: copy.triangleCount,
-                      children: viewerModel?.triangleCount?.toLocaleString() ?? '-',
-                    },
-                    {
-                      key: 'parser',
-                      label: copy.parser,
-                      children: copy.parserValue,
-                    },
-                  ]}
-                />
-              ) : (
-                <Text type="secondary">{copy.noDetails}</Text>
-              )}
-            </Card>
-
-            <Card className="panel-card product-meta-card" variant="borderless">
-              <Title level={5}>{copy.productDetails}</Title>
-              {activeProduct ? (
-                <>
-                  <Paragraph>{activeProduct.description || copy.noDetails}</Paragraph>
-                  {Object.keys(activeProduct.specifications ?? {}).length ? (
-                    <Descriptions
-                      size="small"
-                      column={1}
-                      items={Object.entries(activeProduct.specifications ?? {}).map(
-                        ([label, value]) => ({
-                          key: label,
-                          label,
-                          children: value,
-                        }),
-                      )}
-                    />
+              <LayeredPanelCard
+                className="product-detail-card"
+                kicker={copy.specificationsTitle}
+                title={copy.specificationsTitle}
+                summary={
+                  specificationPreview.length ? (
+                    <div className="product-spec-preview-list">
+                      {specificationPreview.map(([label, value]) => (
+                        <div key={label} className="product-spec-preview-item">
+                          <Text type="secondary">{label}</Text>
+                          <strong>{value}</strong>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
-                    <Text type="secondary">{copy.noDetails}</Text>
-                  )}
-                </>
-              ) : (
-                <Text type="secondary">{copy.noDetails}</Text>
-              )}
-            </Card>
-          </Card>
+                    <Text type="secondary">{copy.specificationsEmpty}</Text>
+                  )
+                }
+                expandLabel={copy.expandDetails}
+                collapseLabel={copy.collapseDetails}
+              >
+                {activeSpecifications.length ? (
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    items={activeSpecifications.map(([label, value]) => ({
+                      key: label,
+                      label,
+                      children: value,
+                    }))}
+                  />
+                ) : (
+                  <Text type="secondary">{copy.specificationsEmpty}</Text>
+                )}
+              </LayeredPanelCard>
+            </div>
+          </div>
         </Col>
       </Row>
     </div>

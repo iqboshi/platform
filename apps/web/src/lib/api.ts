@@ -55,6 +55,7 @@ export interface PlatformDataSnapshot {
   workspace: WorkspaceSummary;
   datasets: DatasetSummary[];
   datasetVersions: DatasetVersionSummary[];
+  products: ProductAssetSummary[];
   geeCredentials: GeeCredentialSummary[];
   workflowCatalog: WorkflowNodeCatalogItem[];
   workflowTemplates: WorkflowTemplateDefinition[];
@@ -160,15 +161,15 @@ function createFallbackDashboardConfig(): DashboardConfig {
     announcements: [
       {
         id: 'ops-portal-upgrade',
-        titleZh: '总览页升级为运营门户',
-        titleEn: 'Overview Upgraded to an Operations Portal',
-        summaryZh: '新的首页聚合了能力介绍、更新公告、快速入口和反馈工作台。',
+        titleZh: '总览页重构为行动首页',
+        titleEn: 'Overview Refocused as an Action Home',
+        summaryZh: '首页现在聚焦行动队列、公告摘要和统一模块入口。',
         summaryEn:
-          'The new landing page brings together product highlights, updates, quick actions, and a feedback workbench.',
+          'The overview now focuses on the action queue, announcement summary, and unified module portal.',
         contentZh:
-          '总览页已经升级为更适合团队协作的运营门户，可直接查看平台能力、更新公告与反馈工单。',
+          '总览页已经收敛为更适合日常运营的行动首页，先看异常与待办，再进入各模块，并直接查看模块之间的衔接关系。',
         contentEn:
-          'The overview page now acts as an operations-style portal with product highlights, updates, and feedback workflows.',
+          'The overview now acts as an action-focused home: review exceptions first, then enter modules, with module handoffs surfaced directly.',
         tagZh: '平台更新',
         tagEn: 'Platform Update',
         publishedAt: '2026-04-05',
@@ -2323,6 +2324,7 @@ export async function loadPlatformData(
     requestJson<ApiRecord[]>('/workspaces', { token }),
     requestJson<ApiRecord[]>('/datasets', { token }),
     requestJson<ApiRecord[]>('/dataset-versions', { token }),
+    requestJson<ApiRecord[]>(withQuery('/products', { scope: 'visible' }), { token }),
     requestJson<ApiRecord[]>('/integrations/gee-credentials?scope=mine', { token }),
     requestJson<ApiRecord[]>('/workflows/catalog', { token }),
     requestJson<ApiRecord[]>('/workflows/templates', { token }),
@@ -2334,6 +2336,7 @@ export async function loadPlatformData(
     workspaces,
     datasets,
     datasetVersions,
+    products,
     geeCredentials,
     workflowCatalog,
     workflowTemplates,
@@ -2378,6 +2381,7 @@ export async function loadPlatformData(
     workspace: normalizeWorkspaceSummary(workspaces[0]),
     datasets: datasets.map(normalizeDatasetSummary),
     datasetVersions: datasetVersions.map(normalizeDatasetVersionSummary),
+    products: products.map(normalizeProductAssetSummary),
     geeCredentials: geeCredentials.map(normalizeGeeCredentialSummary),
     workflowCatalog: workflowCatalog.map(normalizeWorkflowCatalogItem),
     workflowTemplates: workflowTemplates.map(normalizeWorkflowTemplate),
