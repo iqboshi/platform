@@ -293,6 +293,25 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     ],
   },
   {
+    type: 'table.train_test_split',
+    label: 'Train/Test Split',
+    category: 'preprocess',
+    description: 'Split a tabular dataset into train and test tables.',
+    runtimeKind: 'transform',
+    supportedTasks: ['tabular_training'],
+    tags: ['table', 'split', 'train', 'test'],
+    inputs: [{ key: 'table', label: 'Input Table', dataTypes: ['table'], required: true }],
+    outputs: [
+      { key: 'trainTable', label: 'Train Table', dataTypes: ['table'] },
+      { key: 'testTable', label: 'Test Table', dataTypes: ['table'] },
+    ],
+    params: [
+      { key: 'testSize', label: 'Test Size', fieldType: 'number', defaultValue: 0.2, required: true },
+      { key: 'shuffle', label: 'Shuffle', fieldType: 'boolean', defaultValue: true },
+      { key: 'randomState', label: 'Random State', fieldType: 'number', defaultValue: 42 },
+    ],
+  },
+  {
     type: 'tabular.linear_regression_predict',
     label: 'Linear Regression Predict',
     category: 'inference',
@@ -311,6 +330,33 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
       { key: 'roundDigits', label: 'Round Digits', fieldType: 'number', defaultValue: 4 },
       { key: 'clipMin', label: 'Clip Minimum', fieldType: 'text' },
       { key: 'clipMax', label: 'Clip Maximum', fieldType: 'text' },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'model_version',
+        paramKey: 'modelVersionId',
+        autoCreate: false,
+        priority: 20,
+      },
+    ],
+  },
+  {
+    type: 'tabular.predict',
+    label: 'Legacy Tabular Prediction',
+    category: 'inference',
+    description: 'Legacy generic tabular prediction node kept for backward compatibility.',
+    runtimeKind: 'inference',
+    supportedTasks: ['tabular_prediction', 'tabular_validation'],
+    tags: ['table', 'prediction', 'regression', 'legacy'],
+    inputs: [
+      { key: 'model', label: 'Model Version', dataTypes: ['model_version'] },
+      { key: 'table', label: 'Input Table', dataTypes: ['table'], required: true },
+    ],
+    outputs: [{ key: 'table', label: 'Prediction Table', dataTypes: ['table'] }],
+    params: [
+      { key: 'modelVersionId', label: 'Model Version', fieldType: 'modelVersion', required: true },
+      { key: 'predictionColumn', label: 'Prediction Column', fieldType: 'text', defaultValue: 'prediction', required: true },
+      { key: 'runtimeParametersJson', label: 'Runtime Parameters JSON', fieldType: 'text', defaultValue: '{}' },
     ],
     starterBindings: [
       {
@@ -350,6 +396,29 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     ],
   },
   {
+    type: 'tabular.linear_regression_train',
+    label: 'Linear Regression Train',
+    category: 'inference',
+    description: 'Train a linear regression model from a CSV table.',
+    runtimeKind: 'inference',
+    supportedTasks: ['tabular_training'],
+    tags: ['table', 'training', 'regression', 'linear'],
+    inputs: [
+      { key: 'trainTable', label: 'Train Table', dataTypes: ['table'], required: true },
+      { key: 'testTable', label: 'Test Table', dataTypes: ['table'] },
+    ],
+    outputs: [
+      { key: 'model', label: 'Trained Model', dataTypes: ['model_ref'] },
+      { key: 'report', label: 'Training Metrics', dataTypes: ['metrics_report'] },
+    ],
+    params: [
+      { key: 'featureColumns', label: 'Feature Columns', fieldType: 'text', required: true },
+      { key: 'targetColumn', label: 'Target Column', fieldType: 'text', defaultValue: 'target', required: true },
+      { key: 'fitIntercept', label: 'Fit Intercept', fieldType: 'boolean', defaultValue: true },
+      { key: 'positive', label: 'Positive Coefficients', fieldType: 'boolean', defaultValue: false },
+    ],
+  },
+  {
     type: 'tabular.random_forest_regression_predict',
     label: 'Random Forest Predict',
     category: 'inference',
@@ -375,6 +444,71 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
         autoCreate: false,
         priority: 20,
       },
+    ],
+  },
+  {
+    type: 'tabular.svm_regression_train',
+    label: 'SVM Regression Train',
+    category: 'inference',
+    description: 'Train an SVR model from a CSV table.',
+    runtimeKind: 'inference',
+    supportedTasks: ['tabular_training'],
+    tags: ['table', 'training', 'regression', 'svm'],
+    inputs: [
+      { key: 'trainTable', label: 'Train Table', dataTypes: ['table'], required: true },
+      { key: 'testTable', label: 'Test Table', dataTypes: ['table'] },
+    ],
+    outputs: [
+      { key: 'model', label: 'Trained Model', dataTypes: ['model_ref'] },
+      { key: 'report', label: 'Training Metrics', dataTypes: ['metrics_report'] },
+    ],
+    params: [
+      { key: 'featureColumns', label: 'Feature Columns', fieldType: 'text', required: true },
+      { key: 'targetColumn', label: 'Target Column', fieldType: 'text', defaultValue: 'target', required: true },
+      {
+        key: 'kernel',
+        label: 'Kernel',
+        fieldType: 'select',
+        defaultValue: 'rbf',
+        required: true,
+        options: [
+          { value: 'rbf', label: 'RBF' },
+          { value: 'linear', label: 'Linear' },
+          { value: 'poly', label: 'Poly' },
+          { value: 'sigmoid', label: 'Sigmoid' },
+        ],
+      },
+      { key: 'c', label: 'C', fieldType: 'number', defaultValue: 1.0 },
+      { key: 'epsilon', label: 'Epsilon', fieldType: 'number', defaultValue: 0.1 },
+      { key: 'gamma', label: 'Gamma', fieldType: 'text', defaultValue: 'scale' },
+      { key: 'cacheSize', label: 'Cache Size (MB)', fieldType: 'number', defaultValue: 200 },
+    ],
+  },
+  {
+    type: 'tabular.random_forest_regression_train',
+    label: 'Random Forest Train',
+    category: 'inference',
+    description: 'Train a random forest regressor from a CSV table.',
+    runtimeKind: 'inference',
+    supportedTasks: ['tabular_training'],
+    tags: ['table', 'training', 'regression', 'random-forest'],
+    inputs: [
+      { key: 'trainTable', label: 'Train Table', dataTypes: ['table'], required: true },
+      { key: 'testTable', label: 'Test Table', dataTypes: ['table'] },
+    ],
+    outputs: [
+      { key: 'model', label: 'Trained Model', dataTypes: ['model_ref'] },
+      { key: 'report', label: 'Training Metrics', dataTypes: ['metrics_report'] },
+    ],
+    params: [
+      { key: 'featureColumns', label: 'Feature Columns', fieldType: 'text', required: true },
+      { key: 'targetColumn', label: 'Target Column', fieldType: 'text', defaultValue: 'target', required: true },
+      { key: 'nEstimators', label: 'Trees', fieldType: 'number', defaultValue: 100 },
+      { key: 'maxDepth', label: 'Max Depth', fieldType: 'text' },
+      { key: 'minSamplesSplit', label: 'Min Samples Split', fieldType: 'number', defaultValue: 2 },
+      { key: 'minSamplesLeaf', label: 'Min Samples Leaf', fieldType: 'number', defaultValue: 1 },
+      { key: 'randomState', label: 'Random State', fieldType: 'number', defaultValue: 42 },
+      { key: 'nJobs', label: 'Parallel Jobs', fieldType: 'number', defaultValue: 1 },
     ],
   },
   {
@@ -410,6 +544,25 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     ],
   },
   {
+    type: 'model.save_trained_model',
+    label: 'Save Trained Model',
+    category: 'postprocess',
+    description: 'Persist a trained model into your private model assets.',
+    runtimeKind: 'export',
+    supportedTasks: ['tabular_training'],
+    tags: ['model', 'save', 'asset'],
+    inputs: [{ key: 'model', label: 'Trained Model', dataTypes: ['model_ref'], required: true }],
+    outputs: [
+      { key: 'model', label: 'Model', dataTypes: ['model_ref'] },
+      { key: 'artifact', label: 'Artifact', dataTypes: ['artifact'] },
+    ],
+    params: [
+      { key: 'saveToPlatform', label: 'Save To Platform', fieldType: 'boolean', defaultValue: true },
+      { key: 'outputModelName', label: 'Model Name', fieldType: 'text', defaultValue: 'Trained Model' },
+      { key: 'outputModelVersion', label: 'Model Version', fieldType: 'text', defaultValue: '1.0.0' },
+    ],
+  },
+  {
     type: 'export.table',
     label: 'Export Prediction Table',
     category: 'postprocess',
@@ -422,6 +575,33 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     params: [
       { key: 'saveToPlatform', label: 'Save To Platform', fieldType: 'boolean', defaultValue: true },
       { key: 'outputDatasetName', label: 'Output Dataset Name', fieldType: 'text', defaultValue: 'Prediction Output' },
+    ],
+  },
+  {
+    type: 'custom.api_predict',
+    label: 'Custom API Predict',
+    category: 'inference',
+    description: 'Send a table to an external HTTP API model and merge the prediction result back.',
+    runtimeKind: 'inference',
+    supportedTasks: ['custom_api_prediction'],
+    tags: ['table', 'prediction', 'custom', 'api'],
+    inputs: [
+      { key: 'model', label: 'Custom Model', dataTypes: ['model_version'] },
+      { key: 'table', label: 'Input Table', dataTypes: ['table'], required: true },
+    ],
+    outputs: [{ key: 'table', label: 'Prediction Table', dataTypes: ['table'] }],
+    params: [
+      { key: 'modelVersionId', label: 'Custom Model', fieldType: 'modelVersion', required: true },
+      { key: 'predictionColumn', label: 'Prediction Column', fieldType: 'text', defaultValue: 'prediction' },
+      { key: 'callParametersJson', label: 'Call Parameters JSON', fieldType: 'text', defaultValue: '{}' },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'model_version',
+        paramKey: 'modelVersionId',
+        autoCreate: false,
+        priority: 20,
+      },
     ],
   },
   {

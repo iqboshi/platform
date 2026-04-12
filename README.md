@@ -6,10 +6,11 @@ workspace governance.
 
 ## Release Snapshot
 
-- Current release target: `v5.3`
+- Current release target: `v5.4`
 - Cross-page handoff is now contract-driven for datasets, ROIs, model versions, and GEE credentials.
 - Workflow node extension rules are documented in `docs/architecture/workflow-node-extension-standard.md`.
 - Workspace module documentation is generated from `apps/web/src/config/workspace-modules.json`.
+- Workflow node scaffolding and contract validation are now built into local scripts and CI.
 - Personal assets, workflows, spatial overlays, and workspace settings are documented as separate, composable surfaces.
 
 ## Highlights
@@ -83,13 +84,24 @@ npm run dev --workspace @platform/web
 npm run lint --workspace @platform/web
 npm run test --workspace @platform/web
 npm run build --workspace @platform/web
+python .\scripts\validate_workflow_nodes.py
 python .\scripts\validate_docs.py
 .venv\Scripts\python.exe -m pytest .\backend\tests
 ```
+
+## Workflow Node Authoring
+
+```powershell
+python .\scripts\create_workflow_node_scaffold.py --node-type custom.example_node --label "Example Node"
+python .\scripts\validate_workflow_nodes.py
+```
+
+The scaffold generator writes a starter pack to `tmp/workflow-node-scaffolds/`.
+Use it before editing the real catalog, runtime, mock catalog, and tests.
 
 ## Git Workflow
 
 - Remote: [iqboshi/platform](https://github.com/iqboshi/platform.git)
 - Default branch: `main`
-- Release tags: `v5.0`, `v5.1`, `v5.2`, `v5.3`
+- Release tags: `v5.0`, `v5.1`, `v5.2`, `v5.3`, `v5.4`
 - Merge policy: PR or protected-branch push only after validation passes

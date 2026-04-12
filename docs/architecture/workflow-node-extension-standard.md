@@ -159,12 +159,27 @@ A node extension is incomplete until all relevant checks pass.
 - Add or update `draft-handoff` tests when starter behavior changes.
 - Add or update page handoff tests when new handoff kinds become routable.
 - Verify node test preview contains the expected structured kind and `nextActions`.
+- Run `python .\\scripts\\validate_workflow_nodes.py`
 - Run `npm run lint --workspace @platform/web`
 - Run `npm run test --workspace @platform/web`
 - Run `npm run build --workspace @platform/web`
 - Run `python .\\scripts\\validate_docs.py`
 
-## 10. Anti-Patterns
+## 10. Scaffold Generator
+
+Before wiring a new node by hand, generate a scaffold pack:
+
+```powershell
+python .\scripts\create_workflow_node_scaffold.py --node-type custom.example_node --label "Example Node"
+```
+
+Rules:
+
+- The scaffold pack is written to `tmp/workflow-node-scaffolds/<node-type-slug>/`.
+- Fill the generated snippets, then merge them into the real catalog, runtime, mock catalog, and tests.
+- Do not treat the scaffold output as the implementation itself. It is a consistency aid, not a compatibility layer.
+
+## 11. Anti-Patterns
 
 Do not do any of the following:
 
@@ -174,15 +189,16 @@ Do not do any of the following:
 - Introduce a node that only works when the author remembers an undocumented follow-up edit in another page
 - Update backend catalog without updating frontend mock catalog
 
-## 11. Minimal Change Template
+## 12. Minimal Change Template
 
 When adding a new reusable node, touch these areas in order:
 
-1. Extend shared types if a new reusable kind is genuinely needed.
-2. Add catalog entry with contracts and `starter_bindings` or `output_behaviors`.
-3. Update runtime execution and preview serialization.
-4. Update mock catalog.
-5. Add or update handoff tests.
-6. Run lint, tests, build, and docs validation.
+1. Generate a scaffold pack if the node is new enough that a fresh template will save time.
+2. Extend shared types if a new reusable kind is genuinely needed.
+3. Add catalog entry with contracts and `starter_bindings` or `output_behaviors`.
+4. Update runtime execution and preview serialization.
+5. Update mock catalog.
+6. Add or update handoff tests.
+7. Run workflow node validation, lint, tests, build, and docs validation.
 
 If a future agent cannot satisfy this checklist, it should stop and finish the contract work before adding more UI.

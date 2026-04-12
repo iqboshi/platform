@@ -26,6 +26,8 @@ derived_from:
 ## Commands
 
 ```powershell
+python .\scripts\create_workflow_node_scaffold.py --node-type custom.example_node --label "Example Node"
+npm run workflow:nodes:validate
 npm run docs:modules
 npm run docs:validate
 ```
