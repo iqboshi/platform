@@ -19,6 +19,8 @@ from platform_backend.schemas.platform import UserProfile
 from platform_backend.services.platform_store import (
     list_dataset_versions,
     list_datasets,
+    list_gee_credentials,
+    list_model_versions,
     list_workflow_runs,
     list_workflow_versions,
 )
@@ -38,9 +40,16 @@ def _normalize_scope(scope: str, *, allow_visible: bool = False) -> str:
 
 def _normalize_consumer(consumer: str) -> AssetConsumer:
     normalized_consumer = consumer.strip().lower()
-    if normalized_consumer not in {"map_overlay", "workflow_dataset", "workflow_roi"}:
+    if normalized_consumer not in {
+        "map_overlay",
+        "workflow_dataset",
+        "workflow_roi",
+        "workflow_model",
+        "workflow_gee_credential",
+    }:
         raise ValueError(
-            "consumer must be one of 'map_overlay', 'workflow_dataset', or 'workflow_roi'."
+            "consumer must be one of 'map_overlay', 'workflow_dataset', 'workflow_roi', "
+            "'workflow_model', or 'workflow_gee_credential'."
         )
     return normalized_consumer
 
@@ -255,6 +264,30 @@ def _asset_candidate_description(asset_version: AssetVersionRef) -> str | None:
     return " ".join(description_parts) or None
 
 
+def _model_candidate_description(model_version) -> str | None:
+    description_parts: list[str] = []
+    if model_version.source_type:
+        description_parts.append(f"Source: {model_version.source_type}.")
+    if model_version.framework:
+        description_parts.append(f"Framework: {model_version.framework}.")
+    if model_version.owner_display_name:
+        description_parts.append(f"Owner: {model_version.owner_display_name}.")
+    return " ".join(description_parts) or None
+
+
+def _gee_candidate_description(credential) -> str | None:
+    description_parts: list[str] = []
+    if credential.provider:
+        description_parts.append(f"Provider: {credential.provider}.")
+    if credential.project_id:
+        description_parts.append(f"Project: {credential.project_id}.")
+    if credential.is_platform_default:
+        description_parts.append("Currently configured as the platform default credential.")
+    elif credential.owner_display_name:
+        description_parts.append(f"Owner: {credential.owner_display_name}.")
+    return " ".join(description_parts) or None
+
+
 def get_asset_flow_overview(
     db: Session,
     current_user: UserProfile,
@@ -366,6 +399,42 @@ def list_asset_input_candidates(
                 spatial_roi=roi,
             )
             for roi in roi_summaries
+        ]
+
+    if normalized_consumer == "workflow_model":
+        model_summaries = list_model_versions(db, current_user=current_user, scope=normalized_scope)
+        model_summaries.sort(key=lambda item: item.created_at, reverse=True)
+        return [
+            AssetInputCandidate(
+                id=f"model-version:{model_version.id}",
+                consumer="workflow_model",
+                candidate_type="model_version",
+                title=(
+                    f"{model_version.model_name or model_version.model_id} / {model_version.version}"
+                ),
+                description=_model_candidate_description(model_version),
+                model_version=model_version,
+            )
+            for model_version in model_summaries
+        ]
+
+    if normalized_consumer == "workflow_gee_credential":
+        credential_summaries = list_gee_credentials(
+            db,
+            current_user=current_user,
+            scope=normalized_scope,
+        )
+        credential_summaries.sort(key=lambda item: item.created_at, reverse=True)
+        return [
+            AssetInputCandidate(
+                id=f"gee-credential:{credential.id}",
+                consumer="workflow_gee_credential",
+                candidate_type="gee_credential",
+                title=credential.name,
+                description=_gee_candidate_description(credential),
+                gee_credential=credential,
+            )
+            for credential in credential_summaries
         ]
 
     dataset_summaries = list_datasets(db, current_user, scope=normalized_scope)

@@ -17,11 +17,28 @@ WorkflowPortDataType = Literal[
     "roi",
     "tile_set",
     "label_set",
+    "model_version",
     "model_ref",
     "metrics_report",
     "prediction_mask",
     "prediction_vector",
     "artifact",
+]
+WorkflowStarterInputKind = Literal[
+    "dataset_version",
+    "spatial_roi",
+    "model_version",
+    "gee_credential",
+]
+WorkflowPreviewKind = Literal[
+    "dataset_version",
+    "model_ref",
+    "model_version",
+    "gee_credential",
+    "table",
+    "metrics_report",
+    "artifact_file",
+    "value",
 ]
 WorkflowParamFieldType = Literal[
     "text",
@@ -107,6 +124,47 @@ class WorkflowNodeExample(BaseModel):
     content: str | None = None
 
 
+class WorkflowNodeStarterBinding(BaseModel):
+    input_kind: WorkflowStarterInputKind = Field(
+        validation_alias=AliasChoices("input_kind", "inputKind"),
+    )
+    param_key: str = Field(
+        validation_alias=AliasChoices("param_key", "paramKey"),
+    )
+    preset_params: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("preset_params", "presetParams"),
+    )
+    auto_create: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("auto_create", "autoCreate"),
+    )
+    priority: int = 0
+
+
+class WorkflowNodeOutputUsage(BaseModel):
+    target: Literal["workflow", "spatial"]
+    input_kind: Literal[
+        "dataset_version",
+        "spatial_roi",
+        "model_version",
+        "gee_credential",
+        "asset_version",
+    ] = Field(validation_alias=AliasChoices("input_kind", "inputKind"))
+    label: str | None = None
+
+
+class WorkflowNodeOutputBehavior(BaseModel):
+    port_key: str = Field(
+        validation_alias=AliasChoices("port_key", "portKey"),
+    )
+    preview_kinds: list[WorkflowPreviewKind] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("preview_kinds", "previewKinds"),
+    )
+    usages: list[WorkflowNodeOutputUsage] = Field(default_factory=list)
+
+
 class WorkflowNode(BaseModel):
     id: str
     type: str
@@ -157,6 +215,8 @@ class WorkflowCatalogItem(BaseModel):
     example_inputs: list[WorkflowNodeExample] = Field(default_factory=list)
     example_outputs: list[WorkflowNodeExample] = Field(default_factory=list)
     common_errors: list[str] = Field(default_factory=list)
+    starter_bindings: list[WorkflowNodeStarterBinding] = Field(default_factory=list)
+    output_behaviors: list[WorkflowNodeOutputBehavior] = Field(default_factory=list)
 
 
 class WorkflowTemplateSampleBinding(BaseModel):

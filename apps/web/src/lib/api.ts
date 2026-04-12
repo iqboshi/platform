@@ -599,6 +599,52 @@ function normalizeWorkflowNodeExample(input: ApiRecord): WorkflowNodeExample {
   };
 }
 
+function normalizeWorkflowStarterBinding(
+  input: ApiRecord,
+): NonNullable<WorkflowNodeCatalogItem['starterBindings']>[number] {
+  const presetParams =
+    (input.presetParams as Record<string, string | number | boolean | string[]> | undefined) ??
+    (input.preset_params as Record<string, string | number | boolean | string[]> | undefined) ??
+    {};
+  return {
+    inputKind:
+      (getString(input, 'inputKind') ||
+        getString(input, 'input_kind')) as NonNullable<
+        WorkflowNodeCatalogItem['starterBindings']
+      >[number]['inputKind'],
+    paramKey: getString(input, 'paramKey') || getString(input, 'param_key'),
+    presetParams,
+    autoCreate:
+      getOptionalBoolean(input, 'autoCreate') ?? getOptionalBoolean(input, 'auto_create'),
+    priority: getOptionalNumber(input, 'priority'),
+  };
+}
+
+function normalizeWorkflowNodeOutputBehavior(
+  input: ApiRecord,
+): NonNullable<WorkflowNodeCatalogItem['outputBehaviors']>[number] {
+  const rawUsages = Array.isArray(input.usages) ? (input.usages as ApiRecord[]) : [];
+  const previewKinds = getStringArray<WorkflowNodePreviewValue['kind']>(input, 'previewKinds');
+  return {
+    portKey: getString(input, 'portKey') || getString(input, 'port_key'),
+    previewKinds:
+      previewKinds.length > 0
+        ? previewKinds
+        : getStringArray<WorkflowNodePreviewValue['kind']>(input, 'preview_kinds'),
+    usages: rawUsages.map((usage) => ({
+      target: getString(usage, 'target') as NonNullable<
+        WorkflowNodeCatalogItem['outputBehaviors']
+      >[number]['usages'][number]['target'],
+      inputKind:
+        (getString(usage, 'inputKind') ||
+          getString(usage, 'input_kind')) as NonNullable<
+          WorkflowNodeCatalogItem['outputBehaviors']
+        >[number]['usages'][number]['inputKind'],
+      label: getOptionalString(usage, 'label'),
+    })),
+  };
+}
+
 function normalizeWorkflowCatalogItem(input: ApiRecord): WorkflowNodeCatalogItem {
   const rawInputs = Array.isArray(input.inputs) ? (input.inputs as ApiRecord[]) : [];
   const rawOutputs = Array.isArray(input.outputs) ? (input.outputs as ApiRecord[]) : [];
@@ -622,6 +668,16 @@ function normalizeWorkflowCatalogItem(input: ApiRecord): WorkflowNodeCatalogItem
     ? (input.exampleOutputs as ApiRecord[])
     : Array.isArray(input.example_outputs)
       ? (input.example_outputs as ApiRecord[])
+      : [];
+  const rawStarterBindings = Array.isArray(input.starterBindings)
+    ? (input.starterBindings as ApiRecord[])
+    : Array.isArray(input.starter_bindings)
+      ? (input.starter_bindings as ApiRecord[])
+      : [];
+  const rawOutputBehaviors = Array.isArray(input.outputBehaviors)
+    ? (input.outputBehaviors as ApiRecord[])
+    : Array.isArray(input.output_behaviors)
+      ? (input.output_behaviors as ApiRecord[])
       : [];
 
   return {
@@ -649,6 +705,8 @@ function normalizeWorkflowCatalogItem(input: ApiRecord): WorkflowNodeCatalogItem
       getStringArray<string>(input, 'commonErrors').length > 0
         ? getStringArray<string>(input, 'commonErrors')
         : getStringArray<string>(input, 'common_errors'),
+    starterBindings: rawStarterBindings.map(normalizeWorkflowStarterBinding),
+    outputBehaviors: rawOutputBehaviors.map(normalizeWorkflowNodeOutputBehavior),
   };
 }
 
@@ -910,11 +968,24 @@ function normalizeWorkflowNodePreviewValue(input: unknown): WorkflowNodePreviewV
   }
 
   const record = input as ApiRecord;
+  const rawNextActions = Array.isArray(record.nextActions)
+    ? (record.nextActions as ApiRecord[])
+    : Array.isArray(record.next_actions)
+      ? (record.next_actions as ApiRecord[])
+      : [];
   return {
     ...(record as Record<string, unknown>),
     kind: (getString(record, 'kind') || 'value') as WorkflowNodePreviewValue['kind'],
     title: getOptionalString(record, 'title'),
     summary: getOptionalString(record, 'summary'),
+    nextActions: rawNextActions.map((item) => ({
+      key: getString(item, 'key'),
+      label: getOptionalString(item, 'label'),
+      handoff:
+        ((item.handoff as Record<string, unknown> | undefined) ??
+          (item.handoff_payload as Record<string, unknown> | undefined) ??
+          {}) as NonNullable<WorkflowNodePreviewValue['nextActions']>[number]['handoff'],
+    })),
   };
 }
 

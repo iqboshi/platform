@@ -110,6 +110,162 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
         required: true,
       },
     ],
+    starterBindings: [
+      {
+        inputKind: 'dataset_version',
+        paramKey: 'datasetVersionId',
+        autoCreate: true,
+        priority: 100,
+      },
+    ],
+    outputBehaviors: [
+      {
+        portKey: 'dataset',
+        previewKinds: ['dataset_version'],
+        usages: [
+          { target: 'workflow', inputKind: 'dataset_version' },
+          { target: 'spatial', inputKind: 'asset_version' },
+        ],
+      },
+    ],
+  },
+  {
+    type: 'source.model_version',
+    label: 'Model Version',
+    category: 'source',
+    description: 'Select a saved model version and expose it as a reusable workflow input.',
+    runtimeKind: 'source',
+    supportedTasks: ['tabular_prediction', 'tabular_validation'],
+    tags: ['model', 'version', 'input'],
+    inputs: [],
+    outputs: [{ key: 'model', label: 'Model Version', dataTypes: ['model_version'] }],
+    params: [
+      {
+        key: 'modelVersionId',
+        label: 'Model Version',
+        fieldType: 'modelVersion',
+        required: true,
+      },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'model_version',
+        paramKey: 'modelVersionId',
+        autoCreate: true,
+        priority: 100,
+      },
+    ],
+    outputBehaviors: [
+      {
+        portKey: 'model',
+        previewKinds: ['model_version'],
+        usages: [{ target: 'workflow', inputKind: 'model_version' }],
+      },
+    ],
+  },
+  {
+    type: 'source.sentinel2_gee_download',
+    label: 'Sentinel-2 Download',
+    category: 'source',
+    description: 'Download one Sentinel-2 L2A scene from Google Earth Engine by manual bbox or saved ROI.',
+    runtimeKind: 'source',
+    supportedTasks: ['sentinel_download'],
+    tags: ['sentinel', 'gee', 'download', 'raster'],
+    inputs: [],
+    outputs: [{ key: 'dataset', label: 'Raster Dataset', dataTypes: ['dataset_version'] }],
+    params: [
+      {
+        key: 'roiMode',
+        label: 'ROI Mode',
+        fieldType: 'select',
+        defaultValue: 'manual_bbox',
+        options: [
+          { value: 'manual_bbox', label: 'Manual BBox' },
+          { value: 'saved_roi', label: 'Saved ROI' },
+        ],
+      },
+      {
+        key: 'roiId',
+        label: 'Saved ROI',
+        fieldType: 'select',
+      },
+      {
+        key: 'bbox',
+        label: 'BBox',
+        fieldType: 'text',
+      },
+      {
+        key: 'startDate',
+        label: 'Start Date',
+        fieldType: 'text',
+        defaultValue: '2025-06-01',
+      },
+      {
+        key: 'endDate',
+        label: 'End Date',
+        fieldType: 'text',
+        defaultValue: '2025-06-30',
+      },
+      {
+        key: 'maxCloudCover',
+        label: 'Max Cloud Cover (%)',
+        fieldType: 'number',
+        defaultValue: 20,
+      },
+      {
+        key: 'bands',
+        label: 'Bands',
+        fieldType: 'multiselect',
+        defaultValue: ['B4', 'B3', 'B2'],
+      },
+      {
+        key: 'scale',
+        label: 'Scale',
+        fieldType: 'number',
+        defaultValue: 10,
+      },
+      {
+        key: 'credentialMode',
+        label: 'Credential Mode',
+        fieldType: 'select',
+        defaultValue: 'platform_default',
+        options: [
+          { value: 'platform_default', label: 'Platform Default' },
+          { value: 'personal', label: 'Personal' },
+        ],
+      },
+      {
+        key: 'personalCredentialId',
+        label: 'Personal Credential',
+        fieldType: 'select',
+      },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'spatial_roi',
+        paramKey: 'roiId',
+        presetParams: { roiMode: 'saved_roi' },
+        autoCreate: true,
+        priority: 100,
+      },
+      {
+        inputKind: 'gee_credential',
+        paramKey: 'personalCredentialId',
+        presetParams: { credentialMode: 'personal' },
+        autoCreate: true,
+        priority: 90,
+      },
+    ],
+    outputBehaviors: [
+      {
+        portKey: 'dataset',
+        previewKinds: ['dataset_version'],
+        usages: [
+          { target: 'workflow', inputKind: 'dataset_version' },
+          { target: 'spatial', inputKind: 'asset_version' },
+        ],
+      },
+    ],
   },
   {
     type: 'table.load_csv',
@@ -144,7 +300,10 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     runtimeKind: 'inference',
     supportedTasks: ['tabular_prediction', 'tabular_validation'],
     tags: ['table', 'prediction', 'regression', 'linear'],
-    inputs: [{ key: 'table', label: 'Input Table', dataTypes: ['table'], required: true }],
+    inputs: [
+      { key: 'model', label: 'Model Version', dataTypes: ['model_version'] },
+      { key: 'table', label: 'Input Table', dataTypes: ['table'], required: true },
+    ],
     outputs: [{ key: 'table', label: 'Prediction Table', dataTypes: ['table'] }],
     params: [
       { key: 'modelVersionId', label: 'Model Version', fieldType: 'modelVersion', required: true },
@@ -152,6 +311,14 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
       { key: 'roundDigits', label: 'Round Digits', fieldType: 'number', defaultValue: 4 },
       { key: 'clipMin', label: 'Clip Minimum', fieldType: 'text' },
       { key: 'clipMax', label: 'Clip Maximum', fieldType: 'text' },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'model_version',
+        paramKey: 'modelVersionId',
+        autoCreate: false,
+        priority: 20,
+      },
     ],
   },
   {
@@ -162,13 +329,24 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     runtimeKind: 'inference',
     supportedTasks: ['tabular_prediction', 'tabular_validation'],
     tags: ['table', 'prediction', 'regression', 'svm'],
-    inputs: [{ key: 'table', label: 'Input Table', dataTypes: ['table'], required: true }],
+    inputs: [
+      { key: 'model', label: 'Model Version', dataTypes: ['model_version'] },
+      { key: 'table', label: 'Input Table', dataTypes: ['table'], required: true },
+    ],
     outputs: [{ key: 'table', label: 'Prediction Table', dataTypes: ['table'] }],
     params: [
       { key: 'modelVersionId', label: 'Model Version', fieldType: 'modelVersion', required: true },
       { key: 'predictionColumn', label: 'Prediction Column', fieldType: 'text', defaultValue: 'prediction', required: true },
       { key: 'roundDigits', label: 'Round Digits', fieldType: 'number', defaultValue: 4 },
       { key: 'cacheSize', label: 'Cache Size (MB)', fieldType: 'number', defaultValue: 200 },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'model_version',
+        paramKey: 'modelVersionId',
+        autoCreate: false,
+        priority: 20,
+      },
     ],
   },
   {
@@ -179,13 +357,24 @@ const workflowCatalog: WorkflowNodeCatalogItem[] = [
     runtimeKind: 'inference',
     supportedTasks: ['tabular_prediction', 'tabular_validation'],
     tags: ['table', 'prediction', 'regression', 'random-forest'],
-    inputs: [{ key: 'table', label: 'Input Table', dataTypes: ['table'], required: true }],
+    inputs: [
+      { key: 'model', label: 'Model Version', dataTypes: ['model_version'] },
+      { key: 'table', label: 'Input Table', dataTypes: ['table'], required: true },
+    ],
     outputs: [{ key: 'table', label: 'Prediction Table', dataTypes: ['table'] }],
     params: [
       { key: 'modelVersionId', label: 'Model Version', fieldType: 'modelVersion', required: true },
       { key: 'predictionColumn', label: 'Prediction Column', fieldType: 'text', defaultValue: 'prediction', required: true },
       { key: 'roundDigits', label: 'Round Digits', fieldType: 'number', defaultValue: 4 },
       { key: 'nJobs', label: 'Parallel Jobs', fieldType: 'number', defaultValue: 1 },
+    ],
+    starterBindings: [
+      {
+        inputKind: 'model_version',
+        paramKey: 'modelVersionId',
+        autoCreate: false,
+        priority: 20,
+      },
     ],
   },
   {

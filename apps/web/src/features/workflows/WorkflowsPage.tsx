@@ -26,6 +26,8 @@ import { parseImportedWorkflowGraph } from '@/lib/workflow-import';
 import type { WorkflowEditorContext } from './node-registry';
 import {
   attachDatasetVersionToWorkflow,
+  attachGeeCredentialToWorkflow,
+  attachModelVersionToWorkflow,
   attachSavedRoiToWorkflow,
 } from './draft-handoff';
 import { buildWorkflowStats } from './workflow-utils';
@@ -211,10 +213,22 @@ export function WorkflowsPage({
       handoff?.target === 'workflow' && handoff.inputKind === 'spatial_roi'
         ? handoff.roiId
         : searchParams.get('roiId');
+    const linkedModelVersionId =
+      handoff?.target === 'workflow' && handoff.inputKind === 'model_version'
+        ? handoff.modelVersionId
+        : searchParams.get('modelVersionId');
+    const linkedGeeCredentialId =
+      handoff?.target === 'workflow' && handoff.inputKind === 'gee_credential'
+        ? handoff.geeCredentialId
+        : searchParams.get('geeCredentialId');
     const pendingLinkKey = linkedDatasetVersionId
       ? `dataset:${linkedDatasetVersionId}`
       : linkedRoiId
         ? `roi:${linkedRoiId}`
+        : linkedModelVersionId
+          ? `model:${linkedModelVersionId}`
+          : linkedGeeCredentialId
+            ? `gee:${linkedGeeCredentialId}`
         : null;
 
     if (!pendingLinkKey) {
@@ -293,6 +307,42 @@ export function WorkflowsPage({
           message.warning(runTableCopy.datasetLinkMissing);
         }
       }
+    } else if (linkedModelVersionId) {
+      const modelVersionExists = snapshot.modelVersions.some((item) => item.id === linkedModelVersionId);
+      if (!modelVersionExists) {
+        setHandoffNotice({
+          type: 'warning',
+          title: `Unable to receive model input: ${handoff?.label ?? linkedModelVersionId}`,
+          description: 'This model version is no longer available in the current scope.',
+        });
+        message.warning('This model version is no longer available in the current scope.');
+      } else {
+        const linkedModelResult = attachModelVersionToWorkflow(
+          nextWorkflowVersion,
+          linkedModelVersionId,
+          snapshot.workflowCatalog,
+          workflowEditorContext,
+        );
+        if (linkedModelResult.applied) {
+          nextWorkflowVersion = linkedModelResult.workflowVersion;
+          changed = true;
+          setHandoffNotice({
+            type: 'success',
+            title: `Model input received: ${handoff?.label ?? linkedModelVersionId}`,
+            description: linkedModelResult.createdStarter
+              ? 'A model starter node was added automatically and bound to this version.'
+              : 'This model version has been bound to an existing compatible node in the current draft.',
+          });
+          message.success('The model version has been attached to the current workflow draft.');
+        } else {
+          setHandoffNotice({
+            type: 'warning',
+            title: `Unable to receive model input: ${handoff?.label ?? linkedModelVersionId}`,
+            description: 'The current workflow does not expose any compatible model starter.',
+          });
+          message.warning('The current workflow does not expose any compatible model starter.');
+        }
+      }
     } else if (linkedRoiId) {
       const roiExists = spatialRois.some((item) => item.id === linkedRoiId);
       if (!roiExists) {
@@ -350,6 +400,42 @@ export function WorkflowsPage({
           message.warning(runTableCopy.roiLinkMissing);
         }
       }
+    } else if (linkedGeeCredentialId) {
+      const credentialExists = snapshot.geeCredentials.some((item) => item.id === linkedGeeCredentialId);
+      if (!credentialExists) {
+        setHandoffNotice({
+          type: 'warning',
+          title: `Unable to receive GEE credential: ${handoff?.label ?? linkedGeeCredentialId}`,
+          description: 'This GEE credential is no longer available in the current scope.',
+        });
+        message.warning('This GEE credential is no longer available in the current scope.');
+      } else {
+        const linkedCredentialResult = attachGeeCredentialToWorkflow(
+          nextWorkflowVersion,
+          linkedGeeCredentialId,
+          snapshot.workflowCatalog,
+          workflowEditorContext,
+        );
+        if (linkedCredentialResult.applied) {
+          nextWorkflowVersion = linkedCredentialResult.workflowVersion;
+          changed = true;
+          setHandoffNotice({
+            type: 'success',
+            title: `GEE credential received: ${handoff?.label ?? linkedGeeCredentialId}`,
+            description: linkedCredentialResult.createdStarter
+              ? 'A compatible Sentinel starter node was added automatically and bound to this credential.'
+              : 'This credential has been bound to an existing compatible node in the current draft.',
+          });
+          message.success('The GEE credential has been attached to the current workflow draft.');
+        } else {
+          setHandoffNotice({
+            type: 'warning',
+            title: `Unable to receive GEE credential: ${handoff?.label ?? linkedGeeCredentialId}`,
+            description: 'The current workflow does not expose any compatible GEE starter.',
+          });
+          message.warning('The current workflow does not expose any compatible GEE starter.');
+        }
+      }
     }
     if (changed) {
       draftWorkflowVersionRef.current = nextWorkflowVersion;
@@ -359,14 +445,18 @@ export function WorkflowsPage({
     const nextSearch = removeHandoffFromSearchParams(searchParams);
     nextSearch.delete('datasetVersionId');
     nextSearch.delete('roiId');
+    nextSearch.delete('modelVersionId');
+    nextSearch.delete('geeCredentialId');
     setSearchParams(nextSearch, { replace: true });
   }, [
+    locale,
     message,
     runTableCopy,
     searchParams,
     setSearchParams,
-    locale,
     snapshot.datasetVersions,
+    snapshot.geeCredentials,
+    snapshot.modelVersions,
     snapshot.workflowCatalog,
     spatialRois,
     spatialRoisLoaded,

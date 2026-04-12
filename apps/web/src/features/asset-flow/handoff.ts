@@ -34,6 +34,34 @@ export function createWorkflowRoiHandoff(
   };
 }
 
+export function createWorkflowModelHandoff(
+  modelVersionId: string,
+  options: { label?: string; source?: AssetHandoffSource } = {},
+): AssetHandoffPayload {
+  return {
+    version: 1,
+    target: 'workflow',
+    inputKind: 'model_version',
+    modelVersionId,
+    label: options.label,
+    source: options.source ?? 'unknown',
+  };
+}
+
+export function createWorkflowGeeCredentialHandoff(
+  geeCredentialId: string,
+  options: { label?: string; source?: AssetHandoffSource } = {},
+): AssetHandoffPayload {
+  return {
+    version: 1,
+    target: 'workflow',
+    inputKind: 'gee_credential',
+    geeCredentialId,
+    label: options.label,
+    source: options.source ?? 'unknown',
+  };
+}
+
 export function createSpatialAssetHandoff(
   assetVersionId: string,
   options: { label?: string; source?: AssetHandoffSource } = {},
@@ -71,6 +99,18 @@ export function decodeAssetHandoff(rawValue: string | null | undefined): AssetHa
 
     if (parsed.target === 'workflow' && parsed.inputKind === 'spatial_roi') {
       return typeof parsed.roiId === 'string' && parsed.roiId ? (parsed as AssetHandoffPayload) : null;
+    }
+
+    if (parsed.target === 'workflow' && parsed.inputKind === 'model_version') {
+      return typeof parsed.modelVersionId === 'string' && parsed.modelVersionId
+        ? (parsed as AssetHandoffPayload)
+        : null;
+    }
+
+    if (parsed.target === 'workflow' && parsed.inputKind === 'gee_credential') {
+      return typeof parsed.geeCredentialId === 'string' && parsed.geeCredentialId
+        ? (parsed as AssetHandoffPayload)
+        : null;
     }
 
     if (parsed.target === 'spatial' && parsed.inputKind === 'asset_version') {

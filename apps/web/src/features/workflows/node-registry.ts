@@ -44,6 +44,10 @@ function compatibleModelVersions(
   context: WorkflowEditorContext,
   nodeType: string,
 ): ModelVersionSummary[] {
+  if (nodeType === 'source.model_version') {
+    return context.modelVersions;
+  }
+
   if (nodeType === 'custom.api_predict') {
     return context.modelVersions.filter((item) => item.sourceType === 'custom_api');
   }
@@ -68,6 +72,7 @@ const dataTypeLabels: Record<WorkflowPortDataType, string> = {
   roi: 'ROI',
   tile_set: 'Tiles',
   label_set: 'Labels',
+  model_version: 'Model Version',
   model_ref: 'Model',
   metrics_report: 'Metrics',
   prediction_mask: 'Mask',

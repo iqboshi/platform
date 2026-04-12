@@ -1,4 +1,9 @@
-import type { WorkflowNodeCatalogItem, WorkflowVersionDetail } from '@platform/types';
+import type {
+  WorkflowNodeCatalogItem,
+  WorkflowNodeStarterBinding,
+  WorkflowStarterInputKind,
+  WorkflowVersionDetail,
+} from '@platform/types';
 
 import {
   createDefaultParams,
@@ -23,26 +28,38 @@ function nextStarterNodePosition(workflowVersion: WorkflowVersionDetail): { x: n
   };
 }
 
+function bindingPatch(
+  binding: WorkflowNodeStarterBinding,
+  resourceId: string,
+): Record<string, unknown> {
+  return {
+    ...(binding.presetParams ?? {}),
+    [binding.paramKey]: resourceId,
+  };
+}
+
+function starterBindingForInput(
+  definition: WorkflowNodeCatalogItem | undefined,
+  inputKind: WorkflowStarterInputKind,
+): WorkflowNodeStarterBinding | undefined {
+  return definition?.starterBindings?.find((item) => item.inputKind === inputKind);
+}
+
 function appendStarterNode(
   workflowVersion: WorkflowVersionDetail,
-  nodeType: string,
-  params: Record<string, unknown>,
-  definitions: WorkflowNodeCatalogItem[],
+  definition: WorkflowNodeCatalogItem,
+  binding: WorkflowNodeStarterBinding,
+  resourceId: string,
   editorContext: WorkflowEditorContext,
-): WorkflowVersionDetail | null {
-  const definition = getWorkflowDefinitionByType(definitions, nodeType);
-  if (!definition) {
-    return null;
-  }
-
+): WorkflowVersionDetail {
   const position = nextStarterNodePosition(workflowVersion);
   const nextNode = {
-    id: createNodeId(nodeType.replace(/\./g, '-')),
-    type: nodeType,
+    id: createNodeId(definition.type.replace(/\./g, '-')),
+    type: definition.type,
     position,
     params: {
       ...createDefaultParams(definition, editorContext),
-      ...params,
+      ...bindingPatch(binding, resourceId),
     },
     inputBindings: {},
     outputDefs: definition.outputs,
@@ -57,78 +74,82 @@ function appendStarterNode(
   };
 }
 
-export function applySavedRoiToWorkflow(
-  workflowVersion: WorkflowVersionDetail,
-  roiId: string,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean } {
-  let applied = false;
-  const nextNodes = workflowVersion.graph.nodes.map((node) => {
-    if (node.type !== 'source.sentinel2_gee_download') {
-      return node;
-    }
+function selectAutoCreateStarter(
+  definitions: WorkflowNodeCatalogItem[],
+  inputKind: WorkflowStarterInputKind,
+): { definition: WorkflowNodeCatalogItem; binding: WorkflowNodeStarterBinding } | null {
+  const candidates = definitions
+    .map((definition) => {
+      const binding = starterBindingForInput(definition, inputKind);
+      return binding?.autoCreate ? { definition, binding } : null;
+    })
+    .filter(
+      (
+        item,
+      ): item is { definition: WorkflowNodeCatalogItem; binding: WorkflowNodeStarterBinding } =>
+        item !== null,
+    )
+    .sort((left, right) => (right.binding.priority ?? 0) - (left.binding.priority ?? 0));
 
-    applied = true;
-    return {
-      ...node,
-      params: {
-        ...node.params,
-        roiMode: 'saved_roi',
-        roiId,
-      },
-    };
-  });
-
-  return {
-    workflowVersion: applied
-      ? {
-          ...workflowVersion,
-          graph: {
-            ...workflowVersion.graph,
-            nodes: nextNodes,
-          },
-        }
-      : workflowVersion,
-    applied,
-  };
+  return candidates[0] ?? null;
 }
 
-export function applyDatasetVersionToWorkflow(
+export function attachWorkflowStarterInput(
   workflowVersion: WorkflowVersionDetail,
-  datasetVersionId: string,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean } {
-  let applied = false;
-  let consumed = false;
-
-  const nextNodes = workflowVersion.graph.nodes.map((node) => {
-    const canBindDatasetVersion =
-      node.type === 'source.dataset_version' ||
-      Object.prototype.hasOwnProperty.call(node.params, 'datasetVersionId');
-    if (!canBindDatasetVersion || consumed) {
-      return node;
+  inputKind: WorkflowStarterInputKind,
+  resourceId: string,
+  definitions: WorkflowNodeCatalogItem[],
+  editorContext: WorkflowEditorContext,
+): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  for (const node of workflowVersion.graph.nodes) {
+    const definition = getWorkflowDefinitionByType(definitions, node.type);
+    const binding = starterBindingForInput(definition, inputKind);
+    if (!binding) {
+      continue;
     }
 
-    consumed = true;
-    applied = true;
     return {
-      ...node,
-      params: {
-        ...node.params,
-        datasetVersionId,
+      workflowVersion: {
+        ...workflowVersion,
+        graph: {
+          ...workflowVersion.graph,
+          nodes: workflowVersion.graph.nodes.map((item) =>
+            item.id === node.id
+              ? {
+                  ...item,
+                  params: {
+                    ...item.params,
+                    ...bindingPatch(binding, resourceId),
+                  },
+                }
+              : item,
+          ),
+        },
       },
+      applied: true,
+      createdStarter: false,
     };
-  });
+  }
+
+  const starter = selectAutoCreateStarter(definitions, inputKind);
+  if (!starter) {
+    return {
+      workflowVersion,
+      applied: false,
+      createdStarter: false,
+    };
+  }
 
   return {
-    workflowVersion: applied
-      ? {
-          ...workflowVersion,
-          graph: {
-            ...workflowVersion.graph,
-            nodes: nextNodes,
-          },
-        }
-      : workflowVersion,
-    applied,
+    workflowVersion: appendStarterNode(
+      workflowVersion,
+      starter.definition,
+      starter.binding,
+      resourceId,
+      editorContext,
+    ),
+    applied: true,
+    createdStarter: true,
   };
 }
 
@@ -138,35 +159,13 @@ export function attachDatasetVersionToWorkflow(
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
 ): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
-  const linkedDatasetResult = applyDatasetVersionToWorkflow(workflowVersion, datasetVersionId);
-  if (linkedDatasetResult.applied) {
-    return {
-      workflowVersion: linkedDatasetResult.workflowVersion,
-      applied: true,
-      createdStarter: false,
-    };
-  }
-
-  const starterWorkflow = appendStarterNode(
+  return attachWorkflowStarterInput(
     workflowVersion,
-    'source.dataset_version',
-    { datasetVersionId },
+    'dataset_version',
+    datasetVersionId,
     definitions,
     editorContext,
   );
-  if (!starterWorkflow) {
-    return {
-      workflowVersion,
-      applied: false,
-      createdStarter: false,
-    };
-  }
-
-  return {
-    workflowVersion: starterWorkflow,
-    applied: true,
-    createdStarter: true,
-  };
 }
 
 export function attachSavedRoiToWorkflow(
@@ -175,36 +174,41 @@ export function attachSavedRoiToWorkflow(
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
 ): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
-  const linkedRoiResult = applySavedRoiToWorkflow(workflowVersion, roiId);
-  if (linkedRoiResult.applied) {
-    return {
-      workflowVersion: linkedRoiResult.workflowVersion,
-      applied: true,
-      createdStarter: false,
-    };
-  }
-
-  const starterWorkflow = appendStarterNode(
+  return attachWorkflowStarterInput(
     workflowVersion,
-    'source.sentinel2_gee_download',
-    {
-      roiMode: 'saved_roi',
-      roiId,
-    },
+    'spatial_roi',
+    roiId,
     definitions,
     editorContext,
   );
-  if (!starterWorkflow) {
-    return {
-      workflowVersion,
-      applied: false,
-      createdStarter: false,
-    };
-  }
+}
 
-  return {
-    workflowVersion: starterWorkflow,
-    applied: true,
-    createdStarter: true,
-  };
+export function attachModelVersionToWorkflow(
+  workflowVersion: WorkflowVersionDetail,
+  modelVersionId: string,
+  definitions: WorkflowNodeCatalogItem[],
+  editorContext: WorkflowEditorContext,
+): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  return attachWorkflowStarterInput(
+    workflowVersion,
+    'model_version',
+    modelVersionId,
+    definitions,
+    editorContext,
+  );
+}
+
+export function attachGeeCredentialToWorkflow(
+  workflowVersion: WorkflowVersionDetail,
+  geeCredentialId: string,
+  definitions: WorkflowNodeCatalogItem[],
+  editorContext: WorkflowEditorContext,
+): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  return attachWorkflowStarterInput(
+    workflowVersion,
+    'gee_credential',
+    geeCredentialId,
+    definitions,
+    editorContext,
+  );
 }

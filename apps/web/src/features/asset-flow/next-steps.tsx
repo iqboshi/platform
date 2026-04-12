@@ -1,6 +1,7 @@
 import type {
   AssetVersionRef,
   DatasetKind,
+  GeeCredentialSummary,
   ModelVersionSummary,
   ProductAssetSummary,
 } from '@platform/types';
@@ -261,13 +262,56 @@ export function buildProductNextSteps(
 export function buildModelNextSteps(
   locale: AssetNextStepLocale,
   model: Pick<ModelVersionSummary, 'sourceType'>,
+  options: {
+    onOpenInWorkflow?: () => void;
+  } = {},
 ): AssetNextStepModel {
   const copy = NEXT_STEP_COPY[locale];
   const isCustomApi = model.sourceType === 'custom_api';
   return {
     badges: [{ key: 'model', label: copy.modelReady, color: 'purple' }],
-    actions: [],
+    actions: options.onOpenInWorkflow
+      ? [
+          {
+            key: 'workflow',
+            label: copy.workflowAction,
+            onClick: options.onOpenInWorkflow,
+          },
+        ]
+      : [],
     note: isCustomApi ? copy.modelCustomApiNote : copy.modelTrainedNote,
+  };
+}
+
+export function buildGeeCredentialNextSteps(
+  locale: AssetNextStepLocale,
+  _credential: Pick<GeeCredentialSummary, 'isPlatformDefault'>,
+  options: {
+    onOpenInWorkflow?: () => void;
+  } = {},
+): AssetNextStepModel {
+  const copy = NEXT_STEP_COPY[locale];
+  return {
+    badges: [
+      {
+        key: 'gee',
+        label: locale === 'zh-CN' ? 'GEE 工作流输入' : 'GEE workflow input',
+        color: 'cyan',
+      },
+    ],
+    actions: options.onOpenInWorkflow
+      ? [
+          {
+            key: 'workflow',
+            label: copy.workflowAction,
+            onClick: options.onOpenInWorkflow,
+          },
+        ]
+      : [],
+    note:
+      locale === 'zh-CN'
+        ? '该凭证可以直接送入兼容的 Sentinel 工作流起点。'
+        : 'This credential can be sent directly into compatible Sentinel workflow starters.',
   };
 }
 

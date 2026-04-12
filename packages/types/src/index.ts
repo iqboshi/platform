@@ -32,12 +32,28 @@ export type AssetCapability =
   | 'map_overlay_ready'
   | 'lineage_tracked'
   | 'execution_output';
-export type AssetConsumer = 'workflow_dataset' | 'workflow_roi' | 'map_overlay';
+export type AssetConsumer =
+  | 'workflow_dataset'
+  | 'workflow_roi'
+  | 'workflow_model'
+  | 'workflow_gee_credential'
+  | 'map_overlay';
 export type AssetFormat = 'csv' | 'geojson' | 'geotiff' | 'json' | 'workflow_graph' | 'roi_geometry' | 'unknown';
 export type AssetHandoffTarget = 'workflow' | 'spatial';
+export type WorkflowStarterInputKind =
+  | 'dataset_version'
+  | 'spatial_roi'
+  | 'model_version'
+  | 'gee_credential';
+export type AssetInputCandidateType =
+  | 'asset_version'
+  | 'spatial_roi'
+  | 'model_version'
+  | 'gee_credential';
 export type AssetHandoffSource =
   | 'asset_flow'
   | 'my_assets'
+  | 'workflow_node_test'
   | 'workflow_run_history'
   | 'spatial_roi'
   | 'unknown';
@@ -55,6 +71,22 @@ export type AssetHandoffPayload =
       target: 'workflow';
       inputKind: 'spatial_roi';
       roiId: string;
+      label?: string;
+      source?: AssetHandoffSource;
+    }
+  | {
+      version: 1;
+      target: 'workflow';
+      inputKind: 'model_version';
+      modelVersionId: string;
+      label?: string;
+      source?: AssetHandoffSource;
+    }
+  | {
+      version: 1;
+      target: 'workflow';
+      inputKind: 'gee_credential';
+      geeCredentialId: string;
       label?: string;
       source?: AssetHandoffSource;
     }
@@ -81,6 +113,7 @@ export type WorkflowPortDataType =
   | 'roi'
   | 'tile_set'
   | 'label_set'
+  | 'model_version'
   | 'model_ref'
   | 'metrics_report'
   | 'prediction_mask'
@@ -406,6 +439,26 @@ export interface WorkflowNodeExample {
   content?: string;
 }
 
+export interface WorkflowNodeStarterBinding {
+  inputKind: WorkflowStarterInputKind;
+  paramKey: string;
+  presetParams?: Record<string, string | number | boolean | string[]>;
+  autoCreate?: boolean;
+  priority?: number;
+}
+
+export interface WorkflowNodeOutputUsage {
+  target: AssetHandoffTarget;
+  inputKind: WorkflowStarterInputKind | 'asset_version';
+  label?: string;
+}
+
+export interface WorkflowNodeOutputBehavior {
+  portKey: string;
+  previewKinds?: WorkflowNodePreviewKind[];
+  usages: WorkflowNodeOutputUsage[];
+}
+
 export interface WorkflowNodeCatalogItem {
   type: string;
   label: string;
@@ -422,6 +475,8 @@ export interface WorkflowNodeCatalogItem {
   exampleInputs?: WorkflowNodeExample[];
   exampleOutputs?: WorkflowNodeExample[];
   commonErrors?: string[];
+  starterBindings?: WorkflowNodeStarterBinding[];
+  outputBehaviors?: WorkflowNodeOutputBehavior[];
 }
 
 export interface WorkflowNode {
@@ -571,11 +626,13 @@ export interface AssetFlowOverview {
 export interface AssetInputCandidate {
   id: string;
   consumer: AssetConsumer;
-  candidateType: 'asset_version' | 'spatial_roi';
+  candidateType: AssetInputCandidateType;
   title: string;
   description?: string;
   assetVersion?: AssetVersionRef;
   spatialRoi?: SpatialRoiSummary;
+  modelVersion?: ModelVersionSummary;
+  geeCredential?: GeeCredentialSummary;
 }
 
 export interface DashboardFeatureItem {
@@ -634,17 +691,27 @@ export interface FeedbackTicketSummaryCounts {
   adminInProgressCount: number;
 }
 
+export type WorkflowNodePreviewKind =
+  | 'dataset_version'
+  | 'model_ref'
+  | 'model_version'
+  | 'gee_credential'
+  | 'table'
+  | 'metrics_report'
+  | 'artifact_file'
+  | 'value';
+
+export interface WorkflowPreviewAction {
+  key: string;
+  label?: string;
+  handoff: AssetHandoffPayload;
+}
+
 export interface WorkflowNodePreviewValue {
-  kind:
-    | 'dataset_version'
-    | 'model_ref'
-    | 'model_version'
-    | 'table'
-    | 'metrics_report'
-    | 'artifact_file'
-    | 'value';
+  kind: WorkflowNodePreviewKind;
   title?: string;
   summary?: string;
+  nextActions?: WorkflowPreviewAction[];
   [key: string]: unknown;
 }
 

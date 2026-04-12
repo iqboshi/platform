@@ -11,7 +11,10 @@ from platform_backend.schemas.workflow import (
     WorkflowGraph,
     WorkflowNode,
     WorkflowNodeExample,
+    WorkflowNodeOutputBehavior,
+    WorkflowNodeOutputUsage,
     WorkflowNodePort,
+    WorkflowNodeStarterBinding,
     WorkflowParamDefinition,
     WorkflowParamFieldType,
     WorkflowParamOption,
@@ -119,6 +122,45 @@ def _example(
     )
 
 
+def _starter_binding(
+    input_kind: str,
+    param_key: str,
+    *,
+    preset_params: dict[str, Any] | None = None,
+    auto_create: bool = False,
+    priority: int = 0,
+) -> WorkflowNodeStarterBinding:
+    return WorkflowNodeStarterBinding(
+        input_kind=input_kind,
+        param_key=param_key,
+        preset_params=preset_params or {},
+        auto_create=auto_create,
+        priority=priority,
+    )
+
+
+def _output_usage(
+    target: str,
+    input_kind: str,
+    *,
+    label: str | None = None,
+) -> WorkflowNodeOutputUsage:
+    return WorkflowNodeOutputUsage(target=target, input_kind=input_kind, label=label)
+
+
+def _output_behavior(
+    port_key: str,
+    *,
+    preview_kinds: list[str] | None = None,
+    usages: list[WorkflowNodeOutputUsage] | None = None,
+) -> WorkflowNodeOutputBehavior:
+    return WorkflowNodeOutputBehavior(
+        port_key=port_key,
+        preview_kinds=preview_kinds or [],
+        usages=usages or [],
+    )
+
+
 def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
     feature_rows = [
         {"feature_a": 1.0, "feature_b": 2.0, "target": 2.1},
@@ -214,6 +256,39 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
                 "roiId is missing when roiMode is saved_roi.",
                 "No Sentinel-2 scene matched the date and cloud filters.",
                 "The selected GEE credential is missing or invalid.",
+            ],
+        }
+
+    if node_type == "source.model_version":
+        return {
+            "input_contracts": [],
+            "output_contracts": [
+                _contract(
+                    "model",
+                    "Outputs a saved model version handle that downstream prediction nodes can reuse.",
+                    notes=[
+                        "Compatible prediction nodes may either bind this handle directly or use the same model version as a parameter starter.",
+                    ],
+                ),
+            ],
+            "example_inputs": [
+                _example(
+                    "Example selection",
+                    "text",
+                    content="Select a saved model version such as random-forest-regressor / 1.0.0.",
+                )
+            ],
+            "example_outputs": [
+                _example(
+                    "Example output handle",
+                    "text",
+                    port_key="model",
+                    content="model_version: random-forest-regressor / 1.0.0",
+                )
+            ],
+            "common_errors": [
+                "No model version is selected.",
+                "The selected model version is not visible in the current scope.",
             ],
         }
 
@@ -396,6 +471,13 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
         return {
             "input_contracts": [
                 _contract(
+                    "model",
+                    "Optionally accepts a saved model version handle from Model Version Source.",
+                    notes=[
+                        "When both a bound model handle and modelVersionId are present, the bound model is used first.",
+                    ],
+                ),
+                _contract(
                     "table",
                     "Accepts a feature table for batch prediction.",
                     column_requirements=[
@@ -441,6 +523,13 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
     if node_type == "custom.api_predict":
         return {
             "input_contracts": [
+                _contract(
+                    "model",
+                    "Optionally accepts a saved custom API model version handle.",
+                    notes=[
+                        "When both a bound model handle and modelVersionId are present, the bound model is used first.",
+                    ],
+                ),
                 _contract(
                     "table",
                     "Accepts a feature table and sends it to the saved external API model.",
@@ -671,11 +760,112 @@ def _catalog_contract_metadata(node_type: str) -> dict[str, object]:
         "example_inputs": [],
         "example_outputs": [],
         "common_errors": [],
+}
+
+
+def _catalog_extension_metadata(node_type: str) -> dict[str, object]:
+    if node_type == "source.dataset_version":
+        return {
+            "starter_bindings": [
+                _starter_binding(
+                    "dataset_version",
+                    "datasetVersionId",
+                    auto_create=True,
+                    priority=100,
+                ),
+            ],
+            "output_behaviors": [
+                _output_behavior(
+                    "dataset",
+                    preview_kinds=["dataset_version"],
+                    usages=[
+                        _output_usage("workflow", "dataset_version"),
+                        _output_usage("spatial", "asset_version"),
+                    ],
+                )
+            ],
+        }
+
+    if node_type == "source.model_version":
+        return {
+            "starter_bindings": [
+                _starter_binding(
+                    "model_version",
+                    "modelVersionId",
+                    auto_create=True,
+                    priority=100,
+                ),
+            ],
+            "output_behaviors": [
+                _output_behavior(
+                    "model",
+                    preview_kinds=["model_version"],
+                    usages=[_output_usage("workflow", "model_version")],
+                )
+            ],
+        }
+
+    if node_type == "source.sentinel2_gee_download":
+        return {
+            "starter_bindings": [
+                _starter_binding(
+                    "spatial_roi",
+                    "roiId",
+                    preset_params={"roiMode": "saved_roi"},
+                    auto_create=True,
+                    priority=100,
+                ),
+                _starter_binding(
+                    "gee_credential",
+                    "personalCredentialId",
+                    preset_params={"credentialMode": "personal"},
+                    auto_create=True,
+                    priority=90,
+                ),
+            ],
+            "output_behaviors": [
+                _output_behavior(
+                    "dataset",
+                    preview_kinds=["dataset_version"],
+                    usages=[
+                        _output_usage("workflow", "dataset_version"),
+                        _output_usage("spatial", "asset_version"),
+                    ],
+                )
+            ],
+        }
+
+    if node_type in {
+        "tabular.linear_regression_predict",
+        "tabular.svm_regression_predict",
+        "tabular.random_forest_regression_predict",
+        "tabular.predict",
+        "custom.api_predict",
+    }:
+        return {
+            "starter_bindings": [
+                _starter_binding(
+                    "model_version",
+                    "modelVersionId",
+                    auto_create=False,
+                    priority=20,
+                )
+            ],
+            "output_behaviors": [],
+        }
+
+    return {
+        "starter_bindings": [],
+        "output_behaviors": [],
     }
 
 
 def _augment_catalog_item(item: WorkflowCatalogItem) -> WorkflowCatalogItem:
-    return item.model_copy(update=_catalog_contract_metadata(item.type))
+    metadata = {
+        **_catalog_contract_metadata(item.type),
+        **_catalog_extension_metadata(item.type),
+    }
+    return item.model_copy(update=metadata)
 
 
 BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
@@ -694,6 +884,25 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
                 "Dataset Version",
                 "datasetVersion",
                 description="Choose the CSV dataset version bound to this source node.",
+                required=True,
+            )
+        ],
+    ),
+    WorkflowCatalogItem(
+        type="source.model_version",
+        label="Model Version",
+        category="source",
+        description="Select a saved model version and expose it as a reusable workflow input.",
+        runtime_kind="source",
+        supported_tasks=["tabular_prediction", "tabular_validation", "custom_api_prediction"],
+        tags=["model", "version", "input"],
+        outputs=[_port("model", "Model Version", "model_version")],
+        params=[
+            _param(
+                "modelVersionId",
+                "Model Version",
+                "modelVersion",
+                description="Choose the saved model version bound to this source node.",
                 required=True,
             )
         ],
@@ -956,7 +1165,10 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         runtime_kind="inference",
         supported_tasks=["tabular_prediction", "tabular_validation"],
         tags=["table", "prediction", "regression", "linear"],
-        inputs=[_port("table", "Input Table", "table", required=True)],
+        inputs=[
+            _port("model", "Model Version", "model_version"),
+            _port("table", "Input Table", "table", required=True),
+        ],
         outputs=[_port("table", "Prediction Table", "table")],
         params=[
             _param(
@@ -1004,7 +1216,10 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         runtime_kind="inference",
         supported_tasks=["tabular_prediction", "tabular_validation"],
         tags=["table", "prediction", "regression", "svm"],
-        inputs=[_port("table", "Input Table", "table", required=True)],
+        inputs=[
+            _port("model", "Model Version", "model_version"),
+            _port("table", "Input Table", "table", required=True),
+        ],
         outputs=[_port("table", "Prediction Table", "table")],
         params=[
             _param(
@@ -1048,7 +1263,10 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         runtime_kind="inference",
         supported_tasks=["tabular_prediction", "tabular_validation"],
         tags=["table", "prediction", "regression", "random-forest"],
-        inputs=[_port("table", "Input Table", "table", required=True)],
+        inputs=[
+            _port("model", "Model Version", "model_version"),
+            _port("table", "Input Table", "table", required=True),
+        ],
         outputs=[_port("table", "Prediction Table", "table")],
         params=[
             _param(
@@ -1092,7 +1310,10 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         runtime_kind="inference",
         supported_tasks=["tabular_prediction", "tabular_validation"],
         tags=["table", "prediction", "regression", "legacy"],
-        inputs=[_port("table", "Input Table", "table", required=True)],
+        inputs=[
+            _port("model", "Model Version", "model_version"),
+            _port("table", "Input Table", "table", required=True),
+        ],
         outputs=[_port("table", "Prediction Table", "table")],
         params=[
             _param(
@@ -1127,7 +1348,10 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         runtime_kind="inference",
         supported_tasks=["custom_api_prediction"],
         tags=["table", "prediction", "custom", "api"],
-        inputs=[_port("table", "Input Table", "table", required=True)],
+        inputs=[
+            _port("model", "Custom Model", "model_version"),
+            _port("table", "Input Table", "table", required=True),
+        ],
         outputs=[_port("table", "Prediction Table", "table")],
         params=[
             _param("modelVersionId", "Custom Model", "modelVersion", description="Choose a saved custom API model asset.", required=True),

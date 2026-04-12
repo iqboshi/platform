@@ -35,6 +35,7 @@ import {
   Modal,
   Progress,
   Select,
+  Space,
   Switch,
   Tag,
   Typography,
@@ -63,8 +64,10 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { isApiError } from '@/auth/errors';
+import { createHandoffPath } from '@/features/asset-flow/handoff';
 import {
   canConnectPorts,
   catalogMatchesFilters,
@@ -348,9 +351,11 @@ function buildPreviewPayload(preview: WorkflowNodePreviewValue): unknown {
 function NodePreviewCard({
   portKey,
   preview,
+  onActionClick,
 }: {
   portKey: string;
   preview: WorkflowNodePreviewValue;
+  onActionClick?: (action: NonNullable<WorkflowNodePreviewValue['nextActions']>[number]) => void;
 }) {
   return (
     <div className="workflow-node-test-card">
@@ -360,6 +365,15 @@ function NodePreviewCard({
       </div>
       {summarizeNodePreview(preview) ? (
         <Text type="secondary">{summarizeNodePreview(preview)}</Text>
+      ) : null}
+      {preview.nextActions?.length ? (
+        <Space wrap size={[8, 8]}>
+          {preview.nextActions.map((action) => (
+            <Button key={action.key} size="small" onClick={() => onActionClick?.(action)}>
+              {action.label ?? action.key}
+            </Button>
+          ))}
+        </Space>
       ) : null}
       <pre className="json-block workflow-node-test-json">
         {JSON.stringify(buildPreviewPayload(preview), null, 2)}
@@ -1005,6 +1019,7 @@ function CanvasInner({
 }) {
   const { message } = App.useApp();
   const { locale, t } = useI18n();
+  const navigate = useNavigate();
   const { fitView, screenToFlowPosition } = useReactFlow();
   const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
   const workflowVersionRef = useRef(workflowVersion);
@@ -1557,6 +1572,18 @@ function CanvasInner({
       setNodeTestLoading(false);
     }
   };
+
+  const handleNodePreviewAction = useCallback(
+    (action: NonNullable<WorkflowNodePreviewValue['nextActions']>[number]) => {
+      const handoff = action.handoff;
+      if (!handoff || typeof handoff !== 'object' || !('target' in handoff)) {
+        return;
+      }
+
+      navigate(createHandoffPath(handoff.target === 'spatial' ? '/spatial' : '/workflows', handoff));
+    },
+    [navigate],
+  );
 
   const removeSelectedNode = () => {
     if (!canManage || !selectedNodeId) {
@@ -2342,7 +2369,12 @@ function CanvasInner({
                 <Text strong>{t('workflows.nodeTestInput')}</Text>
                 {Object.entries(selectedNodeTest.inputPreview).length ? (
                   Object.entries(selectedNodeTest.inputPreview).map(([portKey, preview]) => (
-                    <NodePreviewCard key={`input-${portKey}`} portKey={portKey} preview={preview} />
+                    <NodePreviewCard
+                      key={`input-${portKey}`}
+                      portKey={portKey}
+                      preview={preview}
+                      onActionClick={handleNodePreviewAction}
+                    />
                   ))
                 ) : (
                   <Text type="secondary">{t('workflows.nodeTestNoPreview')}</Text>
@@ -2352,7 +2384,12 @@ function CanvasInner({
                 <Text strong>{t('workflows.nodeTestOutput')}</Text>
                 {Object.entries(selectedNodeTest.outputPreview).length ? (
                   Object.entries(selectedNodeTest.outputPreview).map(([portKey, preview]) => (
-                    <NodePreviewCard key={`output-${portKey}`} portKey={portKey} preview={preview} />
+                    <NodePreviewCard
+                      key={`output-${portKey}`}
+                      portKey={portKey}
+                      preview={preview}
+                      onActionClick={handleNodePreviewAction}
+                    />
                   ))
                 ) : (
                   <Text type="secondary">{t('workflows.nodeTestNoPreview')}</Text>

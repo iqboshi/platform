@@ -54,11 +54,20 @@ def main() -> int:
                     f"- Route: `{item['route']}`",
                     f"- Menu key: `{item['menuLabelKey']}`",
                     f"- Permission: `{permission}`",
+                    f"- Title (ZH): {dashboard['titleZh']}",
+                    f"- Title (EN): {dashboard['titleEn']}",
                     f"- Summary (ZH): {dashboard['summaryZh']}",
                     f"- Summary (EN): {dashboard['summaryEn']}",
-                    "- Cross-page handoff notes:",
+                    f"- Primary action (ZH): {dashboard['actionZh']}",
+                    f"- Primary action (EN): {dashboard['actionEn']}",
+                    "- Cross-page handoff notes (ZH):",
                 ]
             )
+
+            for note in dashboard["handoffZh"]:
+                lines.append(f"  - {note}")
+
+            lines.append("- Cross-page handoff notes (EN):")
 
             for note in dashboard["handoffEn"]:
                 lines.append(f"  - {note}")

@@ -14,7 +14,7 @@
       "actionEn": "Open datasets",
       "handoffZh": [
         "结构化数据集可以直接送入工作流作为输入。",
-        "支持空间格式的数据版本可以继续进入地图与叠加层流程。"
+        "支持空间格式的数据集版本可以继续进入地图与叠加层流程。"
       ],
       "handoffEn": [
         "Structured datasets can flow directly into workflows as inputs.",
@@ -37,7 +37,7 @@
       "actionEn": "Open products",
       "handoffZh": [
         "公开产品可以继续作为对外展示资产复用。",
-        "产品文件与元数据仍然回流到资产中心统一管理。"
+        "产品文件与元数据仍然应回流到资产中心统一管理。"
       ],
       "handoffEn": [
         "Published products remain reusable as showcase assets.",
@@ -83,7 +83,7 @@
       "actionEn": "Open workflows",
       "handoffZh": [
         "数据集、ROI、模型和个人凭证都应该能直接送入工作流。",
-        "符合条件的工作流输出应当能直接回流到地图或资产中心。"
+        "符合条件的工作流输出应当直接回流到地图或资产中心。"
       ],
       "handoffEn": [
         "Datasets, ROIs, models, and personal credentials should all feed workflows.",
@@ -106,8 +106,8 @@
       "actionZh": "打开模型中心",
       "actionEn": "Open models",
       "handoffZh": [
-        "模型版本应该能够直接进入工作流推理节点。",
-        "训练输出应该回流为可复用的模型资产。"
+        "模型版本应能够直接进入工作流推理节点。",
+        "训练输出应回流为可复用的模型资产。"
       ],
       "handoffEn": [
         "Model versions should feed workflow inference nodes directly.",
@@ -152,7 +152,7 @@
       "actionZh": "打开资产中心",
       "actionEn": "Open asset hub",
       "handoffZh": [
-        "资产中心应该明确展示每项资产下一步还能送到哪里。",
+        "资产中心应明确展示每项资产下一步还能送到哪里。",
         "工作流、地图和模型产出的资产，以及 GEE 凭证这类共享能力，都应统一回流到这里。"
       ],
       "handoffEn": [
@@ -176,7 +176,7 @@
       "actionZh": "打开审批中心",
       "actionEn": "Open approvals",
       "handoffZh": [
-        "审批结果应直接影响首页可见模块与入口状态。",
+        "审批结果应直接影响总览页可见模块与入口状态。",
         "治理动作完成后也应回写到总览状态。"
       ],
       "handoffEn": [
@@ -195,12 +195,12 @@
     "dashboard": {
       "titleZh": "工作空间设置",
       "titleEn": "Workspace Settings",
-      "summaryZh": "维护首页公告、平台邮件和工作空间级配置。",
+      "summaryZh": "维护总览公告、平台邮件和工作空间级配置。",
       "summaryEn": "Maintain overview announcements, platform email, and workspace-level settings.",
       "actionZh": "打开工作空间设置",
       "actionEn": "Open settings",
       "handoffZh": [
-        "公告内容应直接进入总览首页，不再和功能介绍重复堆叠。",
+        "公告内容应直接进入总览页，不再与功能介绍重复堆叠。",
         "系统级配置应继续与账号页、资产页保持边界清晰。"
       ],
       "handoffEn": [

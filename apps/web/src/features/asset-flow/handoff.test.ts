@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   createSpatialAssetHandoff,
   createWorkflowDatasetHandoff,
+  createWorkflowGeeCredentialHandoff,
+  createWorkflowModelHandoff,
   createWorkflowRoiHandoff,
   createHandoffPath,
   decodeAssetHandoff,
@@ -42,6 +44,22 @@ describe('asset handoff helpers', () => {
   it('supports roi payloads', () => {
     const payload = createWorkflowRoiHandoff('roi-1', {
       source: 'spatial_roi',
+    });
+
+    expect(decodeAssetHandoff(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  it('supports model version payloads', () => {
+    const payload = createWorkflowModelHandoff('model-version-1', {
+      source: 'my_assets',
+    });
+
+    expect(decodeAssetHandoff(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  it('supports gee credential payloads', () => {
+    const payload = createWorkflowGeeCredentialHandoff('gee-credential-1', {
+      source: 'my_assets',
     });
 
     expect(decodeAssetHandoff(JSON.stringify(payload))).toEqual(payload);

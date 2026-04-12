@@ -201,6 +201,77 @@ function normalizeSpatialRoi(input: ApiRecord): AssetInputCandidate['spatialRoi'
   };
 }
 
+function normalizeModelVersion(input: ApiRecord): AssetInputCandidate['modelVersion'] {
+  return {
+    id: getString(input, 'id'),
+    modelId: getString(input, 'modelId') || getString(input, 'model_id'),
+    modelName: getOptionalString(input, 'modelName') ?? getOptionalString(input, 'model_name'),
+    algorithmKey:
+      getOptionalString(input, 'algorithmKey') ?? getOptionalString(input, 'algorithm_key'),
+    version: getString(input, 'version'),
+    framework: getString(input, 'framework'),
+    taskType: getString(input, 'taskType') || getString(input, 'task_type'),
+    featureNames:
+      getStringArray(input, 'featureNames').length > 0
+        ? getStringArray(input, 'featureNames')
+        : getStringArray(input, 'feature_names'),
+    defaultParameters:
+      (getRecord(input, 'defaultParameters') as Record<string, unknown>) ??
+      (getRecord(input, 'default_parameters') as Record<string, unknown>) ??
+      {},
+    artifactFormat:
+      getOptionalString(input, 'artifactFormat') ?? getOptionalString(input, 'artifact_format'),
+    sourceType:
+      (getOptionalString(input, 'sourceType') ?? getOptionalString(input, 'source_type')) as
+        | 'uploaded'
+        | 'trained'
+        | 'custom_api'
+        | 'seeded'
+        | undefined,
+    executionMode:
+      (getOptionalString(input, 'executionMode') ?? getOptionalString(input, 'execution_mode')) as
+        | 'in_process'
+        | 'external_api'
+        | undefined,
+    visibility:
+      (getOptionalString(input, 'visibility') as
+        | 'private'
+        | 'public'
+        | 'workspace'
+        | undefined) ?? undefined,
+    ownerUserId:
+      getOptionalString(input, 'ownerUserId') ?? getOptionalString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ?? getOptionalString(input, 'owner_display_name'),
+    metadata:
+      Object.keys(getRecord(input, 'metadata')).length > 0
+        ? getRecord(input, 'metadata')
+        : getRecord(input, 'metadata_json'),
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
+function normalizeGeeCredential(input: ApiRecord): AssetInputCandidate['geeCredential'] {
+  return {
+    id: getString(input, 'id'),
+    workspaceId: getString(input, 'workspaceId') || getString(input, 'workspace_id'),
+    ownerUserId: getString(input, 'ownerUserId') || getString(input, 'owner_user_id'),
+    ownerDisplayName:
+      getOptionalString(input, 'ownerDisplayName') ?? getOptionalString(input, 'owner_display_name'),
+    name: getString(input, 'name'),
+    provider: getString(input, 'provider'),
+    description: getOptionalString(input, 'description'),
+    projectId: getOptionalString(input, 'projectId') ?? getOptionalString(input, 'project_id'),
+    serviceAccountEmail:
+      getOptionalString(input, 'serviceAccountEmail') ??
+      getOptionalString(input, 'service_account_email'),
+    isPlatformDefault:
+      (input.isPlatformDefault as boolean | undefined) ??
+      (input.is_platform_default as boolean | undefined),
+    createdAt: getString(input, 'createdAt') || getString(input, 'created_at'),
+  };
+}
+
 function normalizeAssetInputCandidate(input: ApiRecord): AssetInputCandidate {
   const assetVersionRecord = getRecord(input, 'assetVersion');
   const rawAssetVersion =
@@ -208,6 +279,14 @@ function normalizeAssetInputCandidate(input: ApiRecord): AssetInputCandidate {
   const spatialRoiRecord = getRecord(input, 'spatialRoi');
   const rawSpatialRoi =
     Object.keys(spatialRoiRecord).length > 0 ? spatialRoiRecord : getRecord(input, 'spatial_roi');
+  const modelVersionRecord = getRecord(input, 'modelVersion');
+  const rawModelVersion =
+    Object.keys(modelVersionRecord).length > 0 ? modelVersionRecord : getRecord(input, 'model_version');
+  const geeCredentialRecord = getRecord(input, 'geeCredential');
+  const rawGeeCredential =
+    Object.keys(geeCredentialRecord).length > 0
+      ? geeCredentialRecord
+      : getRecord(input, 'gee_credential');
 
   return {
     id: getString(input, 'id'),
@@ -216,14 +295,17 @@ function normalizeAssetInputCandidate(input: ApiRecord): AssetInputCandidate {
     ) as AssetConsumer,
     candidateType:
       (getString(input, 'candidateType') || getString(input, 'candidate_type') || 'asset_version') as
-        | 'asset_version'
-        | 'spatial_roi',
+        AssetInputCandidate['candidateType'],
     title: getString(input, 'title'),
     description: getOptionalString(input, 'description'),
     assetVersion:
       Object.keys(rawAssetVersion).length > 0 ? normalizeAssetVersionRef(rawAssetVersion) : undefined,
     spatialRoi:
       Object.keys(rawSpatialRoi).length > 0 ? normalizeSpatialRoi(rawSpatialRoi) : undefined,
+    modelVersion:
+      Object.keys(rawModelVersion).length > 0 ? normalizeModelVersion(rawModelVersion) : undefined,
+    geeCredential:
+      Object.keys(rawGeeCredential).length > 0 ? normalizeGeeCredential(rawGeeCredential) : undefined,
   };
 }
 

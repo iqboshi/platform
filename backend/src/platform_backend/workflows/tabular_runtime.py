@@ -861,10 +861,10 @@ def _execute_prediction_node(
     *,
     db,
     node_type: str,
+    model_version_id: str,
     params: dict[str, Any],
     table: TableArtifact,
 ) -> TableArtifact:
-    model_version_id = str(params.get("modelVersionId", "")).strip()
     if not model_version_id:
         raise ValueError(f"{node_type} requires modelVersionId.")
 
@@ -918,10 +918,10 @@ def _load_custom_api_config(model_version: ModelVersion) -> dict[str, Any]:
 def _predict_with_custom_api_model(
     *,
     db,
+    model_version_id: str,
     params: dict[str, Any],
     table: TableArtifact,
 ) -> TableArtifact:
-    model_version_id = str(params.get("modelVersionId", "")).strip()
     if not model_version_id:
         raise ValueError("custom.api_predict requires modelVersionId.")
 
@@ -1002,7 +1002,7 @@ def _predict_with_custom_api_model(
             {**row, prediction_column: prediction}
             for row, prediction in zip(table.rows, predictions, strict=True)
         ]
-        return TableArtifact(columns=columns, rows=rows)
+    return TableArtifact(columns=columns, rows=rows)
 
     rows_payload = response_payload.get("rows")
     if not isinstance(rows_payload, list):
@@ -1158,23 +1158,134 @@ def _write_metrics_artifact(
     return target_path
 
 
+def _resolve_model_version_id(
+    *,
+    resolved_outputs: dict[str, dict[str, Any]],
+    bindings: dict[str, str],
+    params: dict[str, Any],
+    node_type: str,
+) -> str:
+    if str(bindings.get("model", "")).strip():
+        bound_model_version_id = str(
+            _resolve_input_value(resolved_outputs, bindings, "model")
+        ).strip()
+        if bound_model_version_id:
+            return bound_model_version_id
+
+    model_version_id = str(params.get("modelVersionId", "")).strip()
+    if model_version_id:
+        return model_version_id
+
+    raise ValueError(f"{node_type} requires modelVersionId.")
+
+
+def _dataset_supports_map_overlay(dataset_kind: str, metadata: dict[str, Any]) -> bool:
+    normalized_kind = dataset_kind.strip().lower()
+    original_file_name = str(metadata.get("original_file_name", "")).strip().lower()
+    content_type = str(metadata.get("content_type", "")).strip().lower()
+
+    if normalized_kind == "raster":
+        return (
+            original_file_name.endswith(".tif")
+            or original_file_name.endswith(".tiff")
+            or "tiff" in content_type
+            or "geotiff" in content_type
+        )
+
+    if normalized_kind == "vector":
+        return (
+            original_file_name.endswith(".geojson")
+            or original_file_name.endswith(".json")
+            or "geo+json" in content_type
+            or content_type.endswith("/json")
+        )
+
+    return False
+
+
+def _preview_action(
+    key: str,
+    label: str,
+    handoff: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "label": label,
+        "handoff": handoff,
+    }
+
+
 def _dataset_version_preview(db, dataset_version_id: str) -> dict[str, Any]:
     dataset_version = db.get(DatasetVersion, dataset_version_id)
     if dataset_version is None:
         return {
             "kind": "dataset_version",
             "dataset_version_id": dataset_version_id,
+            "next_actions": [
+                _preview_action(
+                    "use_in_workflow",
+                    "Use In Workflow",
+                    {
+                        "version": 1,
+                        "target": "workflow",
+                        "inputKind": "dataset_version",
+                        "datasetVersionId": dataset_version_id,
+                        "source": "workflow_node_test",
+                    },
+                )
+            ],
         }
 
     dataset = db.get(Dataset, dataset_version.dataset_id)
+    metadata = (
+        dict(dataset_version.metadata)
+        if isinstance(dataset_version.metadata, dict)
+        else {}
+    )
+    dataset_kind = (
+        dataset.kind.value
+        if dataset is not None and hasattr(dataset.kind, "value")
+        else str(dataset.kind) if dataset is not None else ""
+    )
+    next_actions = [
+        _preview_action(
+            "use_in_workflow",
+            "Use In Workflow",
+            {
+                "version": 1,
+                "target": "workflow",
+                "inputKind": "dataset_version",
+                "datasetVersionId": dataset_version.id,
+                "label": dataset.name if dataset is not None else None,
+                "source": "workflow_node_test",
+            },
+        )
+    ]
+    if _dataset_supports_map_overlay(dataset_kind, metadata):
+        next_actions.append(
+            _preview_action(
+                "open_in_map",
+                "Open In Map",
+                {
+                    "version": 1,
+                    "target": "spatial",
+                    "inputKind": "asset_version",
+                    "assetVersionId": dataset_version.id,
+                    "label": dataset.name if dataset is not None else None,
+                    "source": "workflow_node_test",
+                },
+            )
+        )
     return {
         "kind": "dataset_version",
         "dataset_version_id": dataset_version.id,
         "dataset_id": dataset_version.dataset_id,
         "dataset_name": dataset.name if dataset is not None else None,
+        "dataset_kind": dataset_kind or None,
         "version": dataset_version.version,
         "asset_path": dataset_version.asset_path,
         "status": dataset_version.status.value,
+        "next_actions": next_actions,
     }
 
 
@@ -1184,6 +1295,19 @@ def _model_version_preview(db, model_version_id: str) -> dict[str, Any]:
         return {
             "kind": "model_version",
             "model_version_id": model_version_id,
+            "next_actions": [
+                _preview_action(
+                    "bind_model",
+                    "Use In Workflow",
+                    {
+                        "version": 1,
+                        "target": "workflow",
+                        "inputKind": "model_version",
+                        "modelVersionId": model_version_id,
+                        "source": "workflow_node_test",
+                    },
+                )
+            ],
         }
 
     model = db.get(Model, model_version.model_id)
@@ -1200,6 +1324,20 @@ def _model_version_preview(db, model_version_id: str) -> dict[str, Any]:
             if isinstance(model_version.metadata_json, dict)
             else None
         ),
+        "next_actions": [
+            _preview_action(
+                "bind_model",
+                "Use In Workflow",
+                {
+                    "version": 1,
+                    "target": "workflow",
+                    "inputKind": "model_version",
+                    "modelVersionId": model_version.id,
+                    "label": model.name if model is not None else None,
+                    "source": "workflow_node_test",
+                },
+            )
+        ],
     }
 
 
@@ -1346,10 +1484,17 @@ def _execute_tabular_node(
 
     if node_type in TABULAR_NODE_ALGORITHMS or node_type == "tabular.predict":
         input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
+        model_version_id = _resolve_model_version_id(
+            resolved_outputs=state.resolved_outputs,
+            bindings=bindings,
+            params=params,
+            node_type=node_type,
+        )
         return {
             "table": _execute_prediction_node(
                 db=db,
                 node_type=node_type,
+                model_version_id=model_version_id,
                 params=params,
                 table=input_table,
             )
@@ -1357,7 +1502,20 @@ def _execute_tabular_node(
 
     if node_type == "custom.api_predict":
         input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
-        return {"table": _predict_with_custom_api_model(db=db, params=params, table=input_table)}
+        model_version_id = _resolve_model_version_id(
+            resolved_outputs=state.resolved_outputs,
+            bindings=bindings,
+            params=params,
+            node_type=node_type,
+        )
+        return {
+            "table": _predict_with_custom_api_model(
+                db=db,
+                model_version_id=model_version_id,
+                params=params,
+                table=input_table,
+            )
+        }
 
     if node_type in TABULAR_TRAIN_NODE_ALGORITHMS:
         train_table = _resolve_input_value(state.resolved_outputs, bindings, "trainTable")

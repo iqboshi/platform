@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, Field
 
 from platform_backend.domain_enums import WorkflowRunStatus
+from platform_backend.schemas.platform import GeeCredentialSummary, ModelVersionSummary
 from platform_backend.schemas.spatial import SpatialRoiSummary
 
 AssetType = Literal["dataset", "workflow", "model", "product", "spatial"]
@@ -20,7 +21,13 @@ AssetCapability = Literal[
     "lineage_tracked",
     "execution_output",
 ]
-AssetConsumer = Literal["workflow_dataset", "workflow_roi", "map_overlay"]
+AssetConsumer = Literal[
+    "workflow_dataset",
+    "workflow_roi",
+    "workflow_model",
+    "workflow_gee_credential",
+    "map_overlay",
+]
 AssetFormat = Literal[
     "csv",
     "geojson",
@@ -30,7 +37,12 @@ AssetFormat = Literal[
     "roi_geometry",
     "unknown",
 ]
-AssetInputCandidateType = Literal["asset_version", "spatial_roi"]
+AssetInputCandidateType = Literal[
+    "asset_version",
+    "spatial_roi",
+    "model_version",
+    "gee_credential",
+]
 
 
 class AssetRef(BaseModel):
@@ -206,4 +218,12 @@ class AssetInputCandidate(BaseModel):
     spatial_roi: SpatialRoiSummary | None = Field(
         default=None,
         validation_alias=AliasChoices("spatial_roi", "spatialRoi"),
+    )
+    model_version: ModelVersionSummary | None = Field(
+        default=None,
+        validation_alias=AliasChoices("model_version", "modelVersion"),
+    )
+    gee_credential: GeeCredentialSummary | None = Field(
+        default=None,
+        validation_alias=AliasChoices("gee_credential", "geeCredential"),
     )

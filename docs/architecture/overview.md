@@ -24,6 +24,7 @@ derived_from:
 - Assets are treated as reusable outputs or shared capabilities with explicit downstream consumers.
 - Asset-facing pages should expose the next valid handoff directly instead of forcing download and re-upload loops.
 - Workflow outputs are expected to advertise whether they can feed map overlays, asset catalogs, or later workflow steps.
+- Workflow node extensibility is contract-first. New starter inputs, reusable outputs, and preview actions must follow `docs/architecture/workflow-node-extension-standard.md`.
 - Personal account data, reusable assets, and workspace-wide settings are separated into different pages and responsibilities.
 - GEE credentials belong to the asset hub when they can be shared or promoted to platform defaults, because they participate in downstream workflow execution like other reusable capabilities.
 - The overview is task-oriented: action queue, announcement state, recent runs, and module entry all come from live workspace state instead of duplicated feature copy.
@@ -42,3 +43,4 @@ derived_from:
 - API contracts are generated, not narrated manually.
 - Module capabilities come from the shared module registry.
 - Architecture docs should capture boundaries and flow constraints, not volatile UI copy.
+- Workflow node implementation details belong in the extension standard; feature pages should consume that shared contract rather than restating node-specific logic.

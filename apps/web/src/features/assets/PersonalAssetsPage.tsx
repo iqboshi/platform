@@ -25,10 +25,13 @@ import {
   createHandoffPath,
   createSpatialAssetHandoff,
   createWorkflowDatasetHandoff,
+  createWorkflowGeeCredentialHandoff,
+  createWorkflowModelHandoff,
   createWorkflowRoiHandoff,
 } from '@/features/asset-flow/handoff';
 import {
   buildDatasetNextSteps,
+  buildGeeCredentialNextSteps,
   buildModelNextSteps,
   buildProductNextSteps,
   buildSpatialOverlayNextSteps,
@@ -951,6 +954,36 @@ export function PersonalAssetsPage({
         createHandoffPath(
           '/workflows',
           createWorkflowRoiHandoff(roiId, {
+            label,
+            source: 'my_assets',
+          }),
+        ),
+      );
+    },
+    [navigate],
+  );
+
+  const openModelVersionInWorkflow = useCallback(
+    (modelVersionId: string, label?: string) => {
+      navigate(
+        createHandoffPath(
+          '/workflows',
+          createWorkflowModelHandoff(modelVersionId, {
+            label,
+            source: 'my_assets',
+          }),
+        ),
+      );
+    },
+    [navigate],
+  );
+
+  const openGeeCredentialInWorkflow = useCallback(
+    (geeCredentialId: string, label?: string) => {
+      navigate(
+        createHandoffPath(
+          '/workflows',
+          createWorkflowGeeCredentialHandoff(geeCredentialId, {
             label,
             source: 'my_assets',
           }),
@@ -1926,7 +1959,12 @@ export function PersonalAssetsPage({
       title: handoffCopy.nextSteps,
       key: 'nextSteps',
       render: (_: unknown, record: NonNullable<typeof overview>['modelVersions'][number]) => (
-        <AssetNextStepCell model={buildModelNextSteps(locale, record)} />
+        <AssetNextStepCell
+          model={buildModelNextSteps(locale, record, {
+            onOpenInWorkflow: () =>
+              openModelVersionInWorkflow(record.id, record.modelName ?? record.modelId),
+          })}
+        />
       ),
     },
     {
@@ -2012,6 +2050,17 @@ export function PersonalAssetsPage({
         ]
       : []),
     { title: t('common.createdAt'), dataIndex: 'createdAt' },
+    {
+      title: handoffCopy.nextSteps,
+      key: 'nextSteps',
+      render: (_: unknown, record: NonNullable<typeof overview>['geeCredentials'][number]) => (
+        <AssetNextStepCell
+          model={buildGeeCredentialNextSteps(locale, record, {
+            onOpenInWorkflow: () => openGeeCredentialInWorkflow(record.id, record.name),
+          })}
+        />
+      ),
+    },
     {
       title: t('common.actions'),
       key: 'actions',

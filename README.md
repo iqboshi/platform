@@ -1,15 +1,24 @@
 # Platform
 
-Platform is a remote sensing and data-processing workspace for dataset management,
-tile/split generation, workflow orchestration, model inference, and result review.
+Platform is a remote sensing and data-processing workspace centered on reusable
+assets, workflow orchestration, spatial visualization, model execution, and
+workspace governance.
+
+## Release Snapshot
+
+- Current release target: `v5.3`
+- Cross-page handoff is now contract-driven for datasets, ROIs, model versions, and GEE credentials.
+- Workflow node extension rules are documented in `docs/architecture/workflow-node-extension-standard.md`.
+- Workspace module documentation is generated from `apps/web/src/config/workspace-modules.json`.
+- Personal assets, workflows, spatial overlays, and workspace settings are documented as separate, composable surfaces.
 
 ## Highlights
 
-- Dataset upload and version-oriented asset management
-- Raster/vector preview with a dedicated tile service boundary
-- Drag-and-drop workflow design for preprocessing, split jobs, and inference
-- Model registry with versioned plugin adapters
-- Async job execution with clear run history
+- Reusable asset hub for datasets, workflow outputs, models, products, and shared capabilities
+- Workflow canvas with starter bindings and structured preview actions
+- Spatial studio that can consume overlay-ready workflow outputs directly
+- Workspace overview, announcements, approvals, and notifications wired to live state
+- Backend API, workflow runtime, and shared frontend types aligned through generated and code-owned docs
 
 ## Repository Layout
 
@@ -20,7 +29,7 @@ platform/
   packages          # Shared frontend types and utilities
   config            # Env templates, logging, and deployment defaults
   infra             # Compose and infrastructure bootstrap manifests
-  docs              # Architecture and API documentation
+  docs              # Architecture, generated docs, API snapshots, and release notes
   scripts           # Local automation helpers
   tests             # End-to-end and scenario documentation
 ```
@@ -33,7 +42,7 @@ platform/
 npm install
 ```
 
-### 2. Create a Python environment
+### 2. Prepare the Python environment
 
 ```powershell
 python -m venv .venv
@@ -42,39 +51,45 @@ python -m pip install --upgrade pip
 python -m pip install -e .\backend[dev]
 ```
 
-### 3. Copy environment template
+### 3. Copy the environment template
 
 ```powershell
 Copy-Item .\config\env\.env.example .\.env
 ```
 
-### 4. Start the API
+### 4. Start the backend
 
 ```powershell
 uvicorn platform_backend.main:app --app-dir .\backend\src --reload
 ```
 
-### 5. Start the web app
+### 5. Start the frontend
 
 ```powershell
 npm run dev --workspace @platform/web
+```
+
+## Documentation
+
+- `docs/README.md`: docs index and governance entry
+- `docs/architecture/overview.md`: stable boundaries and runtime flows
+- `docs/architecture/workflow-node-extension-standard.md`: required workflow node integration rules
+- `docs/generated/module-catalog.md`: generated module registry snapshot
+- `docs/api/openapi.json`: generated API contract snapshot
+
+## Validation Commands
+
+```powershell
+npm run lint --workspace @platform/web
+npm run test --workspace @platform/web
+npm run build --workspace @platform/web
+python .\scripts\validate_docs.py
+.venv\Scripts\python.exe -m pytest .\backend\tests
 ```
 
 ## Git Workflow
 
 - Remote: [iqboshi/platform](https://github.com/iqboshi/platform.git)
 - Default branch: `main`
-- Short-lived branches: `feature/*`, `fix/*`, `chore/*`, `docs/*`
-- Merge policy: PR only, CI must pass
-
-## Current Status
-
-This repository includes the initial platform scaffold:
-
-- backend domain models and API contracts
-- worker and tiler entrypoints
-- frontend shell for dashboard, datasets, workflows, and models
-- infrastructure examples for PostGIS, Redis, MinIO, and TiTiler
-
-The next implementation cycle should connect the current API surface to the
-persistence layer and object storage services.
+- Release tags: `v5.0`, `v5.1`, `v5.2`, `v5.3`
+- Merge policy: PR or protected-branch push only after validation passes
