@@ -63,6 +63,7 @@ export type AssetHandoffPayload =
       target: 'workflow';
       inputKind: 'dataset_version';
       datasetVersionId: string;
+      targetNodeId?: string;
       label?: string;
       source?: AssetHandoffSource;
     }
@@ -71,6 +72,7 @@ export type AssetHandoffPayload =
       target: 'workflow';
       inputKind: 'spatial_roi';
       roiId: string;
+      targetNodeId?: string;
       label?: string;
       source?: AssetHandoffSource;
     }
@@ -79,6 +81,7 @@ export type AssetHandoffPayload =
       target: 'workflow';
       inputKind: 'model_version';
       modelVersionId: string;
+      targetNodeId?: string;
       label?: string;
       source?: AssetHandoffSource;
     }
@@ -87,6 +90,7 @@ export type AssetHandoffPayload =
       target: 'workflow';
       inputKind: 'gee_credential';
       geeCredentialId: string;
+      targetNodeId?: string;
       label?: string;
       source?: AssetHandoffSource;
     }
@@ -101,7 +105,13 @@ export type AssetHandoffPayload =
 export type FeedbackTicketCategory = 'bug' | 'feature_request' | 'ux' | 'question' | 'other';
 export type FeedbackTicketPriority = 'low' | 'medium' | 'high';
 export type FeedbackTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
-export type WorkflowNodeCategory = 'source' | 'preprocess' | 'split' | 'inference' | 'postprocess';
+export type WorkflowNodeCategory =
+  | 'source'
+  | 'preprocess'
+  | 'split'
+  | 'inference'
+  | 'postprocess'
+  | 'control';
 export type WorkflowNodeTestStatus = 'succeeded' | 'failed' | 'not_supported';
 export type ExecutionType = 'workflow_run';
 export type LineageRelationship = 'execution_output';
@@ -111,14 +121,61 @@ export type WorkflowPortDataType =
   | 'raster'
   | 'vector'
   | 'roi'
+  | 'geo_raster'
+  | 'image_collection'
+  | 'feature_collection'
+  | 'mask_raster'
+  | 'mask_collection'
+  | 'scene_collection'
+  | 'scene'
   | 'tile_set'
   | 'label_set'
+  | 'annotation_set'
+  | 'prediction_set'
+  | 'sample_set'
+  | 'value'
+  | 'value_list'
   | 'model_version'
   | 'model_ref'
   | 'metrics_report'
   | 'prediction_mask'
   | 'prediction_vector'
   | 'artifact';
+export type WorkflowSemanticTaskType =
+  | 'image_classification'
+  | 'semantic_segmentation'
+  | 'instance_segmentation'
+  | 'object_detection'
+  | 'tabular_regression'
+  | 'tabular_classification'
+  | 'generic'
+  | (string & {});
+export type WorkflowAnnotationKind =
+  | 'mask'
+  | 'class_label'
+  | 'bbox'
+  | 'polygon'
+  | 'instance_mask'
+  | 'point'
+  | 'polyline'
+  | 'generic'
+  | (string & {});
+export type WorkflowSampleKind =
+  | 'image'
+  | 'image_tile'
+  | 'geospatial_tile'
+  | 'table_row'
+  | 'generic'
+  | (string & {});
+export type WorkflowValueType =
+  | 'boolean'
+  | 'number'
+  | 'string'
+  | 'json'
+  | 'array'
+  | 'object'
+  | 'generic'
+  | (string & {});
 export type WorkflowParamFieldType =
   | 'text'
   | 'number'
@@ -126,7 +183,10 @@ export type WorkflowParamFieldType =
   | 'select'
   | 'multiselect'
   | 'datasetVersion'
-  | 'modelVersion';
+  | 'modelVersion'
+  | 'spatialRoi'
+  | 'geeCredential';
+export type WorkflowIssueSeverity = 'error' | 'warning';
 export type ModelAlgorithmKey =
   | 'linear_regression'
   | 'svm_regression'
@@ -427,6 +487,10 @@ export interface WorkflowPortContract {
   columnRequirements?: string[];
   sampleColumns?: string[];
   producedColumns?: string[];
+  taskTypes?: WorkflowSemanticTaskType[];
+  annotationKinds?: WorkflowAnnotationKind[];
+  sampleKinds?: WorkflowSampleKind[];
+  valueTypes?: WorkflowValueType[];
   notes?: string[];
 }
 
@@ -488,7 +552,11 @@ export interface WorkflowNode {
   };
   params: Record<string, unknown>;
   inputBindings: Record<string, string>;
+  inputDefs?: WorkflowPortDefinition[];
+  inputContracts?: WorkflowPortContract[];
   outputDefs: WorkflowPortDefinition[];
+  outputContracts?: WorkflowPortContract[];
+  subgraph?: WorkflowGraph;
 }
 
 export interface WorkflowEdge {
@@ -499,16 +567,18 @@ export interface WorkflowEdge {
   targetHandle?: string;
 }
 
+export interface WorkflowGraph {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
 export interface WorkflowVersionDetail {
   id: string;
   workflowId: string;
   version: number;
   ownerUserId?: string;
   ownerDisplayName?: string;
-  graph: {
-    nodes: WorkflowNode[];
-    edges: WorkflowEdge[];
-  };
+  graph: WorkflowGraph;
   createdAt: string;
 }
 
@@ -519,10 +589,7 @@ export interface WorkflowVersionSummary {
   visibility?: 'private' | 'public';
   ownerUserId?: string;
   ownerDisplayName?: string;
-  graph: {
-    nodes: WorkflowNode[];
-    edges: WorkflowEdge[];
-  };
+  graph: WorkflowGraph;
   createdAt: string;
 }
 
@@ -538,10 +605,26 @@ export interface WorkflowTemplateDefinition {
   tags: string[];
   supportedTasks: string[];
   sampleBindings?: WorkflowTemplateSampleBinding[];
-  graph: {
-    nodes: WorkflowNode[];
-    edges: WorkflowEdge[];
-  };
+  graph: WorkflowGraph;
+}
+
+export interface WorkflowValidationIssue {
+  code: string;
+  severity: WorkflowIssueSeverity;
+  message: string;
+  nodeId?: string;
+  portKey?: string;
+  paramKey?: string;
+  expected?: string;
+  actual?: string;
+  suggestion?: string;
+}
+
+export interface WorkflowValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  issues: WorkflowValidationIssue[];
 }
 
 export interface AssetRef {

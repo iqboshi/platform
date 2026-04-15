@@ -12,7 +12,7 @@ FRONTEND_MOCK_PATH = REPO_ROOT / "apps" / "web" / "src" / "mocks" / "platform.ts
 
 sys.path.insert(0, str(BACKEND_SRC))
 
-from platform_backend.workflows.catalog import BUILTIN_NODE_CATALOG  # noqa: E402
+from platform_backend.workflows.catalog import BUILTIN_NODE_CATALOG, BUILTIN_WORKFLOW_TEMPLATES  # noqa: E402
 
 
 REUSABLE_OUTPUT_TYPES = {"dataset_version", "model_version"}
@@ -24,6 +24,10 @@ PREVIEW_KIND_COMPATIBILITY = {
     "dataset_version": {"dataset_version"},
     "model_version": {"model_version"},
 }
+BOUNDARY_TAG = "boundary"
+CONVENIENCE_TAG = "convenience"
+LEGACY_TAG = "legacy"
+PROVIDER_TAG_PREFIX = "provider_"
 
 
 @dataclass(slots=True)
@@ -163,10 +167,10 @@ def parse_mock_catalog(path: Path) -> dict[str, MockNodeMetadata]:
         metadata[node_type] = MockNodeMetadata(
             node_type=node_type,
             starter_binding_count=len(
-                re.findall(r"\binputKind:\s*'[^']+'", starter_bindings_body)
+                re.findall(r"\binputKind:\s*'[^']+'|\bstarter\s*\(", starter_bindings_body)
             ),
             output_behavior_count=len(
-                re.findall(r"\bportKey:\s*'[^']+'", output_behaviors_body)
+                re.findall(r"\bportKey:\s*'[^']+'|\bbehavior\s*\(", output_behaviors_body)
             ),
         )
 
@@ -221,6 +225,8 @@ def _validate_contract_coverage(
 def validate_catalog_item(item: object) -> list[str]:
     errors: list[str] = []
     node_type = getattr(item, "type")
+    tags = {str(tag) for tag in getattr(item, "tags")}
+    allows_dynamic_interface = "structural" in tags
 
     if not getattr(item, "label").strip():
         errors.append(f"{node_type}: missing label")
@@ -230,11 +236,11 @@ def validate_catalog_item(item: object) -> list[str]:
         errors.append(f"{node_type}: supported_tasks must not be empty")
     if not getattr(item, "tags"):
         errors.append(f"{node_type}: tags must not be empty")
-    if not getattr(item, "outputs"):
+    if not getattr(item, "outputs") and not allows_dynamic_interface:
         errors.append(f"{node_type}: outputs must not be empty")
     if not getattr(item, "example_inputs"):
         errors.append(f"{node_type}: example_inputs must not be empty")
-    if not getattr(item, "example_outputs"):
+    if not getattr(item, "example_outputs") and not allows_dynamic_interface:
         errors.append(f"{node_type}: example_outputs must not be empty")
     if not getattr(item, "common_errors"):
         errors.append(f"{node_type}: common_errors must not be empty")
@@ -337,6 +343,62 @@ def validate_catalog_item(item: object) -> list[str]:
     return errors
 
 
+def validate_node_tag_taxonomy(item: object) -> list[str]:
+    node_type = getattr(item, "type")
+    tags = {str(tag) for tag in getattr(item, "tags")}
+    description = str(getattr(item, "description", "")).lower()
+    errors: list[str] = []
+
+    provider_tags = sorted(tag for tag in tags if tag.startswith(PROVIDER_TAG_PREFIX))
+    if provider_tags and BOUNDARY_TAG not in tags:
+        errors.append(
+            f"{node_type}: provider tags {provider_tags} require the `{BOUNDARY_TAG}` tag"
+        )
+
+    if BOUNDARY_TAG in tags and CONVENIENCE_TAG in tags:
+        errors.append(
+            f"{node_type}: `{BOUNDARY_TAG}` and `{CONVENIENCE_TAG}` tags must not coexist"
+        )
+
+    if CONVENIENCE_TAG in tags and provider_tags:
+        errors.append(
+            f"{node_type}: convenience nodes must not also declare provider tags {provider_tags}"
+        )
+
+    if CONVENIENCE_TAG in tags and "convenience" not in description and "alias" not in description:
+        errors.append(
+            f"{node_type}: convenience nodes should state that they are convenience aliases in the description"
+        )
+
+    if LEGACY_TAG in tags and "legacy" not in description:
+        errors.append(
+            f"{node_type}: legacy nodes should state that they are legacy in the description"
+        )
+
+    return errors
+
+
+def validate_templates_avoid_convenience_nodes(items: list[object]) -> list[str]:
+    errors: list[str] = []
+    convenience_types = {
+        getattr(item, "type")
+        for item in items
+        if CONVENIENCE_TAG in {str(tag) for tag in getattr(item, "tags")}
+    }
+
+    for template in BUILTIN_WORKFLOW_TEMPLATES:
+        used_convenience_types = sorted(
+            {node.type for node in template.graph.nodes if node.type in convenience_types}
+        )
+        if used_convenience_types:
+            errors.append(
+                f"template `{template.id}` uses convenience nodes {used_convenience_types}; "
+                "prefer primitive nodes in built-in templates"
+            )
+
+    return errors
+
+
 def validate_mock_parity(items: list[object], mock_catalog: dict[str, MockNodeMetadata]) -> list[str]:
     errors: list[str] = []
     backend_types = {getattr(item, "type") for item in items}
@@ -382,7 +444,9 @@ def collect_validation_errors() -> list[str]:
             errors.append(f"duplicate backend catalog node type `{item.type}`")
         seen_node_types.add(item.type)
         errors.extend(validate_catalog_item(item))
+        errors.extend(validate_node_tag_taxonomy(item))
 
+    errors.extend(validate_templates_avoid_convenience_nodes(BUILTIN_NODE_CATALOG))
     errors.extend(validate_mock_parity(BUILTIN_NODE_CATALOG, mock_catalog))
     return errors
 

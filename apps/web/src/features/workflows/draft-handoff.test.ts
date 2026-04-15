@@ -100,14 +100,12 @@ const definitions: WorkflowNodeCatalogItem[] = [
       {
         inputKind: 'spatial_roi',
         paramKey: 'roiId',
-        presetParams: { roiMode: 'saved_roi' },
         autoCreate: true,
         priority: 100,
       },
       {
         inputKind: 'gee_credential',
         paramKey: 'personalCredentialId',
-        presetParams: { credentialMode: 'personal' },
         autoCreate: true,
         priority: 90,
       },
@@ -162,7 +160,7 @@ describe('draft handoff helpers', () => {
     expect(result.workflowVersion.graph.nodes[0]?.params.datasetVersionId).toBe('dataset-version-1');
   });
 
-  it('reuses the first existing dataset-compatible node before creating a new one', () => {
+  it('reuses the only existing dataset-compatible node before creating a new one', () => {
     const workflowVersion: WorkflowVersionDetail = {
       ...baseWorkflowVersion,
       graph: {
@@ -190,6 +188,121 @@ describe('draft handoff helpers', () => {
     expect(result.applied).toBe(true);
     expect(result.createdStarter).toBe(false);
     expect(result.workflowVersion.graph.nodes[0]?.params.datasetVersionId).toBe('dataset-version-2');
+  });
+
+  it('rejects an ambiguous dataset handoff when multiple compatible nodes already exist', () => {
+    const workflowVersion: WorkflowVersionDetail = {
+      ...baseWorkflowVersion,
+      graph: {
+        nodes: [
+          {
+            id: 'dataset-source-a',
+            type: 'source.dataset_version',
+            position: { x: 20, y: 40 },
+            params: { datasetVersionId: 'old-version-a' },
+            inputBindings: {},
+            outputDefs: definitions[0]!.outputs,
+          },
+          {
+            id: 'dataset-source-b',
+            type: 'source.dataset_version',
+            position: { x: 20, y: 180 },
+            params: { datasetVersionId: 'old-version-b' },
+            inputBindings: {},
+            outputDefs: definitions[0]!.outputs,
+          },
+        ],
+        edges: [],
+      },
+    };
+
+    const result = attachDatasetVersionToWorkflow(
+      workflowVersion,
+      'dataset-version-2',
+      definitions,
+      editorContext,
+    );
+
+    expect(result.applied).toBe(false);
+    expect(result.createdStarter).toBe(false);
+    expect(result.failureReason).toBe('ambiguous_existing_target');
+    expect(result.matchedNodeIds).toEqual(['dataset-source-a', 'dataset-source-b']);
+    expect(result.workflowVersion.graph.nodes[0]?.params.datasetVersionId).toBe('old-version-a');
+    expect(result.workflowVersion.graph.nodes[1]?.params.datasetVersionId).toBe('old-version-b');
+  });
+
+  it('binds to an explicit target node id even when multiple compatible dataset nodes exist', () => {
+    const workflowVersion: WorkflowVersionDetail = {
+      ...baseWorkflowVersion,
+      graph: {
+        nodes: [
+          {
+            id: 'dataset-source-a',
+            type: 'source.dataset_version',
+            position: { x: 20, y: 40 },
+            params: { datasetVersionId: 'old-version-a' },
+            inputBindings: {},
+            outputDefs: definitions[0]!.outputs,
+          },
+          {
+            id: 'dataset-source-b',
+            type: 'source.dataset_version',
+            position: { x: 20, y: 180 },
+            params: { datasetVersionId: 'old-version-b' },
+            inputBindings: {},
+            outputDefs: definitions[0]!.outputs,
+          },
+        ],
+        edges: [],
+      },
+    };
+
+    const result = attachDatasetVersionToWorkflow(
+      workflowVersion,
+      'dataset-version-2',
+      definitions,
+      editorContext,
+      { targetNodeId: 'dataset-source-b' },
+    );
+
+    expect(result.applied).toBe(true);
+    expect(result.createdStarter).toBe(false);
+    expect(result.matchedNodeIds).toEqual(['dataset-source-b']);
+    expect(result.workflowVersion.graph.nodes[0]?.params.datasetVersionId).toBe('old-version-a');
+    expect(result.workflowVersion.graph.nodes[1]?.params.datasetVersionId).toBe('dataset-version-2');
+  });
+
+  it('does not auto-create another node when an explicit target node id is incompatible', () => {
+    const workflowVersion: WorkflowVersionDetail = {
+      ...baseWorkflowVersion,
+      graph: {
+        nodes: [
+          {
+            id: 'predict-node',
+            type: 'tabular.linear_regression_predict',
+            position: { x: 20, y: 40 },
+            params: { modelVersionId: 'old-model' },
+            inputBindings: {},
+            outputDefs: definitions[3]!.outputs,
+          },
+        ],
+        edges: [],
+      },
+    };
+
+    const result = attachDatasetVersionToWorkflow(
+      workflowVersion,
+      'dataset-version-2',
+      definitions,
+      editorContext,
+      { targetNodeId: 'predict-node' },
+    );
+
+    expect(result.applied).toBe(false);
+    expect(result.createdStarter).toBe(false);
+    expect(result.failureReason).toBe('no_compatible_target');
+    expect(result.workflowVersion.graph.nodes).toHaveLength(1);
+    expect(result.workflowVersion.graph.nodes[0]?.type).toBe('tabular.linear_regression_predict');
   });
 
   it('appends a Sentinel source node when the draft has no saved ROI node', () => {

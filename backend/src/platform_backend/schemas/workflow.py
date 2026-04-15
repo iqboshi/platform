@@ -7,7 +7,14 @@ from pydantic import AliasChoices, BaseModel, Field
 
 from platform_backend.domain_enums import WorkflowRunStatus
 
-WorkflowNodeCategory = Literal["source", "preprocess", "split", "inference", "postprocess"]
+WorkflowNodeCategory = Literal[
+    "source",
+    "preprocess",
+    "split",
+    "inference",
+    "postprocess",
+    "control",
+]
 WorkflowRuntimeKind = Literal["source", "transform", "inference", "export"]
 WorkflowPortDataType = Literal[
     "dataset_version",
@@ -15,8 +22,20 @@ WorkflowPortDataType = Literal[
     "raster",
     "vector",
     "roi",
+    "geo_raster",
+    "image_collection",
+    "feature_collection",
+    "mask_raster",
+    "mask_collection",
+    "scene_collection",
+    "scene",
     "tile_set",
     "label_set",
+    "annotation_set",
+    "prediction_set",
+    "sample_set",
+    "value",
+    "value_list",
     "model_version",
     "model_ref",
     "metrics_report",
@@ -24,6 +43,10 @@ WorkflowPortDataType = Literal[
     "prediction_vector",
     "artifact",
 ]
+WorkflowSemanticTaskType = str
+WorkflowAnnotationKind = str
+WorkflowSampleKind = str
+WorkflowValueType = str
 WorkflowStarterInputKind = Literal[
     "dataset_version",
     "spatial_roi",
@@ -48,7 +71,10 @@ WorkflowParamFieldType = Literal[
     "multiselect",
     "datasetVersion",
     "modelVersion",
+    "spatialRoi",
+    "geeCredential",
 ]
+WorkflowIssueSeverity = Literal["error", "warning"]
 
 
 class WorkflowNodePort(BaseModel):
@@ -105,6 +131,22 @@ class WorkflowPortContract(BaseModel):
     produced_columns: list[str] = Field(
         default_factory=list,
         validation_alias=AliasChoices("produced_columns", "producedColumns"),
+    )
+    task_types: list[WorkflowSemanticTaskType] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("task_types", "taskTypes"),
+    )
+    annotation_kinds: list[WorkflowAnnotationKind] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("annotation_kinds", "annotationKinds"),
+    )
+    sample_kinds: list[WorkflowSampleKind] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("sample_kinds", "sampleKinds"),
+    )
+    value_types: list[WorkflowValueType] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("value_types", "valueTypes"),
     )
     notes: list[str] = Field(default_factory=list)
 
@@ -174,10 +216,23 @@ class WorkflowNode(BaseModel):
         default_factory=dict,
         validation_alias=AliasChoices("input_bindings", "inputBindings"),
     )
+    input_defs: list[WorkflowNodePort] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("input_defs", "inputDefs"),
+    )
+    input_contracts: list[WorkflowPortContract] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("input_contracts", "inputContracts"),
+    )
     output_defs: list[WorkflowNodePort] = Field(
         default_factory=list,
         validation_alias=AliasChoices("output_defs", "outputDefs"),
     )
+    output_contracts: list[WorkflowPortContract] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("output_contracts", "outputContracts"),
+    )
+    subgraph: WorkflowGraph | None = None
 
 
 class WorkflowEdge(BaseModel):
@@ -197,6 +252,9 @@ class WorkflowEdge(BaseModel):
 class WorkflowGraph(BaseModel):
     nodes: list[WorkflowNode]
     edges: list[WorkflowEdge]
+
+
+WorkflowNode.model_rebuild()
 
 
 class WorkflowCatalogItem(BaseModel):
@@ -256,10 +314,32 @@ class WorkflowVersionUpdateRequest(BaseModel):
     visibility: str | None = None
 
 
+class WorkflowValidationIssue(BaseModel):
+    code: str
+    severity: WorkflowIssueSeverity = "error"
+    message: str
+    node_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("node_id", "nodeId"),
+    )
+    port_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("port_key", "portKey"),
+    )
+    param_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("param_key", "paramKey"),
+    )
+    expected: str | None = None
+    actual: str | None = None
+    suggestion: str | None = None
+
+
 class WorkflowValidationResult(BaseModel):
     valid: bool
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    issues: list[WorkflowValidationIssue] = Field(default_factory=list)
 
 
 class WorkflowRunRequest(BaseModel):

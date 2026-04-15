@@ -1,12 +1,14 @@
 ---
 source_of_truth: manual
-last_verified_at: 2026-04-12
+last_verified_at: 2026-04-16
 owned_by: platform-team
 derived_from:
   - docs/api/README.md
   - docs/architecture/overview.md
   - docs/architecture/documentation-governance.md
+  - docs/architecture/custom-api-node-contract.md
   - docs/generated/README.md
+  - docs/releases/v6.md
   - apps/web/src/config/workspace-modules.json
 ---
 
@@ -22,6 +24,8 @@ derived_from:
 - `docs/generated/module-catalog.md` is exported from `apps/web/src/config/workspace-modules.json`.
 - The workspace module registry now drives navigation, overview cards, and generated module documentation together.
 - `docs/architecture/workflow-node-extension-standard.md` defines the mandatory contract for adding workflow nodes, starter handoffs, preview reuse, and cross-page output actions.
+- `docs/architecture/custom-api-node-contract.md` defines the shared versioned HTTP envelope for `provider_http_api` workflow nodes.
+- `docs/releases/v6.md` is the current release snapshot for the upcoming GitHub push target.
 
 ## Commands
 
@@ -38,3 +42,4 @@ npm run docs:validate
 - Architecture documents should describe stable boundaries, ownership, and flow constraints.
 - Every Markdown document in `docs/` must declare metadata and a source of truth.
 - Workflow node additions must follow `docs/architecture/workflow-node-extension-standard.md`; do not add node-specific page exceptions without updating the shared contract.
+- Before any GitHub push or release tag, verify that manual docs still match the current implementation and update stale docs first.

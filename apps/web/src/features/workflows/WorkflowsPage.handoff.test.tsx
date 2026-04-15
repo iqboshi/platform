@@ -154,10 +154,17 @@ describe('WorkflowsPage handoff', () => {
     const snapshot: PlatformDataSnapshot = {
       ...platformMock,
       source: 'mock',
+      workflowVersion: {
+        ...platformMock.workflowVersion,
+        graph: {
+          nodes: [],
+          edges: [],
+        },
+      },
     };
     const initialPath = createHandoffPath(
       '/workflows',
-      createWorkflowDatasetHandoff('dsv-tabular-prediction-v1', {
+      createWorkflowDatasetHandoff('dsv-tabular-input-v1', {
         source: 'my_assets',
       }),
     );
@@ -169,9 +176,191 @@ describe('WorkflowsPage handoff', () => {
         (node) => node.type === 'source.dataset_version',
       );
 
-      expect(datasetNode?.params.datasetVersionId).toBe('dsv-tabular-prediction-v1');
+      expect(datasetNode?.params.datasetVersionId).toBe('dsv-tabular-input-v1');
       expect(container.querySelector('[data-testid="location-search"]')?.textContent).toBe('');
       expect(renderedWorkflowVersions.length).toBeLessThan(10);
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('refuses an ambiguous dataset handoff when multiple dataset starters already exist', async () => {
+    const datasetOutputs =
+      platformMock.workflowCatalog.find((node) => node.type === 'source.dataset_version')?.outputs ?? [];
+    const snapshot: PlatformDataSnapshot = {
+      ...platformMock,
+      source: 'mock',
+      workflowVersion: {
+        ...platformMock.workflowVersion,
+        graph: {
+          nodes: [
+            {
+              id: 'dataset-source-a',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 140 },
+              params: { datasetVersionId: 'dsv-rgb-geo-raster-v1' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+            {
+              id: 'dataset-source-b',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 320 },
+              params: { datasetVersionId: 'dsv-tabular-input-v1' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+          ],
+          edges: [],
+        },
+      },
+    };
+    const initialPath = createHandoffPath(
+      '/workflows',
+      createWorkflowDatasetHandoff('dsv-rgb-vector-labels-v1', {
+        source: 'my_assets',
+      }),
+    );
+    const { container, root } = await renderWorkflowsRoute(snapshot, initialPath);
+
+    try {
+      const latestWorkflow = renderedWorkflowVersions.at(-1);
+      const datasetNodes = latestWorkflow?.graph.nodes.filter(
+        (node) => node.type === 'source.dataset_version',
+      );
+
+      expect(datasetNodes).toHaveLength(2);
+      expect(datasetNodes?.[0]?.params.datasetVersionId).toBe('dsv-rgb-geo-raster-v1');
+      expect(datasetNodes?.[1]?.params.datasetVersionId).toBe('dsv-tabular-input-v1');
+      expect(container.textContent).toContain('multiple compatible dataset starters');
+      expect(container.querySelector('[data-testid="location-search"]')?.textContent).toBe('');
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('offers a target chooser modal for ambiguous dataset handoffs and applies the selected node', async () => {
+    const datasetOutputs =
+      platformMock.workflowCatalog.find((node) => node.type === 'source.dataset_version')?.outputs ?? [];
+    const snapshot: PlatformDataSnapshot = {
+      ...platformMock,
+      source: 'mock',
+      workflowVersion: {
+        ...platformMock.workflowVersion,
+        graph: {
+          nodes: [
+            {
+              id: 'dataset-source-a',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 140 },
+              params: { datasetVersionId: 'dsv-rgb-geo-raster-v1' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+            {
+              id: 'dataset-source-b',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 320 },
+              params: { datasetVersionId: 'dsv-tabular-input-v1' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+          ],
+          edges: [],
+        },
+      },
+    };
+    const initialPath = createHandoffPath(
+      '/workflows',
+      createWorkflowDatasetHandoff('dsv-rgb-vector-labels-v1', {
+        source: 'my_assets',
+      }),
+    );
+    const { container, root } = await renderWorkflowsRoute(snapshot, initialPath);
+
+    try {
+      const chooseButton = document.querySelector(
+        '[data-testid="starter-target-dataset-source-b"]',
+      ) as HTMLButtonElement | null;
+
+      expect(chooseButton).not.toBeNull();
+      await act(async () => {
+        chooseButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await flushEffects();
+
+      const latestWorkflow = renderedWorkflowVersions.at(-1);
+      const datasetNodes = latestWorkflow?.graph.nodes.filter(
+        (node) => node.type === 'source.dataset_version',
+      );
+
+      expect(datasetNodes?.[0]?.params.datasetVersionId).toBe('dsv-rgb-geo-raster-v1');
+      expect(datasetNodes?.[1]?.params.datasetVersionId).toBe('dsv-rgb-vector-labels-v1');
+      expect(container.textContent).toContain('bound to the selected starter node');
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('binds a dataset handoff to the explicit target node id when provided', async () => {
+    const datasetOutputs =
+      platformMock.workflowCatalog.find((node) => node.type === 'source.dataset_version')?.outputs ?? [];
+    const snapshot: PlatformDataSnapshot = {
+      ...platformMock,
+      source: 'mock',
+      workflowVersion: {
+        ...platformMock.workflowVersion,
+        graph: {
+          nodes: [
+            {
+              id: 'dataset-source-a',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 140 },
+              params: { datasetVersionId: 'dsv-rgb-geo-raster-v1' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+            {
+              id: 'dataset-source-b',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 320 },
+              params: { datasetVersionId: 'dsv-tabular-input-v1' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+          ],
+          edges: [],
+        },
+      },
+    };
+    const initialPath = createHandoffPath(
+      '/workflows',
+      createWorkflowDatasetHandoff('dsv-rgb-vector-labels-v1', {
+        source: 'my_assets',
+        targetNodeId: 'dataset-source-b',
+      }),
+    );
+    const { container, root } = await renderWorkflowsRoute(snapshot, initialPath);
+
+    try {
+      const latestWorkflow = renderedWorkflowVersions.at(-1);
+      const datasetNodes = latestWorkflow?.graph.nodes.filter(
+        (node) => node.type === 'source.dataset_version',
+      );
+
+      expect(datasetNodes).toHaveLength(2);
+      expect(datasetNodes?.[0]?.params.datasetVersionId).toBe('dsv-rgb-geo-raster-v1');
+      expect(datasetNodes?.[1]?.params.datasetVersionId).toBe('dsv-rgb-vector-labels-v1');
+      expect(container.querySelector('[data-testid="location-search"]')?.textContent).toBe('');
     } finally {
       await act(async () => {
         root.unmount();
@@ -214,7 +403,9 @@ describe('WorkflowsPage handoff', () => {
     }
   });
 
-  it('auto-creates a Sentinel starter node for workflow gee handoffs', async () => {
+  it('reuses an existing Sentinel starter node for workflow gee handoffs', async () => {
+    const sentinelOutputs =
+      platformMock.workflowCatalog.find((node) => node.type === 'source.sentinel2_gee_download')?.outputs ?? [];
     const snapshot: PlatformDataSnapshot = {
       ...platformMock,
       source: 'mock',
@@ -231,6 +422,25 @@ describe('WorkflowsPage handoff', () => {
           createdAt: '2026-04-12T00:00:00Z',
         },
       ],
+      workflowVersion: {
+        ...platformMock.workflowVersion,
+        graph: {
+          nodes: [
+            {
+              id: 'sentinel-source',
+              type: 'source.sentinel2_gee_download',
+              position: { x: 120, y: 160 },
+              params: {
+                roiMode: 'bbox',
+                credentialMode: 'platform_default',
+              },
+              inputBindings: {},
+              outputDefs: sentinelOutputs,
+            },
+          ],
+          edges: [],
+        },
+      },
     };
     const initialPath = createHandoffPath(
       '/workflows',
@@ -249,6 +459,47 @@ describe('WorkflowsPage handoff', () => {
       expect(sentinelNode?.params.credentialMode).toBe('personal');
       expect(sentinelNode?.params.personalCredentialId).toBe('gee-personal-1');
       expect(container.querySelector('[data-testid="location-search"]')?.textContent).toBe('');
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('disables running when the current workflow graph has semantic errors', async () => {
+    const datasetOutputs =
+      platformMock.workflowCatalog.find((node) => node.type === 'source.dataset_version')?.outputs ?? [];
+    const snapshot: PlatformDataSnapshot = {
+      ...platformMock,
+      source: 'mock',
+      workflowVersion: {
+        ...platformMock.workflowVersion,
+        graph: {
+          nodes: [
+            {
+              id: 'broken-dataset-source',
+              type: 'source.dataset_version',
+              position: { x: 120, y: 160 },
+              params: { datasetVersionId: '' },
+              inputBindings: {},
+              outputDefs: datasetOutputs,
+            },
+          ],
+          edges: [],
+        },
+      },
+    };
+    const { container, root } = await renderWorkflowsRoute(snapshot, '/workflows');
+
+    try {
+      const actionButtons = Array.from(
+        container.querySelectorAll('.workflow-action-bar button'),
+      ) as HTMLButtonElement[];
+      const runButton = actionButtons.at(-1);
+
+      expect(runButton).toBeDefined();
+      expect(runButton?.disabled).toBe(true);
     } finally {
       await act(async () => {
         root.unmount();

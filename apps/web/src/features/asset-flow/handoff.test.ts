@@ -17,6 +17,7 @@ describe('asset handoff helpers', () => {
     const payload = createWorkflowDatasetHandoff('dataset-version-1', {
       label: 'Sentinel Output',
       source: 'my_assets',
+      targetNodeId: 'dataset-source-1',
     });
 
     const path = createHandoffPath('/workflows', payload);
@@ -60,6 +61,15 @@ describe('asset handoff helpers', () => {
   it('supports gee credential payloads', () => {
     const payload = createWorkflowGeeCredentialHandoff('gee-credential-1', {
       source: 'my_assets',
+    });
+
+    expect(decodeAssetHandoff(JSON.stringify(payload))).toEqual(payload);
+  });
+
+  it('keeps explicit workflow target node ids when decoding workflow payloads', () => {
+    const payload = createWorkflowModelHandoff('model-version-2', {
+      source: 'workflow_node_test',
+      targetNodeId: 'model-source-primary',
     });
 
     expect(decodeAssetHandoff(JSON.stringify(payload))).toEqual(payload);

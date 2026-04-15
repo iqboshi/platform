@@ -8,9 +8,9 @@ describe('buildWorkflowStats', () => {
   it('summarizes workflow structure from the current graph', () => {
     const stats = buildWorkflowStats(platformMock.workflowCatalog, platformMock.workflowVersion);
     expect(stats).toEqual({
-      nodeCount: 4,
-      edgeCount: 3,
-      categoryCount: 3,
+      nodeCount: 11,
+      edgeCount: 13,
+      categoryCount: 4,
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   Button,
   Card,
   Descriptions,
+  Drawer,
   Empty,
   Form,
   Input,
@@ -45,7 +46,6 @@ import {
   readStoredMapBaseLayer,
   type MapBaseLayerKey,
 } from '@/components/map-base-layers';
-import { StatCard } from '@/components/StatCard';
 import { useI18n } from '@/i18n/useI18n';
 import {
   createSpatialOverlay,
@@ -61,6 +61,10 @@ import { isApiError } from '@/auth/errors';
 import { datasetKindKey } from '@/lib/i18n-helpers';
 
 const { Paragraph } = Typography;
+
+type SpatialWorkbenchMode = 'editors' | 'assets' | 'coordinates';
+type SpatialEditorPane = 'roi' | 'overlay';
+type SpatialAssetPane = 'roi' | 'overlay';
 
 interface RoiFormValues {
   name: string;
@@ -210,6 +214,10 @@ export function SpatialStudioPage({
   const [overlayOpacities, setOverlayOpacities] = useState<Record<string, number>>({});
   const [coordinateInput, setCoordinateInput] = useState('');
   const [coordinateNameInput, setCoordinateNameInput] = useState('');
+  const [workbenchMode, setWorkbenchMode] = useState<SpatialWorkbenchMode>('editors');
+  const [editorPane, setEditorPane] = useState<SpatialEditorPane>('roi');
+  const [assetPane, setAssetPane] = useState<SpatialAssetPane>('roi');
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [showSavedCoordinateLabels, setShowSavedCoordinateLabels] = useState(false);
   const [focusRequest, setFocusRequest] = useState<SpatialMapFocusRequest>();
   const [savedCoordinates, setSavedCoordinates] = useState<SavedCoordinatePoint[]>([]);
@@ -328,6 +336,41 @@ export function SpatialStudioPage({
           },
     [locale],
   );
+  const workbenchCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            title: '空间工作台',
+            description: '把编辑器、资产列表和坐标工具收拢到地图下方，地图保持主视图，不再被两侧面板挤压。',
+            editors: '编辑',
+            assets: '资产',
+            coordinates: '坐标',
+          }
+        : {
+            title: 'Spatial Workbench',
+            description:
+              'Keep the map as the main stage and switch editors, asset lists, and coordinate tools below it on demand.',
+            editors: 'Editors',
+            assets: 'Assets',
+            coordinates: 'Coordinates',
+          },
+    [locale],
+  );
+  const openWorkbenchLabel = locale === 'zh-CN' ? '打开工作台' : 'Open Workbench';
+  const editorPaneOptions = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? [
+            { label: 'ROI', value: 'roi' },
+            { label: '图层', value: 'overlay' },
+          ]
+        : [
+            { label: 'ROI', value: 'roi' },
+            { label: 'Overlay', value: 'overlay' },
+          ],
+    [locale],
+  );
+  const assetPaneOptions = editorPaneOptions;
 
   const isAdmin = currentUser?.role === 'ADMIN';
   const scope: AssetScope = isAdmin ? 'all' : 'mine';
@@ -567,6 +610,9 @@ export function SpatialStudioPage({
       return;
     }
 
+    setWorkbenchMode('editors');
+    setEditorPane('overlay');
+    setWorkbenchOpen(true);
     setSelectedOverlayId(undefined);
     setPreviewOverlayCandidateId(linkedCandidate.id);
     overlayForm.setFieldsValue({
@@ -675,7 +721,17 @@ export function SpatialStudioPage({
     window.localStorage.setItem(coordinateStorageKeys.history, JSON.stringify(coordinateHistory));
   }, [coordinateHistory, coordinateStorageKeys.history, hydratedStorageKeys?.history]);
 
+  const stopRoiDrawing = () => {
+    setDrawMode(null);
+    setWorkbenchMode('editors');
+    setEditorPane('roi');
+    setWorkbenchOpen(true);
+  };
+
   const startNewRoi = (nextDrawMode: 'rectangle' | 'polygon' | null = null) => {
+    setWorkbenchMode('editors');
+    setEditorPane('roi');
+    setWorkbenchOpen(nextDrawMode ? false : true);
     setSelectedRoiId(undefined);
     setGeometryEditEnabled(false);
     setDraftGeometry(undefined);
@@ -684,6 +740,9 @@ export function SpatialStudioPage({
   };
 
   const startNewOverlay = () => {
+    setWorkbenchMode('editors');
+    setEditorPane('overlay');
+    setWorkbenchOpen(true);
     setSelectedOverlayId(undefined);
     setPreviewOverlayCandidateId(undefined);
     overlayForm.setFieldsValue({
@@ -705,6 +764,9 @@ export function SpatialStudioPage({
       return;
     }
 
+    setWorkbenchMode('editors');
+    setEditorPane('overlay');
+    setWorkbenchOpen(true);
     setSelectedOverlayId(undefined);
     setPreviewOverlayCandidateId(candidate.id);
     if (candidate.assetVersion.spatialTraits?.bbox) {
@@ -950,6 +1012,354 @@ export function SpatialStudioPage({
     message.success(coordinateClearedMessage);
   };
 
+  const roiEditorPanel = (
+    <Card className="panel-card spatial-panel-card" variant="borderless">
+      <div className="panel-kicker">{copy.roiEditor}</div>
+      <Paragraph className="section-copy">{copy.roiEditorCopy}</Paragraph>
+      <Space wrap>
+        <Button onClick={() => startNewRoi()}>{copy.newRoi}</Button>
+        <Button
+          type={drawMode === 'rectangle' ? 'primary' : 'default'}
+          onClick={() => startNewRoi('rectangle')}
+        >
+          {copy.drawRectangle}
+        </Button>
+        <Button
+          type={drawMode === 'polygon' ? 'primary' : 'default'}
+          onClick={() => startNewRoi('polygon')}
+        >
+          {copy.drawPolygon}
+        </Button>
+        {drawMode ? <Button onClick={stopRoiDrawing}>{copy.stopDrawing}</Button> : null}
+      </Space>
+      <div className="spatial-mode-bar">
+        {drawMode === 'rectangle' ? <Tag color="blue">{copy.drawHintRectangle}</Tag> : null}
+        {drawMode === 'polygon' ? <Tag color="gold">{copy.drawHintPolygon}</Tag> : null}
+        {selectedRoi ? (
+          <Switch
+            checked={geometryEditEnabled}
+            onChange={setGeometryEditEnabled}
+            checkedChildren={copy.editGeometry}
+            unCheckedChildren={copy.editGeometry}
+          />
+        ) : null}
+      </div>
+      <Form form={roiForm} layout="vertical" initialValues={{ name: '', description: '', tagsText: '' }}>
+        <Form.Item name="name" label={copy.name} rules={[{ required: true }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item name="description" label={copy.description}>
+          <Input.TextArea rows={3} />
+        </Form.Item>
+        <Form.Item name="tagsText" label={copy.tags}>
+          <Input placeholder={copy.tagsPlaceholder} />
+        </Form.Item>
+      </Form>
+      <Descriptions
+        size="small"
+        column={1}
+        items={[
+          {
+            key: 'bbox',
+            label: copy.bbox,
+            children: bboxText(draftGeometry?.bbox ?? selectedRoi?.bbox),
+          },
+          {
+            key: 'selected',
+            label: copy.selectedRoi,
+            children: selectedRoi?.name ?? '-',
+          },
+        ]}
+      />
+      <Space wrap>
+        <Button type="primary" loading={savingRoi} onClick={() => void handleSaveRoi()}>
+          {selectedRoiId ? copy.update : copy.create}
+        </Button>
+        {selectedRoiId ? (
+          <Button onClick={openSelectedRoiInWorkflow}>{useRoiInWorkflowText}</Button>
+        ) : null}
+        {selectedRoiId ? (
+          <Button danger onClick={handleDeleteSelectedRoi}>
+            {copy.delete}
+          </Button>
+        ) : null}
+      </Space>
+    </Card>
+  );
+
+  const overlayEditorPanel = (
+    <Card className="panel-card spatial-panel-card" variant="borderless">
+      <div className="panel-kicker">{copy.overlayEditor}</div>
+      <Paragraph className="section-copy">{copy.overlayEditorCopy}</Paragraph>
+      <Space wrap>
+        <Button onClick={startNewOverlay}>{copy.newOverlay}</Button>
+        <Button onClick={handlePreviewOverlay} disabled={!watchedOverlayDatasetVersionId}>
+          {previewOverlayButtonText}
+        </Button>
+      </Space>
+      {previewOverlay ? <Paragraph className="section-copy">{previewOverlayHint}</Paragraph> : null}
+      <Form
+        form={overlayForm}
+        layout="vertical"
+        initialValues={{
+          datasetVersionId: overlayOptions[0]?.value ?? '',
+          name: '',
+          description: '',
+          opacity: 0.85,
+        }}
+      >
+        <Form.Item name="datasetVersionId" label={copy.overlayDataset} rules={[{ required: true }]}>
+          <Select showSearch disabled={Boolean(selectedOverlayId)} options={overlayOptions} />
+        </Form.Item>
+        <Form.Item name="name" label={copy.name} rules={[{ required: true }]}>
+          <Input />
+        </Form.Item>
+        <Form.Item name="description" label={copy.description}>
+          <Input.TextArea rows={3} />
+        </Form.Item>
+        <Form.Item name="opacity" label={copy.opacity} rules={[{ required: true }]}>
+          <InputNumber min={0.05} max={1} step={0.05} style={{ width: '100%' }} />
+        </Form.Item>
+      </Form>
+      <Space wrap>
+        <Button type="primary" loading={savingOverlay} onClick={() => void handleSaveOverlay()}>
+          {selectedOverlayId ? copy.update : copy.create}
+        </Button>
+        {selectedOverlayId ? (
+          <Button danger onClick={handleDeleteSelectedOverlay}>
+            {copy.delete}
+          </Button>
+        ) : null}
+      </Space>
+    </Card>
+  );
+
+  const roiAssetsPanel = (
+    <Card className="panel-card spatial-panel-card" variant="borderless">
+      <div className="panel-kicker">{copy.roiAssets}</div>
+      <div className="spatial-asset-list">
+        {rois.length ? (
+          rois.map((roi) => (
+            <button
+              key={roi.id}
+              type="button"
+              className={`spatial-asset-item${roi.id === selectedRoiId ? ' is-selected' : ''}`}
+              onClick={() => {
+                setSelectedRoiId(roi.id);
+                setGeometryEditEnabled(false);
+                setDrawMode(null);
+                setDraftGeometry(undefined);
+              }}
+            >
+              <div className="spatial-asset-item-head">
+                <strong>{roi.name}</strong>
+                <Tag>{roi.geometryType}</Tag>
+              </div>
+              {roi.description ? <div className="spatial-asset-item-copy">{roi.description}</div> : null}
+              <div className="spatial-asset-item-meta">
+                <span>{copy.owner}: {roi.ownerDisplayName ?? '-'}</span>
+              </div>
+              <div className="spatial-asset-item-meta">
+                <span>{copy.bbox}: {bboxText(roi.bbox)}</span>
+              </div>
+              {(roi.tags ?? []).length ? (
+                <Space wrap>
+                  {(roi.tags ?? []).map((tag) => (
+                    <Tag key={tag}>{tag}</Tag>
+                  ))}
+                </Space>
+              ) : null}
+            </button>
+          ))
+        ) : (
+          <Empty description={copy.noRoi} />
+        )}
+      </div>
+    </Card>
+  );
+
+  const overlayAssetsPanel = (
+    <Card className="panel-card spatial-panel-card" variant="borderless">
+      <div className="panel-kicker">{copy.overlayAssets}</div>
+      <div className="spatial-asset-list">
+        {overlays.length ? (
+          overlays.map((overlay) => (
+            <div
+              key={overlay.id}
+              className={`spatial-asset-item${overlay.id === selectedOverlayId ? ' is-selected' : ''}`}
+            >
+              <button
+                type="button"
+                className="spatial-asset-item-button"
+                onClick={() => setSelectedOverlayId(overlay.id)}
+              >
+                <div className="spatial-asset-item-head">
+                  <strong>{overlay.name}</strong>
+                  <Tag>{overlay.overlayType}</Tag>
+                </div>
+                {overlay.description ? (
+                  <div className="spatial-asset-item-copy">{overlay.description}</div>
+                ) : null}
+                <div className="spatial-asset-item-meta">
+                  <span>{overlay.datasetName} / v{overlay.datasetVersionNumber}</span>
+                  <span>{t(datasetKindKey(overlay.datasetKind))}</span>
+                </div>
+              </button>
+              <div className="spatial-overlay-controls">
+                <div className="spatial-overlay-switch">
+                  <span>{copy.visible}</span>
+                  <Switch
+                    checked={selectedOverlayIds.includes(overlay.id)}
+                    onChange={(checked) => {
+                      if (checked && overlay.bbox && overlay.bbox.length === 4) {
+                        setFocusRequest({
+                          requestId: Date.now(),
+                          bbox: overlay.bbox,
+                          zoom: 13,
+                        });
+                      }
+                      setSelectedOverlayIds((current) =>
+                        checked
+                          ? Array.from(new Set([...current, overlay.id]))
+                          : current.filter((id) => id !== overlay.id),
+                      );
+                    }}
+                  />
+                </div>
+                <div className="spatial-overlay-opacity">
+                  <span>{copy.opacity}</span>
+                  <InputNumber
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={overlayOpacities[overlay.id] ?? overlay.opacity}
+                    onChange={(value) =>
+                      setOverlayOpacities((current) => ({
+                        ...current,
+                        [overlay.id]: typeof value === 'number' ? value : overlay.opacity,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          ))
+        ) : (
+          <Empty description={copy.noOverlay} />
+        )}
+      </div>
+    </Card>
+  );
+
+  const coordinateToolsPanel = (
+    <Card className="panel-card spatial-panel-card" variant="borderless">
+      <div className="panel-kicker">{coordinateToolsTitle}</div>
+      <div className="spatial-coordinate-bookmark-toolbar">
+        <Space.Compact block className="spatial-coordinate-name-compact">
+          <div className="spatial-coordinate-name-prefix">{coordinateNameLabel}</div>
+          <Input
+            value={coordinateNameInput}
+            placeholder={coordinateNamePlaceholder}
+            onChange={(event) => setCoordinateNameInput(event.target.value)}
+          />
+        </Space.Compact>
+        <Space wrap>
+          <Button type="primary" onClick={handleSaveCoordinatePoint}>
+            {coordinateSaveButtonText}
+          </Button>
+          <Button onClick={handleClearSavedPoints}>{coordinateClearSavedText}</Button>
+          <Button onClick={handleClearCoordinateHistory}>{coordinateClearHistoryText}</Button>
+        </Space>
+      </div>
+
+      <div className="spatial-coordinate-group">
+        <div className="panel-kicker">{coordinateSavedListTitle}</div>
+        <div className="spatial-asset-list">
+          {savedCoordinates.length ? (
+            savedCoordinates.map((item) => (
+              <div
+                key={item.id}
+                role="button"
+                tabIndex={0}
+                className="spatial-asset-item spatial-saved-point-item"
+                onClick={() => {
+                  jumpToCoordinate(item.longitude, item.latitude);
+                  appendCoordinateHistory(item.longitude, item.latitude);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    jumpToCoordinate(item.longitude, item.latitude);
+                    appendCoordinateHistory(item.longitude, item.latitude);
+                  }
+                }}
+              >
+                <div className="spatial-asset-item-head">
+                  <strong>{item.name}</strong>
+                  <Tag>
+                    {formatCoordinateNumber(item.longitude)}, {formatCoordinateNumber(item.latitude)}
+                  </Tag>
+                </div>
+                <div className="spatial-asset-item-meta">
+                  <span>{new Date(item.createdAt).toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US')}</span>
+                </div>
+                <Space wrap>
+                  <Button
+                    size="small"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      jumpToCoordinate(item.longitude, item.latitude);
+                      appendCoordinateHistory(item.longitude, item.latitude);
+                    }}
+                  >
+                    {coordinateJumpButtonText}
+                  </Button>
+                  <Button
+                    size="small"
+                    danger
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleRemoveSavedPoint(item.id);
+                    }}
+                  >
+                    {copy.delete}
+                  </Button>
+                </Space>
+              </div>
+            ))
+          ) : (
+            <Empty description={coordinateNoSavedText} />
+          )}
+        </div>
+      </div>
+
+      <div className="spatial-coordinate-group">
+        <div className="panel-kicker">{coordinateHistoryTitle}</div>
+        <div className="spatial-asset-list">
+          {coordinateHistory.length ? (
+            coordinateHistory.map((item) => (
+              <div key={item.id} className="spatial-asset-item">
+                <div className="spatial-asset-item-head">
+                  <strong>
+                    {formatCoordinateNumber(item.longitude)}, {formatCoordinateNumber(item.latitude)}
+                  </strong>
+                  <Tag>{new Date(item.createdAt).toLocaleTimeString(locale === 'zh-CN' ? 'zh-CN' : 'en-US')}</Tag>
+                </div>
+                <Space wrap>
+                  <Button size="small" onClick={() => jumpToCoordinate(item.longitude, item.latitude)}>
+                    {coordinateJumpButtonText}
+                  </Button>
+                </Space>
+              </div>
+            ))
+          ) : (
+            <Empty description={coordinateNoHistoryText} />
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+
   return (
     <div className="page-stack">
       <div className="section-header">
@@ -972,150 +1382,38 @@ export function SpatialStudioPage({
         />
       ) : null}
 
-      <div className="spatial-stats-grid">
-        <StatCard label={copy.roiAssets} value={String(rois.length)} detail={copy.mapSelectionHint} />
-        <StatCard
-          label={copy.activeLayers}
-          value={String(mapSelectedOverlayIds.length)}
-          detail={copy.availableOverlaySources}
-        />
-        <StatCard
-          label={copy.availableOverlaySources}
-          value={String(overlayCandidates.length)}
-          detail={loading ? t('common.loading') : snapshot.workspace.name}
-        />
-      </div>
-
       <div className="spatial-studio-grid">
-        <div className="spatial-side-column">
-          <Card className="panel-card spatial-panel-card" variant="borderless">
-            <div className="panel-kicker">{copy.roiEditor}</div>
-            <Paragraph className="section-copy">{copy.roiEditorCopy}</Paragraph>
-            <Space wrap>
-              <Button onClick={() => startNewRoi()}>{copy.newRoi}</Button>
-              <Button type={drawMode === 'rectangle' ? 'primary' : 'default'} onClick={() => startNewRoi('rectangle')}>
-                {copy.drawRectangle}
-              </Button>
-              <Button type={drawMode === 'polygon' ? 'primary' : 'default'} onClick={() => startNewRoi('polygon')}>
-                {copy.drawPolygon}
-              </Button>
-              {drawMode ? <Button onClick={() => setDrawMode(null)}>{copy.stopDrawing}</Button> : null}
-            </Space>
-            <div className="spatial-mode-bar">
-              {drawMode === 'rectangle' ? <Tag color="blue">{copy.drawHintRectangle}</Tag> : null}
-              {drawMode === 'polygon' ? <Tag color="gold">{copy.drawHintPolygon}</Tag> : null}
-              {selectedRoi ? (
-                <Switch
-                  checked={geometryEditEnabled}
-                  onChange={setGeometryEditEnabled}
-                  checkedChildren={copy.editGeometry}
-                  unCheckedChildren={copy.editGeometry}
-                />
-              ) : null}
-            </div>
-            <Form form={roiForm} layout="vertical" initialValues={{ name: '', description: '', tagsText: '' }}>
-              <Form.Item name="name" label={copy.name} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="description" label={copy.description}>
-                <Input.TextArea rows={3} />
-              </Form.Item>
-              <Form.Item name="tagsText" label={copy.tags}>
-                <Input placeholder={copy.tagsPlaceholder} />
-              </Form.Item>
-            </Form>
-            <Descriptions
-              size="small"
-              column={1}
-              items={[
-                {
-                  key: 'bbox',
-                  label: copy.bbox,
-                  children: bboxText(draftGeometry?.bbox ?? selectedRoi?.bbox),
-                },
-                {
-                  key: 'selected',
-                  label: copy.selectedRoi,
-                  children: selectedRoi?.name ?? '-',
-                },
-              ]}
-            />
-            <Space wrap>
-              <Button type="primary" loading={savingRoi} onClick={() => void handleSaveRoi()}>
-                {selectedRoiId ? copy.update : copy.create}
-              </Button>
-              {selectedRoiId ? (
-                <Button onClick={openSelectedRoiInWorkflow}>
-                  {useRoiInWorkflowText}
-                </Button>
-              ) : null}
-              {selectedRoiId ? (
-                <Button danger onClick={handleDeleteSelectedRoi}>
-                  {copy.delete}
-                </Button>
-              ) : null}
-            </Space>
-          </Card>
-
-          <Card className="panel-card spatial-panel-card" variant="borderless">
-            <div className="panel-kicker">{copy.overlayEditor}</div>
-            <Paragraph className="section-copy">{copy.overlayEditorCopy}</Paragraph>
-            <Space wrap>
-              <Button onClick={startNewOverlay}>{copy.newOverlay}</Button>
-              <Button onClick={handlePreviewOverlay} disabled={!watchedOverlayDatasetVersionId}>
-                {previewOverlayButtonText}
-              </Button>
-            </Space>
-            {previewOverlay ? <Paragraph className="section-copy">{previewOverlayHint}</Paragraph> : null}
-            <Form
-              form={overlayForm}
-              layout="vertical"
-              initialValues={{
-                datasetVersionId: overlayOptions[0]?.value ?? '',
-                name: '',
-                description: '',
-                opacity: 0.85,
-              }}
-            >
-              <Form.Item name="datasetVersionId" label={copy.overlayDataset} rules={[{ required: true }]}>
-                <Select
-                  showSearch
-                  disabled={Boolean(selectedOverlayId)}
-                  options={overlayOptions}
-                />
-              </Form.Item>
-              <Form.Item name="name" label={copy.name} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="description" label={copy.description}>
-                <Input.TextArea rows={3} />
-              </Form.Item>
-              <Form.Item name="opacity" label={copy.opacity} rules={[{ required: true }]}>
-                <InputNumber min={0.05} max={1} step={0.05} style={{ width: '100%' }} />
-              </Form.Item>
-            </Form>
-            <Space wrap>
-              <Button type="primary" loading={savingOverlay} onClick={() => void handleSaveOverlay()}>
-                {selectedOverlayId ? copy.update : copy.create}
-              </Button>
-              {selectedOverlayId ? (
-                <Button danger onClick={handleDeleteSelectedOverlay}>
-                  {copy.delete}
-                </Button>
-              ) : null}
-            </Space>
-          </Card>
-        </div>
-
-        <Card className="panel-card spatial-map-panel" variant="borderless">
-          <div className="spatial-map-panel-head">
-            <div>
+        <Card className="panel-card spatial-map-panel spatial-map-stage" variant="borderless">
+          <div className="spatial-map-stage-head">
+            <div className="spatial-map-stage-copy">
               <div className="panel-kicker">{copy.mapTitle}</div>
               <Paragraph className="section-copy">{copy.mapCopy}</Paragraph>
             </div>
-            <Space wrap>
-              <Tag>{copy.selectedRoi}: {selectedRoi?.name ?? '-'}</Tag>
-              <Tag>{copy.activeLayers}: {mapSelectedOverlayIds.length}</Tag>
+            <div className="spatial-summary-strip">
+              <div className="spatial-summary-chip">
+                <span className="spatial-summary-label">{copy.roiAssets}</span>
+                <strong className="spatial-summary-value">{rois.length}</strong>
+                <span className="spatial-summary-detail">{copy.mapSelectionHint}</span>
+              </div>
+              <div className="spatial-summary-chip">
+                <span className="spatial-summary-label">{copy.activeLayers}</span>
+                <strong className="spatial-summary-value">{mapSelectedOverlayIds.length}</strong>
+                <span className="spatial-summary-detail">
+                  {copy.selectedOverlay}: {selectedOverlay?.name ?? '-'}
+                </span>
+              </div>
+              <div className="spatial-summary-chip">
+                <span className="spatial-summary-label">{copy.availableOverlaySources}</span>
+                <strong className="spatial-summary-value">{overlayCandidates.length}</strong>
+                <span className="spatial-summary-detail">
+                  {loading ? t('common.loading') : snapshot.workspace.name}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="spatial-map-toolbar">
+            <div className="spatial-map-toolbar-group spatial-map-toolbar-group-search">
               <div className="spatial-map-coordinate-search">
                 <span>{coordinateLabel}</span>
                 <Input.Search
@@ -1127,6 +1425,8 @@ export function SpatialStudioPage({
                   onSearch={() => handleCoordinateSearch()}
                 />
               </div>
+            </div>
+            <div className="spatial-map-toolbar-group">
               <div className="spatial-map-label-switcher">
                 <span>{coordinateLabelSwitchText}</span>
                 <Switch
@@ -1147,10 +1447,28 @@ export function SpatialStudioPage({
                   }}
                 />
               </div>
-            </Space>
+              <Button type="primary" onClick={() => setWorkbenchOpen(true)}>
+                {openWorkbenchLabel}
+              </Button>
+            </div>
+          </div>
+
+          <div className="spatial-map-stage-status">
+            <Tag>{copy.selectedRoi}: {selectedRoi?.name ?? '-'}</Tag>
+            <Tag>{copy.selectedOverlay}: {selectedOverlay?.name ?? '-'}</Tag>
+            <Tag>{copy.activeLayers}: {mapSelectedOverlayIds.length}</Tag>
+            {drawMode === 'rectangle' ? <Tag color="blue">{copy.drawHintRectangle}</Tag> : null}
+            {drawMode === 'polygon' ? <Tag color="gold">{copy.drawHintPolygon}</Tag> : null}
+            {drawMode ? (
+              <Button size="small" onClick={stopRoiDrawing}>
+                {copy.stopDrawing}
+              </Button>
+            ) : null}
+            {previewOverlay ? <Tag color="processing">{previewOverlayButtonText}</Tag> : null}
           </div>
           <SpatialMapCanvas
             token={token}
+            locale={locale}
             rois={rois}
             overlays={mapOverlayRows}
             savedCoordinatePoints={savedCoordinates.map((item) => ({
@@ -1172,9 +1490,17 @@ export function SpatialStudioPage({
               setDraftGeometry(geometry);
               setSelectedRoiId(undefined);
               setGeometryEditEnabled(false);
+              setDrawMode(null);
+              setWorkbenchMode('editors');
+              setEditorPane('roi');
+              setWorkbenchOpen(true);
             }}
+            onDrawCancel={stopRoiDrawing}
             onSelectRoi={(roiId) => {
               setSelectedRoiId(roiId);
+              setWorkbenchMode('editors');
+              setEditorPane('roi');
+              setWorkbenchOpen(true);
               setDrawMode(null);
               setDraftGeometry(undefined);
             }}
@@ -1187,232 +1513,73 @@ export function SpatialStudioPage({
             }}
           />
         </Card>
-
-        <div className="spatial-side-column">
-          <Card className="panel-card spatial-panel-card" variant="borderless">
-            <div className="panel-kicker">{copy.roiAssets}</div>
-            <div className="spatial-asset-list">
-              {rois.length ? (
-                rois.map((roi) => (
-                  <button
-                    key={roi.id}
-                    type="button"
-                    className={`spatial-asset-item${roi.id === selectedRoiId ? ' is-selected' : ''}`}
-                    onClick={() => {
-                      setSelectedRoiId(roi.id);
-                      setGeometryEditEnabled(false);
-                      setDrawMode(null);
-                      setDraftGeometry(undefined);
-                    }}
-                  >
-                    <div className="spatial-asset-item-head">
-                      <strong>{roi.name}</strong>
-                      <Tag>{roi.geometryType}</Tag>
-                    </div>
-                    {roi.description ? <div className="spatial-asset-item-copy">{roi.description}</div> : null}
-                    <div className="spatial-asset-item-meta">
-                      <span>{copy.owner}: {roi.ownerDisplayName ?? '-'}</span>
-                    </div>
-                    <div className="spatial-asset-item-meta">
-                      <span>{copy.bbox}: {bboxText(roi.bbox)}</span>
-                    </div>
-                    {(roi.tags ?? []).length ? (
-                      <Space wrap>
-                        {(roi.tags ?? []).map((tag) => (
-                          <Tag key={tag}>{tag}</Tag>
-                        ))}
-                      </Space>
-                    ) : null}
-                  </button>
-                ))
-              ) : (
-                <Empty description={copy.noRoi} />
-              )}
-            </div>
-          </Card>
-
-          <Card className="panel-card spatial-panel-card" variant="borderless">
-            <div className="panel-kicker">{copy.overlayAssets}</div>
-            <div className="spatial-asset-list">
-              {overlays.length ? (
-                overlays.map((overlay) => (
-                  <div
-                    key={overlay.id}
-                    className={`spatial-asset-item${overlay.id === selectedOverlayId ? ' is-selected' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="spatial-asset-item-button"
-                      onClick={() => setSelectedOverlayId(overlay.id)}
-                    >
-                      <div className="spatial-asset-item-head">
-                        <strong>{overlay.name}</strong>
-                        <Tag>{overlay.overlayType}</Tag>
-                      </div>
-                      {overlay.description ? (
-                        <div className="spatial-asset-item-copy">{overlay.description}</div>
-                      ) : null}
-                      <div className="spatial-asset-item-meta">
-                        <span>{overlay.datasetName} / v{overlay.datasetVersionNumber}</span>
-                        <span>{t(datasetKindKey(overlay.datasetKind))}</span>
-                      </div>
-                    </button>
-                    <div className="spatial-overlay-controls">
-                      <div className="spatial-overlay-switch">
-                        <span>{copy.visible}</span>
-                        <Switch
-                          checked={selectedOverlayIds.includes(overlay.id)}
-                          onChange={(checked) => {
-                            if (checked && overlay.bbox && overlay.bbox.length === 4) {
-                              setFocusRequest({
-                                requestId: Date.now(),
-                                bbox: overlay.bbox,
-                                zoom: 13,
-                              });
-                            }
-                            setSelectedOverlayIds((current) =>
-                              checked
-                                ? Array.from(new Set([...current, overlay.id]))
-                                : current.filter((id) => id !== overlay.id),
-                            );
-                          }}
-                        />
-                      </div>
-                      <div className="spatial-overlay-opacity">
-                        <span>{copy.opacity}</span>
-                        <InputNumber
-                          min={0.05}
-                          max={1}
-                          step={0.05}
-                          value={overlayOpacities[overlay.id] ?? overlay.opacity}
-                          onChange={(value) =>
-                            setOverlayOpacities((current) => ({
-                              ...current,
-                              [overlay.id]: typeof value === 'number' ? value : overlay.opacity,
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <Empty description={copy.noOverlay} />
-              )}
-            </div>
-          </Card>
-
-          <Card className="panel-card spatial-panel-card" variant="borderless">
-            <div className="panel-kicker">{coordinateToolsTitle}</div>
-            <div className="spatial-coordinate-bookmark-toolbar">
-              <Space.Compact block className="spatial-coordinate-name-compact">
-                <div className="spatial-coordinate-name-prefix">{coordinateNameLabel}</div>
-                <Input
-                  value={coordinateNameInput}
-                  placeholder={coordinateNamePlaceholder}
-                  onChange={(event) => setCoordinateNameInput(event.target.value)}
-                />
-              </Space.Compact>
-              <Space wrap>
-                <Button type="primary" onClick={handleSaveCoordinatePoint}>
-                  {coordinateSaveButtonText}
-                </Button>
-                <Button onClick={handleClearSavedPoints}>{coordinateClearSavedText}</Button>
-                <Button onClick={handleClearCoordinateHistory}>{coordinateClearHistoryText}</Button>
-              </Space>
-            </div>
-
-            <div className="spatial-coordinate-group">
-              <div className="panel-kicker">{coordinateSavedListTitle}</div>
-              <div className="spatial-asset-list">
-                {savedCoordinates.length ? (
-                  savedCoordinates.map((item) => (
-                    <div
-                      key={item.id}
-                      role="button"
-                      tabIndex={0}
-                      className="spatial-asset-item spatial-saved-point-item"
-                      onClick={() => {
-                        jumpToCoordinate(item.longitude, item.latitude);
-                        appendCoordinateHistory(item.longitude, item.latitude);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          jumpToCoordinate(item.longitude, item.latitude);
-                          appendCoordinateHistory(item.longitude, item.latitude);
-                        }
-                      }}
-                    >
-                      <div className="spatial-asset-item-head">
-                        <strong>{item.name}</strong>
-                        <Tag>
-                          {formatCoordinateNumber(item.longitude)}, {formatCoordinateNumber(item.latitude)}
-                        </Tag>
-                      </div>
-                      <div className="spatial-asset-item-meta">
-                        <span>{new Date(item.createdAt).toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US')}</span>
-                      </div>
-                      <Space wrap>
-                        <Button
-                          size="small"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            jumpToCoordinate(item.longitude, item.latitude);
-                            appendCoordinateHistory(item.longitude, item.latitude);
-                          }}
-                        >
-                          {coordinateJumpButtonText}
-                        </Button>
-                        <Button
-                          size="small"
-                          danger
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleRemoveSavedPoint(item.id);
-                          }}
-                        >
-                          {copy.delete}
-                        </Button>
-                      </Space>
-                    </div>
-                  ))
-                ) : (
-                  <Empty description={coordinateNoSavedText} />
-                )}
-              </div>
-            </div>
-
-            <div className="spatial-coordinate-group">
-              <div className="panel-kicker">{coordinateHistoryTitle}</div>
-              <div className="spatial-asset-list">
-                {coordinateHistory.length ? (
-                  coordinateHistory.map((item) => (
-                    <div key={item.id} className="spatial-asset-item">
-                      <div className="spatial-asset-item-head">
-                        <strong>
-                          {formatCoordinateNumber(item.longitude)}, {formatCoordinateNumber(item.latitude)}
-                        </strong>
-                        <Tag>{new Date(item.createdAt).toLocaleTimeString(locale === 'zh-CN' ? 'zh-CN' : 'en-US')}</Tag>
-                      </div>
-                      <Space wrap>
-                        <Button
-                          size="small"
-                          onClick={() => jumpToCoordinate(item.longitude, item.latitude)}
-                        >
-                          {coordinateJumpButtonText}
-                        </Button>
-                      </Space>
-                    </div>
-                  ))
-                ) : (
-                  <Empty description={coordinateNoHistoryText} />
-                )}
-              </div>
-            </div>
-          </Card>
-        </div>
       </div>
+
+      <Drawer
+        title={workbenchCopy.title}
+        placement="right"
+        open={workbenchOpen}
+        width={520}
+        mask={false}
+        onClose={() => setWorkbenchOpen(false)}
+        className="spatial-workbench-drawer"
+        rootClassName="spatial-workbench-drawer"
+      >
+        <div className="spatial-workbench-head">
+          <div className="spatial-workbench-copy">
+            <Paragraph className="spatial-workbench-description">{workbenchCopy.description}</Paragraph>
+          </div>
+          <Segmented
+            value={workbenchMode}
+            options={[
+              { label: workbenchCopy.editors, value: 'editors' },
+              { label: workbenchCopy.assets, value: 'assets' },
+              { label: workbenchCopy.coordinates, value: 'coordinates' },
+            ]}
+            onChange={(value) => setWorkbenchMode(value as SpatialWorkbenchMode)}
+          />
+        </div>
+
+        <div className="spatial-workbench-body">
+          {workbenchMode === 'editors' ? (
+            <div className="spatial-workbench-stack">
+              <div className="spatial-workbench-subnav">
+                <span className="spatial-workbench-subnav-label">
+                  {locale === 'zh-CN' ? '编辑对象' : 'Editor target'}
+                </span>
+                <Segmented
+                  value={editorPane}
+                  options={editorPaneOptions}
+                  onChange={(value) => setEditorPane(value as SpatialEditorPane)}
+                />
+              </div>
+              {editorPane === 'roi' ? roiEditorPanel : overlayEditorPanel}
+            </div>
+          ) : null}
+
+          {workbenchMode === 'assets' ? (
+            <div className="spatial-workbench-stack">
+              <div className="spatial-workbench-subnav">
+                <span className="spatial-workbench-subnav-label">
+                  {locale === 'zh-CN' ? '资产类型' : 'Asset type'}
+                </span>
+                <Segmented
+                  value={assetPane}
+                  options={assetPaneOptions}
+                  onChange={(value) => setAssetPane(value as SpatialAssetPane)}
+                />
+              </div>
+              {assetPane === 'roi' ? roiAssetsPanel : overlayAssetsPanel}
+            </div>
+          ) : null}
+
+          {workbenchMode === 'coordinates' ? (
+            <div className="spatial-workbench-stack">
+              {coordinateToolsPanel}
+            </div>
+          ) : null}
+        </div>
+      </Drawer>
     </div>
   );
 }

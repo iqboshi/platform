@@ -1,17 +1,38 @@
 import type {
-  DatasetKind,
   DatasetSummary,
   DatasetVersionSummary,
   GeeCredentialSummary,
-  ModelAlgorithmKey,
   ModelVersionSummary,
   SpatialRoiSummary,
-  WorkflowNode,
   WorkflowNodeCatalogItem,
   WorkflowNodeExample,
+  WorkflowPortContract,
   WorkflowTemplateDefinition,
+  WorkflowPortDataType,
+  WorkflowValidationIssue,
   WorkflowVersionDetail,
 } from '@platform/types';
+import {
+  arePortContractsCompatible,
+  datasetMatchesPortContract,
+  getDatasetSemantics,
+  parseBinding,
+  summarizePortContract,
+} from './workflow-semantics';
+import {
+  FOR_EACH_INDEX_PORT_KEY,
+  FOR_EACH_ITEM_PORT_KEY,
+  FOR_EACH_NODE_TYPE,
+  SUBGRAPH_INPUT_NODE_TYPE,
+  SUBGRAPH_OUTPUT_NODE_TYPE,
+  deriveSubgraphInputs,
+  deriveSubgraphOutputs,
+  getEffectiveInputContracts,
+  getEffectiveNodeInputDefs,
+  getEffectiveNodeOutputDefs,
+  getEffectiveOutputContracts,
+  isStructuralSubgraphNodeType,
+} from './workflow-subgraphs';
 
 export interface WorkflowEditorContext {
   datasets: DatasetSummary[];
@@ -25,68 +46,39 @@ export interface WorkflowNodeAnalysis {
   state: 'ready' | 'missing_inputs' | 'invalid_params' | 'schema_mismatch';
   tone: 'green' | 'gold' | 'red';
   summary: string;
-  issues: string[];
+  issues: WorkflowValidationIssue[];
 }
 
-interface ResolvedDatasetRef {
-  dataset?: DatasetSummary;
-  datasetVersion?: DatasetVersionSummary;
+export interface WorkflowGraphAnalysis {
+  byNodeId: Record<string, WorkflowNodeAnalysis>;
+  issues: WorkflowValidationIssue[];
 }
 
-interface InferredTableSchema {
-  columns: string[];
-  datasetKind?: DatasetKind;
-  datasetVersionId?: string;
-  datasetName?: string;
-}
+type WorkflowNodeLocalIssue = WorkflowValidationIssue & {
+  _state: WorkflowNodeAnalysis['state'];
+};
 
-function parseBinding(binding: string | undefined): { nodeId: string; portKey: string } | undefined {
-  if (!binding) {
-    return undefined;
-  }
+const TABULAR_PREDICT_NODE_TYPES = new Set([
+  'tabular.predict_model',
+  'tabular.linear_regression_predict',
+  'tabular.svm_regression_predict',
+  'tabular.random_forest_regression_predict',
+  'custom.api_predict',
+]);
 
-  const [nodeId, portKey] = binding.split(':');
-  if (!nodeId || !portKey) {
-    return undefined;
-  }
-
-  return { nodeId, portKey };
-}
-
-function parseCsvColumns(value: unknown): string[] {
-  if (typeof value !== 'string') {
-    return [];
-  }
-
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseBBoxText(value: unknown): number[] | undefined {
-  if (Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === 'number')) {
-    return value as number[];
-  }
-
-  if (typeof value !== 'string' || !value.trim()) {
-    return undefined;
-  }
-
-  const parts = value
-    .split(/[,\s]+/)
-    .map((item) => Number(item))
-    .filter((item) => Number.isFinite(item));
-  return parts.length === 4 ? parts : undefined;
-}
-
-function parseIsoDateText(value: unknown): number | undefined {
-  if (typeof value !== 'string' || !value.trim()) {
-    return undefined;
-  }
-
-  const timestamp = Date.parse(`${value}T00:00:00Z`);
-  return Number.isFinite(timestamp) ? timestamp : undefined;
+function createIssue(
+  state: WorkflowNodeAnalysis['state'],
+  code: string,
+  message: string,
+  options: Omit<WorkflowValidationIssue, 'code' | 'severity' | 'message'> = {},
+): WorkflowNodeLocalIssue {
+  return {
+    _state: state,
+    code,
+    severity: 'error',
+    message,
+    ...options,
+  };
 }
 
 function hasRequiredValue(value: unknown, fieldType: WorkflowNodeCatalogItem['params'][number]['fieldType']): boolean {
@@ -102,114 +94,481 @@ function hasRequiredValue(value: unknown, fieldType: WorkflowNodeCatalogItem['pa
   return typeof value === 'string' ? value.trim().length > 0 : value !== undefined && value !== null;
 }
 
-function normalizeColumns(metadata: Record<string, unknown>): string[] {
-  const value = metadata.columns;
-  if (!Array.isArray(value)) {
-    return [];
+function parseBBoxText(value: unknown): number[] | undefined {
+  if (Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === 'number')) {
+    return value as number[];
   }
-
-  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+  const parts = value
+    .split(/[,\s]+/)
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item));
+  return parts.length === 4 ? parts : undefined;
 }
 
-function resolveDatasetMaps(context: WorkflowEditorContext) {
+function parseIsoDateText(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+  const timestamp = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function parseJsonObject(value: unknown): boolean {
+  if (typeof value !== 'string' || !value.trim()) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
+function parseJsonValue(value: unknown): boolean {
+  if (typeof value !== 'string' || !value.trim()) {
+    return true;
+  }
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stateRank(state: WorkflowNodeAnalysis['state']): number {
+  if (state === 'schema_mismatch') {
+    return 3;
+  }
+  if (state === 'invalid_params') {
+    return 2;
+  }
+  if (state === 'missing_inputs') {
+    return 1;
+  }
+  return 0;
+}
+
+function analysisFromIssues(
+  definition: WorkflowNodeCatalogItem,
+  issues: WorkflowNodeLocalIssue[],
+): WorkflowNodeAnalysis {
+  const state =
+    issues.sort((a, b) => stateRank(b._state) - stateRank(a._state))[0]?._state ?? 'ready';
+  const tone: WorkflowNodeAnalysis['tone'] =
+    state === 'ready' ? 'green' : state === 'missing_inputs' ? 'gold' : 'red';
+  const normalizedIssues = issues.map((issue) => {
+    const sanitizedIssue: WorkflowValidationIssue = { ...issue };
+    delete (sanitizedIssue as Partial<WorkflowNodeLocalIssue>)._state;
+    return sanitizedIssue;
+  });
   return {
-    datasetsById: new Map(context.datasets.map((dataset) => [dataset.id, dataset])),
-    datasetVersionsById: new Map(
-      context.datasetVersions.map((datasetVersion) => [datasetVersion.id, datasetVersion]),
-    ),
-    geeCredentialsById: new Map(
-      context.geeCredentials.map((credential) => [credential.id, credential]),
-    ),
-    modelsById: new Map(
-      context.modelVersions.map((modelVersion) => [modelVersion.id, modelVersion]),
-    ),
+    state,
+    tone,
+    summary: issues[0]?.message ?? definition.description,
+    issues: normalizedIssues,
   };
 }
 
-function requiredAlgorithmForNode(nodeType: string): ModelAlgorithmKey | undefined {
-  if (nodeType === 'tabular.linear_regression_predict') {
-    return 'linear_regression';
-  }
-  if (nodeType === 'tabular.svm_regression_predict') {
-    return 'svm_regression';
-  }
-  if (nodeType === 'tabular.random_forest_regression_predict') {
-    return 'random_forest_regression';
-  }
-  return undefined;
+function cloneContract(contract: WorkflowPortContract): WorkflowPortContract {
+  return {
+    ...contract,
+    datasetKinds: [...(contract.datasetKinds ?? [])],
+    fileFormats: [...(contract.fileFormats ?? [])],
+    columnRequirements: [...(contract.columnRequirements ?? [])],
+    sampleColumns: [...(contract.sampleColumns ?? [])],
+    producedColumns: [...(contract.producedColumns ?? [])],
+    taskTypes: [...(contract.taskTypes ?? [])],
+    annotationKinds: [...(contract.annotationKinds ?? [])],
+    sampleKinds: [...(contract.sampleKinds ?? [])],
+    valueTypes: [...(contract.valueTypes ?? [])],
+    notes: [...(contract.notes ?? [])],
+  };
 }
 
-function compactSummaryForNode(definition: WorkflowNodeCatalogItem): string {
-  switch (definition.type) {
-    case 'source.dataset_version':
-      return 'Select a dataset version';
-    case 'source.sentinel2_gee_download':
-      return 'Manual BBox or saved ROI + date range -> Sentinel-2 raster dataset';
-    case 'table.load_csv':
-      return 'CSV dataset version -> table';
-    case 'table.train_test_split':
-      return 'Split one table into train and test';
-    case 'tabular.linear_regression_train':
-    case 'tabular.svm_regression_train':
-    case 'tabular.random_forest_regression_train':
-      return 'Needs feature columns and target column';
-    case 'tabular.linear_regression_predict':
-    case 'tabular.svm_regression_predict':
-    case 'tabular.random_forest_regression_predict':
-    case 'tabular.predict':
-      return 'Needs model features in the input table';
-    case 'custom.api_predict':
-      return 'Needs a saved Custom API model';
-    case 'metrics.validate_regression':
-      return 'Needs prediction and ground-truth tables';
-    case 'model.save_trained_model':
-      return 'Save a trained model into assets';
-    case 'export.table':
-      return 'Export the current table to CSV';
-    case 'export.metrics':
-      return 'Export the current metrics report';
-    default:
-      return definition.description;
+function orderedUnique(values: string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const value of values) {
+    const token = String(value ?? '').trim();
+    if (!token || seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    ordered.push(token);
   }
+  return ordered;
+}
+
+function taskTypesForAnnotationKinds(annotationKinds: string[]): string[] {
+  const mapping: Record<string, string> = {
+    class_label: 'image_classification',
+    mask: 'semantic_segmentation',
+    bbox: 'object_detection',
+    polygon: 'instance_segmentation',
+  };
+  return orderedUnique(
+    annotationKinds
+      .map((kind) => mapping[String(kind).trim()])
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function annotationKindsForTaskTypes(taskTypes: string[]): string[] {
+  const mapping: Record<string, string> = {
+    image_classification: 'class_label',
+    semantic_segmentation: 'mask',
+    instance_segmentation: 'polygon',
+    object_detection: 'bbox',
+  };
+  return orderedUnique(
+    taskTypes
+      .map((taskType) => mapping[String(taskType).trim()])
+      .filter((value): value is string => Boolean(value)),
+  );
+}
+
+function findPortContract(
+  contracts: WorkflowPortContract[],
+  portKey: string,
+): WorkflowPortContract | undefined {
+  return contracts.find((contract) => contract.portKey === portKey);
+}
+
+function createDefinitionMaps(
+  definitions: WorkflowNodeCatalogItem[],
+  workflowVersion: WorkflowVersionDetail,
+): {
+  definitionByType: Map<string, WorkflowNodeCatalogItem>;
+  nodeById: Map<string, WorkflowVersionDetail['graph']['nodes'][number]>;
+} {
+  return {
+    definitionByType: new Map(definitions.map((definition) => [definition.type, definition])),
+    nodeById: new Map(workflowVersion.graph.nodes.map((node) => [node.id, node])),
+  };
+}
+
+function getBoundInputColumns(
+  node: WorkflowVersionDetail['graph']['nodes'][number],
+  inputKey: string,
+  definitions: WorkflowNodeCatalogItem[],
+  workflowVersion: WorkflowVersionDetail,
+  context: WorkflowEditorContext,
+  visited = new Set<string>(),
+): string[] {
+  const parsed = parseBinding(node.inputBindings[inputKey]);
+  if (!parsed) {
+    return [];
+  }
+
+  const { nodeById, definitionByType } = createDefinitionMaps(definitions, workflowVersion);
+  const sourceNode = nodeById.get(parsed.nodeId);
+  if (!sourceNode) {
+    return [];
+  }
+
+  if (sourceNode.type === 'source.dataset_version') {
+    const datasetVersionId =
+      typeof sourceNode.params.datasetVersionId === 'string' ? sourceNode.params.datasetVersionId : '';
+    return orderedUnique(getDatasetSemantics(context, datasetVersionId)?.columns ?? []);
+  }
+
+  const sourceDefinition = definitionByType.get(sourceNode.type);
+  const outputContract = sourceDefinition
+    ? getEffectiveOutputContractForGraph(
+        definitions,
+        workflowVersion,
+        context,
+        sourceNode,
+        parsed.portKey,
+        visited,
+      )
+    : undefined;
+  if (!outputContract) {
+    return [];
+  }
+  return orderedUnique([...(outputContract.producedColumns ?? []), ...(outputContract.sampleColumns ?? [])]);
+}
+
+export function getEffectiveInputContractForGraph(
+  definitions: WorkflowNodeCatalogItem[],
+  workflowVersion: WorkflowVersionDetail,
+  _context: WorkflowEditorContext,
+  node: WorkflowVersionDetail['graph']['nodes'][number],
+  portKey: string,
+): WorkflowPortContract | undefined {
+  const { definitionByType } = createDefinitionMaps(definitions, workflowVersion);
+  const definition = definitionByType.get(node.type);
+  if (!definition) {
+    return undefined;
+  }
+
+  const baseContract = findPortContract(getEffectiveInputContracts(node, definition), portKey);
+  if (!baseContract) {
+    return undefined;
+  }
+
+  if (node.type === 'custom.api_train_samples' && (portKey === 'trainSamples' || portKey === 'validationSamples')) {
+    const taskType = typeof node.params.taskType === 'string' ? node.params.taskType.trim() : '';
+    if (!taskType) {
+      return cloneContract(baseContract);
+    }
+    return {
+      ...cloneContract(baseContract),
+      summary:
+        portKey === 'trainSamples'
+          ? 'Labeled sample set matching the configured training task semantics.'
+          : 'Optional labeled sample set matching the configured training task semantics.',
+      taskTypes: [taskType],
+      annotationKinds: annotationKindsForTaskTypes([taskType]),
+    };
+  }
+
+  if (node.type === 'metrics.validate_regression' && (portKey === 'predictionTable' || portKey === 'groundTruthTable')) {
+    const configuredColumn =
+      typeof node.params[portKey === 'predictionTable' ? 'predictionColumn' : 'groundTruthColumn'] === 'string'
+        ? String(node.params[portKey === 'predictionTable' ? 'predictionColumn' : 'groundTruthColumn']).trim()
+        : '';
+    const column = configuredColumn || (portKey === 'predictionTable' ? 'prediction' : 'target');
+    return {
+      ...cloneContract(baseContract),
+      summary:
+        portKey === 'predictionTable'
+          ? 'Prediction table containing the configured prediction column.'
+          : 'Ground-truth table containing the configured target column.',
+      columnRequirements: [column],
+      sampleColumns: orderedUnique([...(baseContract.sampleColumns ?? []), column]),
+    };
+  }
+
+  return cloneContract(baseContract);
+}
+
+export function getEffectiveOutputContractForGraph(
+  definitions: WorkflowNodeCatalogItem[],
+  workflowVersion: WorkflowVersionDetail,
+  context: WorkflowEditorContext,
+  node: WorkflowVersionDetail['graph']['nodes'][number],
+  portKey: string,
+  visited = new Set<string>(),
+): WorkflowPortContract | undefined {
+  const token = `${node.id}:${portKey}`;
+  const { definitionByType } = createDefinitionMaps(definitions, workflowVersion);
+  const definition = definitionByType.get(node.type);
+  if (!definition) {
+    return undefined;
+  }
+
+  const baseContract = findPortContract(getEffectiveOutputContracts(node, definition), portKey);
+  if (!baseContract) {
+    return undefined;
+  }
+  if (visited.has(token)) {
+    return cloneContract(baseContract);
+  }
+
+  const nextVisited = new Set(visited);
+  nextVisited.add(token);
+
+  const boundInputContract = (inputKey: string): WorkflowPortContract | undefined => {
+    const parsed = parseBinding(node.inputBindings[inputKey]);
+    if (!parsed) {
+      return undefined;
+    }
+    const { nodeById } = createDefinitionMaps(definitions, workflowVersion);
+    const sourceNode = nodeById.get(parsed.nodeId);
+    if (!sourceNode) {
+      return undefined;
+    }
+    return getEffectiveOutputContractForGraph(
+      definitions,
+      workflowVersion,
+      context,
+      sourceNode,
+      parsed.portKey,
+      nextVisited,
+    );
+  };
+
+  if (node.type === 'dataset.build_samples' && portKey === 'samples') {
+    const tilesContract = boundInputContract('tiles');
+    const labelsContract = boundInputContract('labels');
+    const annotationKinds = labelsContract?.annotationKinds?.length
+      ? [...labelsContract.annotationKinds]
+      : [];
+    return {
+      ...cloneContract(baseContract),
+      summary: 'Sample set built from an RGB tile grid and optional aligned annotations.',
+      sampleKinds:
+        tilesContract?.sampleKinds?.length ? [...tilesContract.sampleKinds] : [...(baseContract.sampleKinds ?? [])],
+      annotationKinds,
+      taskTypes:
+        labelsContract?.taskTypes?.length
+          ? [...labelsContract.taskTypes]
+          : taskTypesForAnnotationKinds(annotationKinds),
+    };
+  }
+
+  if (node.type === 'dataset.split_samples' && ['trainSamples', 'valSamples', 'testSamples'].includes(portKey)) {
+    const samplesContract = boundInputContract('samples');
+    if (!samplesContract) {
+      return cloneContract(baseContract);
+    }
+    return {
+      ...cloneContract(baseContract),
+      summary:
+        portKey === 'trainSamples'
+          ? 'Training sample split preserving upstream sample semantics.'
+          : portKey === 'valSamples'
+            ? 'Validation sample split preserving upstream sample semantics.'
+            : 'Test sample split preserving upstream sample semantics.',
+      sampleKinds: [...(samplesContract.sampleKinds ?? [])],
+      annotationKinds: [...(samplesContract.annotationKinds ?? [])],
+      taskTypes: [...(samplesContract.taskTypes ?? [])],
+    };
+  }
+
+  if (node.type === 'custom.api_predict_samples' && portKey === 'predictions') {
+    const samplesContract = boundInputContract('samples');
+    if (!samplesContract) {
+      return cloneContract(baseContract);
+    }
+    const taskTypes = [...(samplesContract.taskTypes ?? [])];
+    return {
+      ...cloneContract(baseContract),
+      summary: 'Prediction set preserving the upstream sample grid and task semantics.',
+      sampleKinds: [...(samplesContract.sampleKinds ?? [])],
+      taskTypes,
+      annotationKinds:
+        annotationKindsForTaskTypes(taskTypes).length > 0
+          ? annotationKindsForTaskTypes(taskTypes)
+          : [...(samplesContract.annotationKinds ?? [])],
+    };
+  }
+
+  if (node.type === 'table.load_csv' && portKey === 'table') {
+    const producedColumns = getBoundInputColumns(
+      node,
+      'dataset',
+      definitions,
+      workflowVersion,
+      context,
+      nextVisited,
+    );
+    if (!producedColumns.length) {
+      return cloneContract(baseContract);
+    }
+    return {
+      ...cloneContract(baseContract),
+      summary: 'In-memory table decoded from the bound CSV dataset version.',
+      sampleColumns: producedColumns,
+      producedColumns,
+    };
+  }
+
+  if (node.type === 'table.train_test_split' && (portKey === 'trainTable' || portKey === 'testTable')) {
+    const producedColumns = getBoundInputColumns(
+      node,
+      'table',
+      definitions,
+      workflowVersion,
+      context,
+      nextVisited,
+    );
+    if (!producedColumns.length) {
+      return cloneContract(baseContract);
+    }
+    return {
+      ...cloneContract(baseContract),
+      summary:
+        portKey === 'trainTable'
+          ? 'Training table split preserving the upstream table schema.'
+          : 'Test table split preserving the upstream table schema.',
+      sampleColumns: producedColumns,
+      producedColumns,
+    };
+  }
+
+  if (TABULAR_PREDICT_NODE_TYPES.has(node.type) && portKey === 'table') {
+    const upstreamColumns = getBoundInputColumns(
+      node,
+      'table',
+      definitions,
+      workflowVersion,
+      context,
+      nextVisited,
+    );
+    const configuredPredictionColumn =
+      typeof node.params.predictionColumn === 'string' ? node.params.predictionColumn.trim() : '';
+    const predictionColumn = configuredPredictionColumn || 'prediction';
+    const producedColumns = orderedUnique([...upstreamColumns, predictionColumn]);
+    if (!producedColumns.length) {
+      return cloneContract(baseContract);
+    }
+    return {
+      ...cloneContract(baseContract),
+      summary: 'Prediction table preserving upstream columns and appending the configured prediction column.',
+      sampleColumns: producedColumns,
+      producedColumns,
+    };
+  }
+
+  return cloneContract(baseContract);
+}
+
+export function getEffectiveNodeContractsForGraph(
+  definitions: WorkflowNodeCatalogItem[],
+  workflowVersion: WorkflowVersionDetail,
+  context: WorkflowEditorContext,
+  node: WorkflowVersionDetail['graph']['nodes'][number],
+): {
+  inputContracts: WorkflowPortContract[];
+  outputContracts: WorkflowPortContract[];
+} {
+  const { definitionByType } = createDefinitionMaps(definitions, workflowVersion);
+  const definition = definitionByType.get(node.type);
+  if (!definition) {
+    return { inputContracts: [], outputContracts: [] };
+  }
+
+  return {
+    inputContracts: getEffectiveInputContracts(node, definition)
+      .map((contract) =>
+        getEffectiveInputContractForGraph(definitions, workflowVersion, context, node, contract.portKey) ??
+        cloneContract(contract),
+      ),
+    outputContracts: getEffectiveOutputContracts(node, definition)
+      .map((contract) =>
+        getEffectiveOutputContractForGraph(definitions, workflowVersion, context, node, contract.portKey) ??
+        cloneContract(contract),
+      ),
+  };
 }
 
 export function getTemplateContractHints(
   template: WorkflowTemplateDefinition,
   definitions: WorkflowNodeCatalogItem[],
 ): { lines: string[]; exampleInput?: WorkflowNodeExample } {
-  const preferredNodeTypes = [
-    'metrics.validate_regression',
-    'custom.api_predict',
-    'source.sentinel2_gee_download',
-    'tabular.linear_regression_train',
-    'tabular.svm_regression_train',
-    'tabular.random_forest_regression_train',
-    'tabular.linear_regression_predict',
-    'tabular.svm_regression_predict',
-    'tabular.random_forest_regression_predict',
-    'tabular.predict',
-    'table.load_csv',
-  ];
-  const templateNodeTypes = new Set(template.graph.nodes.map((node) => node.type));
-  const primaryType = preferredNodeTypes.find((nodeType) => templateNodeTypes.has(nodeType));
-  const definition = definitions.find((item) => item.type === primaryType);
+  const definition = template.graph.nodes
+    .map((node) => definitions.find((item) => item.type === node.type))
+    .find((item) => item && ((item.inputContracts?.length ?? 0) > 0 || (item.inputs?.length ?? 0) > 0));
+
   if (!definition) {
     return { lines: [], exampleInput: undefined };
   }
 
-  const portLabelByKey = new Map((definition.inputs ?? []).map((port) => [port.key, port.label]));
-  const lines = (definition.inputContracts ?? [])
-    .map((contract) => {
-      const label = portLabelByKey.get(contract.portKey) ?? contract.portKey;
-      if (contract.sampleColumns?.length) {
-        return `${label}: ${contract.sampleColumns.join(', ')}`;
-      }
-      if (contract.columnRequirements?.length) {
-        return `${label}: ${contract.columnRequirements.join(', ')}`;
-      }
-      return `${label}: ${contract.summary}`;
-    })
-    .slice(0, 2);
+  const lines = (definition.inputContracts ?? []).length
+    ? (definition.inputContracts ?? [])
+        .map((contract) => `${contract.portKey}: ${contract.summary}`)
+        .slice(0, 2)
+    : (definition.inputs ?? [])
+        .filter((port) => port.required)
+        .map((port) => `${port.label}: ${port.dataTypes.join(', ')}`)
+        .slice(0, 2);
 
   const exampleInput = (definition.exampleInputs ?? []).find((item) => item.kind === 'table');
   return { lines, exampleInput };
@@ -250,393 +609,604 @@ export function analyzeWorkflowGraph(
   definitions: WorkflowNodeCatalogItem[],
   workflowVersion: WorkflowVersionDetail,
   context: WorkflowEditorContext,
-): Record<string, WorkflowNodeAnalysis> {
-  const { datasetsById, datasetVersionsById, geeCredentialsById, modelsById } =
-    resolveDatasetMaps(context);
-  const spatialRoisById = new Map(context.spatialRois.map((roi) => [roi.id, roi]));
-  const nodesById = new Map(workflowVersion.graph.nodes.map((node) => [node.id, node]));
-  const definitionsByType = new Map(definitions.map((definition) => [definition.type, definition]));
-  const datasetRefMemo = new Map<string, ResolvedDatasetRef | null>();
-  const tableSchemaMemo = new Map<string, InferredTableSchema | null>();
+  options?: { insideSubgraph?: boolean },
+): WorkflowGraphAnalysis {
+  const definitionByType = new Map(definitions.map((definition) => [definition.type, definition]));
+  const nodeById = new Map(workflowVersion.graph.nodes.map((node) => [node.id, node]));
+  const datasetVersionIds = new Set(context.datasetVersions.map((item) => item.id));
+  const modelVersionIds = new Set(context.modelVersions.map((item) => item.id));
+  const spatialRoiIds = new Set(context.spatialRois.map((item) => item.id));
+  const geeCredentialIds = new Set(context.geeCredentials.map((item) => item.id));
 
-  const inferDatasetRef = (nodeId: string, portKey: string): ResolvedDatasetRef | null => {
-    const memoKey = `${nodeId}:${portKey}`;
-    if (datasetRefMemo.has(memoKey)) {
-      return datasetRefMemo.get(memoKey) ?? null;
+  const outputTypeForBinding = (binding: string | undefined): WorkflowPortDataType[] => {
+    const parsed = parseBinding(binding);
+    if (!parsed) {
+      return [];
     }
-
-    const node = nodesById.get(nodeId);
-    if (!node || node.type !== 'source.dataset_version' || portKey !== 'dataset') {
-      datasetRefMemo.set(memoKey, null);
-      return null;
-    }
-
-    const datasetVersionId =
-      typeof node.params.datasetVersionId === 'string' ? node.params.datasetVersionId : '';
-    const datasetVersion = datasetVersionsById.get(datasetVersionId);
-    const dataset = datasetVersion ? datasetsById.get(datasetVersion.datasetId) : undefined;
-    const resolvedRef = { dataset, datasetVersion };
-    datasetRefMemo.set(memoKey, resolvedRef);
-    return resolvedRef;
+    const sourceNode = nodeById.get(parsed.nodeId);
+    const sourceDefinition = sourceNode ? definitionByType.get(sourceNode.type) : undefined;
+    const sourcePort = sourceNode
+      ? getEffectiveNodeOutputDefs(sourceNode, sourceDefinition).find((port) => port.key === parsed.portKey)
+      : sourceDefinition?.outputs.find((port) => port.key === parsed.portKey);
+    return sourcePort?.dataTypes ?? [];
   };
 
-  const inferInputTableSchema = (node: WorkflowNode, portKey: string): InferredTableSchema | null => {
-    const binding = parseBinding(node.inputBindings[portKey]);
-    if (!binding) {
-      return null;
+  const resolveEffectiveSources = (
+    sourceNodeId: string,
+    portKey: string,
+    visited = new Set<string>(),
+  ): Array<{
+    nodeId: string;
+    node: WorkflowVersionDetail['graph']['nodes'][number];
+    definition?: WorkflowNodeCatalogItem;
+    portKey: string;
+  }> => {
+    const visitToken = `${sourceNodeId}:${portKey}`;
+    if (visited.has(visitToken)) {
+      return [];
     }
-    return inferTableSchema(binding.nodeId, binding.portKey);
-  };
+    const nextVisited = new Set(visited);
+    nextVisited.add(visitToken);
 
-  const inferTableSchema = (nodeId: string, portKey: string): InferredTableSchema | null => {
-    const memoKey = `${nodeId}:${portKey}`;
-    if (tableSchemaMemo.has(memoKey)) {
-      return tableSchemaMemo.get(memoKey) ?? null;
+    const sourceNode = nodeById.get(sourceNodeId);
+    const sourceDefinition = sourceNode ? definitionByType.get(sourceNode.type) : undefined;
+    if (!sourceNode) {
+      return [];
     }
 
-    const node = nodesById.get(nodeId);
-    if (!node) {
-      tableSchemaMemo.set(memoKey, null);
-      return null;
-    }
-
-    let inferred: InferredTableSchema | null = null;
-
-    if (node.type === 'table.load_csv' && portKey === 'table') {
-      const datasetBinding = parseBinding(node.inputBindings.dataset);
-      if (datasetBinding) {
-        const datasetRef = inferDatasetRef(datasetBinding.nodeId, datasetBinding.portKey);
-        const metadata =
-          (datasetRef?.datasetVersion?.metadata as Record<string, unknown> | undefined) ?? {};
-        inferred = {
-          columns: normalizeColumns(metadata),
-          datasetKind: datasetRef?.dataset?.kind,
-          datasetVersionId: datasetRef?.datasetVersion?.id,
-          datasetName: datasetRef?.dataset?.name,
-        };
+    if (sourceNode.type === 'control.guard' && portKey === 'payload') {
+      const payloadBinding = parseBinding(sourceNode.inputBindings.payload);
+      if (!payloadBinding) {
+        return [];
       }
-    } else if (
-      node.type === 'table.train_test_split' &&
-      (portKey === 'trainTable' || portKey === 'testTable')
-    ) {
-      inferred = inferInputTableSchema(node, 'table');
-    } else if (
-      [
-        'tabular.linear_regression_predict',
-        'tabular.svm_regression_predict',
-        'tabular.random_forest_regression_predict',
-        'tabular.predict',
-        'custom.api_predict',
-      ].includes(node.type) &&
-      portKey === 'table'
-    ) {
-      const inputSchema = inferInputTableSchema(node, 'table');
-      if (inputSchema) {
-        const predictionColumn =
-          typeof node.params.predictionColumn === 'string' && node.params.predictionColumn.trim()
-            ? node.params.predictionColumn.trim()
-            : 'prediction';
-        inferred = {
-          ...inputSchema,
-          columns: inputSchema.columns.includes(predictionColumn)
-            ? inputSchema.columns
-            : [...inputSchema.columns, predictionColumn],
-        };
-      }
+      return resolveEffectiveSources(payloadBinding.nodeId, payloadBinding.portKey, nextVisited);
     }
 
-    tableSchemaMemo.set(memoKey, inferred);
-    return inferred;
-  };
-
-  const analysisEntries = workflowVersion.graph.nodes.map((node) => {
-    const definition = definitionsByType.get(node.type);
-    if (!definition) {
-      return [
-        node.id,
+    if (sourceNode.type === 'control.coalesce' && portKey === 'output') {
+      const resolved = new Map<
+        string,
         {
-          state: 'invalid_params',
-          tone: 'red',
-          summary: 'Unsupported node type.',
-          issues: ['Unsupported node type.'],
-        } satisfies WorkflowNodeAnalysis,
-      ] as const;
-    }
-
-    const issues: { state: WorkflowNodeAnalysis['state']; message: string }[] = [];
-
-    for (const input of definition.inputs ?? []) {
-      if (input.required && !parseBinding(node.inputBindings[input.key])) {
-        issues.push({
-          state: 'missing_inputs',
-          message: `${input.label} is required.`,
-        });
-      }
-    }
-
-    for (const field of definition.params ?? []) {
-      if (field.required && !hasRequiredValue(node.params[field.key], field.fieldType)) {
-        issues.push({
-          state: 'invalid_params',
-          message: `${field.label} is required.`,
-        });
-      }
-    }
-
-    if (node.type === 'source.dataset_version') {
-      const datasetVersionId =
-        typeof node.params.datasetVersionId === 'string' ? node.params.datasetVersionId : '';
-      if (datasetVersionId && !datasetVersionsById.has(datasetVersionId)) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'The selected dataset version does not exist.',
-        });
-      }
-    }
-
-    if (node.type === 'source.sentinel2_gee_download') {
-      const bbox = parseBBoxText(node.params.bbox);
-      const roiMode =
-        typeof node.params.roiMode === 'string' ? node.params.roiMode : 'manual_bbox';
-      const roiId = typeof node.params.roiId === 'string' ? node.params.roiId : '';
-      const startDate = parseIsoDateText(node.params.startDate);
-      const endDate = parseIsoDateText(node.params.endDate);
-      const maxCloudCover =
-        typeof node.params.maxCloudCover === 'number'
-          ? node.params.maxCloudCover
-          : Number(node.params.maxCloudCover);
-      const bands = Array.isArray(node.params.bands)
-        ? node.params.bands.filter((item): item is string => typeof item === 'string')
-        : [];
-      const credentialMode =
-        typeof node.params.credentialMode === 'string' ? node.params.credentialMode : '';
-      const personalCredentialId =
-        typeof node.params.personalCredentialId === 'string'
-          ? node.params.personalCredentialId
-          : '';
-
-      if (roiMode === 'saved_roi') {
-        if (!roiId) {
-          issues.push({
-            state: 'invalid_params',
-            message: 'Select a saved ROI when roiMode is saved_roi.',
-          });
-        } else if (!spatialRoisById.has(roiId)) {
-          issues.push({
-            state: 'invalid_params',
-            message: 'The selected saved ROI does not exist.',
-          });
+          nodeId: string;
+          node: WorkflowVersionDetail['graph']['nodes'][number];
+          definition?: WorkflowNodeCatalogItem;
+          portKey: string;
         }
-      } else if (!bbox) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'bbox must contain four coordinates in minLon,minLat,maxLon,maxLat order.',
-        });
-      }
-
-      if (!startDate || !endDate) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'startDate and endDate must use YYYY-MM-DD format.',
-        });
-      } else if (endDate < startDate) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'endDate must be on or after startDate.',
-        });
-      }
-
-      if (!Number.isFinite(maxCloudCover) || maxCloudCover < 0 || maxCloudCover > 100) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'maxCloudCover must be between 0 and 100.',
-        });
-      }
-
-      if (!bands.length) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'Select at least one Sentinel-2 band.',
-        });
-      }
-
-      if (credentialMode === 'personal' && !personalCredentialId) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'Select a personal GEE credential when using personal mode.',
-        });
-      }
-
-      if (credentialMode === 'personal' && personalCredentialId && !geeCredentialsById.has(personalCredentialId)) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'The selected personal GEE credential does not exist.',
-        });
-      }
-    }
-
-    if (node.type === 'table.load_csv') {
-      const datasetBinding = parseBinding(node.inputBindings.dataset);
-      if (datasetBinding) {
-        const datasetRef = inferDatasetRef(datasetBinding.nodeId, datasetBinding.portKey);
-        if (!datasetRef?.datasetVersion || !datasetRef.dataset) {
-          issues.push({
-            state: 'schema_mismatch',
-            message: 'The bound dataset version could not be resolved.',
-          });
-        } else if (datasetRef.dataset.kind !== 'table') {
-          issues.push({
-            state: 'schema_mismatch',
-            message: 'Load CSV requires a table dataset version backed by CSV.',
-          });
+      >();
+      for (const inputKey of ['primary', 'fallback'] as const) {
+        const candidateBinding = parseBinding(sourceNode.inputBindings[inputKey]);
+        if (!candidateBinding) {
+          continue;
+        }
+        for (const candidate of resolveEffectiveSources(
+          candidateBinding.nodeId,
+          candidateBinding.portKey,
+          nextVisited,
+        )) {
+          resolved.set(`${candidate.nodeId}:${candidate.portKey}`, candidate);
         }
       }
+      return [...resolved.values()];
     }
 
-    if (
-      [
-        'tabular.linear_regression_train',
-        'tabular.svm_regression_train',
-        'tabular.random_forest_regression_train',
-      ].includes(node.type)
-    ) {
-      const tableSchema = inferInputTableSchema(node, 'trainTable');
-      const featureColumns = parseCsvColumns(node.params.featureColumns);
-      const targetColumn =
-        typeof node.params.targetColumn === 'string' ? node.params.targetColumn.trim() : '';
+    return [{ nodeId: sourceNodeId, node: sourceNode, definition: sourceDefinition, portKey }];
+  };
 
-      if (!featureColumns.length) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'featureColumns must contain at least one column name.',
-        });
+  const byNodeId = Object.fromEntries(
+    workflowVersion.graph.nodes.map((node) => {
+      const definition = definitionByType.get(node.type);
+      if (!definition) {
+        const issues = [
+          createIssue(
+            'invalid_params',
+            'unsupported_node_type',
+            'Unsupported node type.',
+            {
+              nodeId: node.id,
+              actual: node.type,
+            },
+          ),
+        ];
+        return [node.id, analysisFromIssues({
+          type: node.type,
+          label: node.type,
+          category: 'preprocess',
+          description: 'Unsupported node type.',
+          runtimeKind: 'transform',
+          supportedTasks: [],
+          tags: [],
+          inputs: [],
+          outputs: [],
+          params: [],
+        }, issues)] as const;
       }
 
-      if (tableSchema?.columns.length) {
-        const missingFeatures = featureColumns.filter(
-          (column) => !tableSchema.columns.includes(column),
+      const issues: WorkflowNodeLocalIssue[] = [];
+      const effectiveInputs = getEffectiveNodeInputDefs(node, definition);
+
+      if (
+        !options?.insideSubgraph &&
+        (node.type === SUBGRAPH_INPUT_NODE_TYPE || node.type === SUBGRAPH_OUTPUT_NODE_TYPE)
+      ) {
+        issues.push(
+          createIssue(
+            'invalid_params',
+            'subgraph_boundary_outside_subgraph',
+            'Subgraph boundary nodes are valid only inside a nested subgraph editor.',
+            {
+              nodeId: node.id,
+            },
+          ),
         );
-        if (missingFeatures.length) {
-          issues.push({
-            state: 'schema_mismatch',
-            message: `Missing feature columns: ${missingFeatures.join(', ')}.`,
-          });
-        }
-
-        if (targetColumn && !tableSchema.columns.includes(targetColumn)) {
-          issues.push({
-            state: 'schema_mismatch',
-            message: `Missing target column: ${targetColumn}.`,
-          });
-        }
-      }
-    }
-
-    if (
-      [
-        'tabular.linear_regression_predict',
-        'tabular.svm_regression_predict',
-        'tabular.random_forest_regression_predict',
-        'tabular.predict',
-        'custom.api_predict',
-      ].includes(node.type)
-    ) {
-      const modelVersionId =
-        typeof node.params.modelVersionId === 'string' ? node.params.modelVersionId : '';
-      const modelVersion = modelsById.get(modelVersionId);
-
-      if (modelVersionId && !modelVersion) {
-        issues.push({
-          state: 'invalid_params',
-          message: 'The selected model asset does not exist.',
-        });
       }
 
-      if (modelVersion) {
-        if (node.type === 'custom.api_predict' && modelVersion.sourceType !== 'custom_api') {
-          issues.push({
-            state: 'schema_mismatch',
-            message: 'Custom API Predict requires a Custom API model asset.',
-          });
-        }
-
-        const requiredAlgorithm = requiredAlgorithmForNode(node.type);
-        if (
-          requiredAlgorithm &&
-          modelVersion.sourceType !== 'custom_api' &&
-          modelVersion.algorithmKey !== requiredAlgorithm
-        ) {
-          issues.push({
-            state: 'schema_mismatch',
-            message: `This node requires a ${requiredAlgorithm} model asset.`,
-          });
-        }
-
-        const inputSchema = inferInputTableSchema(node, 'table');
-        const requiredFeatures = modelVersion.featureNames ?? [];
-        if (inputSchema?.columns.length && requiredFeatures.length) {
-          const missingFeatures = requiredFeatures.filter(
-            (column) => !inputSchema.columns.includes(column),
+      if (isStructuralSubgraphNodeType(node.type)) {
+        if (!node.subgraph) {
+          issues.push(
+            createIssue('invalid_params', 'missing_subgraph', 'A nested subgraph is required.', {
+              nodeId: node.id,
+            }),
           );
-          if (missingFeatures.length) {
-            issues.push({
-              state: 'schema_mismatch',
-              message: `The input table is missing model features: ${missingFeatures.join(', ')}.`,
-            });
+        } else {
+          const inputKeys = deriveSubgraphInputs(node.subgraph).map((item) => item.port.key);
+          const outputKeys = deriveSubgraphOutputs(node.subgraph).map((item) => item.port.key);
+          if (new Set(inputKeys).size !== inputKeys.length) {
+            issues.push(
+              createIssue(
+                'invalid_params',
+                'duplicate_subgraph_input_port',
+                'Subgraph input port keys must be unique.',
+                { nodeId: node.id },
+              ),
+            );
+          }
+          if (new Set(outputKeys).size !== outputKeys.length) {
+            issues.push(
+              createIssue(
+                'invalid_params',
+                'duplicate_subgraph_output_port',
+                'Subgraph output port keys must be unique.',
+                { nodeId: node.id },
+              ),
+            );
+          }
+          if (node.type === FOR_EACH_NODE_TYPE) {
+            const conflictingInput = inputKeys.includes('items') ? 'items' : undefined;
+            if (conflictingInput) {
+              issues.push(
+                createIssue(
+                  'invalid_params',
+                  'for_each_input_key_conflict',
+                  'Nested subgraph input `items` conflicts with the outer loop input.',
+                  { nodeId: node.id, portKey: conflictingInput },
+                ),
+              );
+            }
+
+            const itemBoundary = deriveSubgraphInputs(node.subgraph).find((item) => item.port.key === FOR_EACH_ITEM_PORT_KEY);
+            if (itemBoundary && itemBoundary.port.dataTypes.join(',') !== 'value') {
+              issues.push(
+                createIssue(
+                  'invalid_params',
+                  'for_each_item_port_type_mismatch',
+                  'Reserved loop input `item` must use the value data type.',
+                  { nodeId: node.id, portKey: FOR_EACH_ITEM_PORT_KEY },
+                ),
+              );
+            }
+
+            const indexBoundary = deriveSubgraphInputs(node.subgraph).find((item) => item.port.key === FOR_EACH_INDEX_PORT_KEY);
+            if (indexBoundary && indexBoundary.port.dataTypes.join(',') !== 'value') {
+              issues.push(
+                createIssue(
+                  'invalid_params',
+                  'for_each_index_port_type_mismatch',
+                  'Reserved loop input `index` must use the value data type.',
+                  { nodeId: node.id, portKey: FOR_EACH_INDEX_PORT_KEY },
+                ),
+              );
+            }
           }
         }
       }
-    }
 
-    if (node.type === 'metrics.validate_regression') {
-      const predictionSchema = inferInputTableSchema(node, 'predictionTable');
-      const groundTruthSchema = inferInputTableSchema(node, 'groundTruthTable');
-      const predictionColumn =
-        typeof node.params.predictionColumn === 'string' ? node.params.predictionColumn.trim() : '';
-      const groundTruthColumn =
-        typeof node.params.groundTruthColumn === 'string'
-          ? node.params.groundTruthColumn.trim()
-          : '';
-
-      if (predictionSchema?.columns.length && predictionColumn) {
-        if (!predictionSchema.columns.includes(predictionColumn)) {
-          issues.push({
-            state: 'schema_mismatch',
-            message: `Prediction table is missing ${predictionColumn}.`,
-          });
+      for (const input of effectiveInputs) {
+        if (input.required && !parseBinding(node.inputBindings[input.key])) {
+          issues.push(
+            createIssue(
+              'missing_inputs',
+              'missing_required_input_binding',
+              `${input.label} is required.`,
+              {
+                nodeId: node.id,
+                portKey: input.key,
+                expected: input.label,
+              },
+            ),
+          );
         }
       }
 
-      if (groundTruthSchema?.columns.length && groundTruthColumn) {
-        if (!groundTruthSchema.columns.includes(groundTruthColumn)) {
-          issues.push({
-            state: 'schema_mismatch',
-            message: `Ground-truth table is missing ${groundTruthColumn}.`,
-          });
+      for (const field of definition.params ?? []) {
+        const value = node.params[field.key];
+        if (field.required && !hasRequiredValue(value, field.fieldType)) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'missing_required_param',
+              `${field.label} is required.`,
+              {
+                nodeId: node.id,
+                paramKey: field.key,
+                expected: field.label,
+              },
+            ),
+          );
+          continue;
+        }
+
+        if (
+          field.fieldType === 'datasetVersion' &&
+          typeof value === 'string' &&
+          value &&
+          !datasetVersionIds.has(value)
+        ) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'unknown_dataset_version',
+              `${field.label} does not exist.`,
+              {
+                nodeId: node.id,
+                paramKey: field.key,
+                actual: value,
+              },
+            ),
+          );
+        }
+        if (
+          field.fieldType === 'modelVersion' &&
+          typeof value === 'string' &&
+          value &&
+          !modelVersionIds.has(value)
+        ) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'unknown_model_version',
+              `${field.label} does not exist.`,
+              {
+                nodeId: node.id,
+                paramKey: field.key,
+                actual: value,
+              },
+            ),
+          );
+        }
+        if (
+          field.fieldType === 'spatialRoi' &&
+          typeof value === 'string' &&
+          value &&
+          !spatialRoiIds.has(value)
+        ) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'unknown_spatial_roi',
+              `${field.label} does not exist.`,
+              {
+                nodeId: node.id,
+                paramKey: field.key,
+                actual: value,
+              },
+            ),
+          );
+        }
+        if (
+          field.fieldType === 'geeCredential' &&
+          typeof value === 'string' &&
+          value &&
+          !geeCredentialIds.has(value)
+        ) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'unknown_gee_credential',
+              `${field.label} does not exist.`,
+              {
+                nodeId: node.id,
+                paramKey: field.key,
+                actual: value,
+              },
+            ),
+          );
         }
       }
-    }
 
-    let analysis: WorkflowNodeAnalysis;
-    if (!issues.length) {
-      analysis = {
-        state: 'ready',
-        tone: 'green',
-        summary: compactSummaryForNode(definition),
-        issues: [],
-      };
-    } else {
-      const issue = issues[0];
-      analysis = {
-        state: issue.state,
-        tone: issue.state === 'schema_mismatch' ? 'red' : 'gold',
-        summary: issue.message,
-        issues: issues.map((entry) => entry.message),
-      };
-    }
+      const bboxValue = node.params.bbox;
+      if (bboxValue !== undefined && bboxValue !== '' && !parseBBoxText(bboxValue)) {
+        issues.push(
+          createIssue(
+            'invalid_params',
+            'invalid_bbox',
+            'bbox must contain four coordinates in minLon,minLat,maxLon,maxLat order.',
+            {
+              nodeId: node.id,
+              paramKey: 'bbox',
+            },
+          ),
+        );
+      }
 
-    return [node.id, analysis] as const;
-  });
+      const startDate = parseIsoDateText(node.params.startDate);
+      const endDate = parseIsoDateText(node.params.endDate);
+      if ((node.params.startDate || node.params.endDate) && (!startDate || !endDate)) {
+        issues.push(
+          createIssue(
+            'invalid_params',
+            'invalid_date_range',
+            'Date parameters must use YYYY-MM-DD.',
+            {
+              nodeId: node.id,
+              paramKey: !startDate ? 'startDate' : 'endDate',
+            },
+          ),
+        );
+      } else if (startDate && endDate && endDate < startDate) {
+        issues.push(
+          createIssue(
+            'invalid_params',
+            'reversed_date_range',
+            'endDate must be on or after startDate.',
+            {
+              nodeId: node.id,
+              paramKey: 'endDate',
+            },
+          ),
+        );
+      }
 
-  return Object.fromEntries(analysisEntries);
+      for (const key of ['filtersJson', 'hyperparametersJson', 'runtimeParametersJson', 'callParametersJson']) {
+        if (!parseJsonObject(node.params[key])) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'invalid_json_param',
+              `${key} must be valid JSON.`,
+              {
+                nodeId: node.id,
+                paramKey: key,
+              },
+            ),
+          );
+        }
+      }
+
+      for (const key of ['tileWidth', 'tileHeight', 'strideX', 'strideY', 'scale', 'limit']) {
+        const value = node.params[key];
+        if (
+          value !== undefined &&
+          value !== null &&
+          value !== '' &&
+          (!Number.isFinite(Number(value)) || Number(value) <= 0)
+        ) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'invalid_positive_number',
+              `${key} must be a positive number.`,
+              {
+                nodeId: node.id,
+                paramKey: key,
+              },
+            ),
+          );
+        }
+      }
+
+      if (node.type === 'control.list_literal' && !parseJsonValue(node.params.itemsJson)) {
+        issues.push(
+          createIssue('invalid_params', 'invalid_json_param', 'itemsJson must be valid JSON.', {
+            nodeId: node.id,
+            paramKey: 'itemsJson',
+          }),
+        );
+      }
+
+      if (node.type === 'control.compare') {
+        const operator = String(node.params.operator ?? '').trim();
+        if (!['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains'].includes(operator)) {
+          issues.push(
+            createIssue('invalid_params', 'invalid_compare_operator', 'operator is invalid.', {
+              nodeId: node.id,
+              paramKey: 'operator',
+            }),
+          );
+        }
+        if (!parseJsonValue(node.params.rightValueJson)) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'invalid_json_param',
+              'rightValueJson must be valid JSON.',
+              {
+                nodeId: node.id,
+                paramKey: 'rightValueJson',
+              },
+            ),
+          );
+        }
+      }
+
+      if (node.type === 'dataset.split_samples') {
+        const trainRatio = Number(node.params.trainRatio ?? 0);
+        const valRatio = Number(node.params.valRatio ?? 0);
+        const testRatio = Number(node.params.testRatio ?? 0);
+        if (
+          Number.isFinite(trainRatio + valRatio + testRatio) &&
+          Math.abs(trainRatio + valRatio + testRatio - 1) > 1e-6
+        ) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'invalid_split_ratio',
+              'trainRatio + valRatio + testRatio must equal 1.',
+              {
+                nodeId: node.id,
+                paramKey: 'trainRatio',
+              },
+            ),
+          );
+        }
+      }
+
+      if (node.type === 'tabular.predict_model' || node.type === 'custom.api_predict') {
+        const hasModelInput = Boolean(parseBinding(node.inputBindings.model));
+        const hasModelParam =
+          typeof node.params.modelVersionId === 'string' &&
+          node.params.modelVersionId.trim().length > 0;
+        if (!hasModelInput && !hasModelParam) {
+          issues.push(
+            createIssue(
+              'invalid_params',
+              'missing_model_reference',
+              'A model input or modelVersionId is required.',
+              {
+                nodeId: node.id,
+                paramKey: 'modelVersionId',
+                portKey: 'model',
+              },
+            ),
+          );
+        }
+      }
+
+      for (const input of effectiveInputs) {
+        const binding = node.inputBindings[input.key];
+        const parsedBinding = parseBinding(binding);
+        const sourceTypes = outputTypeForBinding(binding);
+        if (
+          binding &&
+          sourceTypes.length &&
+          !sourceTypes.some((type) => input.dataTypes.includes(type))
+        ) {
+          issues.push(
+            createIssue(
+              'schema_mismatch',
+              'incompatible_edge_data_types',
+              `${input.label} is connected to an incompatible output type.`,
+              {
+                nodeId: node.id,
+                portKey: input.key,
+                expected: input.dataTypes.join(', '),
+                actual: sourceTypes.join(', '),
+              },
+            ),
+          );
+          continue;
+        }
+
+        if (!binding || !parsedBinding) {
+          continue;
+        }
+
+        const sourceNode = nodeById.get(parsedBinding.nodeId);
+        const sourceDefinition = sourceNode ? definitionByType.get(sourceNode.type) : undefined;
+        const targetContract = getEffectiveInputContractForGraph(
+          definitions,
+          workflowVersion,
+          context,
+          node,
+          input.key,
+        );
+        if (!sourceNode || !targetContract) {
+          continue;
+        }
+
+        const resolvedEffectiveSources = resolveEffectiveSources(
+          parsedBinding.nodeId,
+          parsedBinding.portKey,
+        );
+        const effectiveSources =
+          resolvedEffectiveSources.length > 0
+            ? resolvedEffectiveSources
+            : [
+                {
+                  nodeId: parsedBinding.nodeId,
+                  node: sourceNode,
+                  definition: sourceDefinition,
+                  portKey: parsedBinding.portKey,
+                },
+              ];
+
+        for (const candidate of effectiveSources) {
+          if (candidate.node.type === 'source.dataset_version') {
+            const datasetVersionId =
+              typeof candidate.node.params.datasetVersionId === 'string'
+                ? candidate.node.params.datasetVersionId
+                : '';
+            if (!datasetVersionId.trim()) {
+              continue;
+            }
+            const semanticMatch = datasetMatchesPortContract(context, datasetVersionId, targetContract);
+            if (!semanticMatch.ok) {
+              issues.push(
+                createIssue(
+                  'schema_mismatch',
+                  'dataset_semantic_mismatch',
+                  `${input.label} expects ${summarizePortContract(targetContract)}.`,
+                  {
+                    nodeId: node.id,
+                    portKey: input.key,
+                    expected: summarizePortContract(targetContract),
+                    actual: `${candidate.node.id}.${candidate.portKey}: ${semanticMatch.reasons.join('; ')}`,
+                    suggestion:
+                      'Choose a compatible dataset version or reconnect this input to a compatible upstream node.',
+                  },
+                ),
+              );
+            }
+            continue;
+          }
+
+          const sourceContract = getEffectiveOutputContractForGraph(
+            definitions,
+            workflowVersion,
+            context,
+            candidate.node,
+            candidate.portKey,
+          );
+          if (!sourceContract) {
+            continue;
+          }
+          const compatibility = arePortContractsCompatible(sourceContract, targetContract);
+          if (!compatibility.ok) {
+            issues.push(
+              createIssue(
+                'schema_mismatch',
+                'edge_contract_mismatch',
+                `${input.label} expects ${summarizePortContract(targetContract)}.`,
+                {
+                  nodeId: node.id,
+                  portKey: input.key,
+                  expected: summarizePortContract(targetContract),
+                  actual: `${candidate.node.id}.${candidate.portKey}: ${compatibility.reasons.join('; ')}`,
+                  suggestion:
+                    'Replace the upstream node or insert a compatible transform before this input.',
+                },
+              ),
+            );
+          }
+        }
+      }
+
+      return [node.id, analysisFromIssues(definition, issues)] as const;
+    }),
+  );
+
+  const issues = Object.values(byNodeId).flatMap((analysis) => analysis.issues);
+
+  return {
+    byNodeId,
+    issues,
+  };
 }

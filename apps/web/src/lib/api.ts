@@ -47,6 +47,8 @@ import type {
   WorkflowPortDefinition,
   WorkflowRunSummary,
   WorkflowTemplateDefinition,
+  WorkflowValidationIssue,
+  WorkflowValidationResult,
   WorkflowVersionDetail,
   WorkflowVersionSummary,
 } from '@platform/types';
@@ -579,6 +581,22 @@ function normalizeWorkflowPortContract(input: ApiRecord): WorkflowPortContract {
       getStringArray<string>(input, 'producedColumns').length > 0
         ? getStringArray<string>(input, 'producedColumns')
         : getStringArray<string>(input, 'produced_columns'),
+    taskTypes:
+      getStringArray<string>(input, 'taskTypes').length > 0
+        ? getStringArray<string>(input, 'taskTypes')
+        : getStringArray<string>(input, 'task_types'),
+    annotationKinds:
+      getStringArray<string>(input, 'annotationKinds').length > 0
+        ? getStringArray<string>(input, 'annotationKinds')
+        : getStringArray<string>(input, 'annotation_kinds'),
+    sampleKinds:
+      getStringArray<string>(input, 'sampleKinds').length > 0
+        ? getStringArray<string>(input, 'sampleKinds')
+        : getStringArray<string>(input, 'sample_kinds'),
+    valueTypes:
+      getStringArray<string>(input, 'valueTypes').length > 0
+        ? getStringArray<string>(input, 'valueTypes')
+        : getStringArray<string>(input, 'value_types'),
     notes: getStringArray<string>(input, 'notes'),
   };
 }
@@ -1019,6 +1037,31 @@ function normalizeWorkflowNodeTestResult(input: ApiRecord): WorkflowNodeTestResu
     inputPreview,
     outputPreview,
     errors: getStringArray<string>(input, 'errors'),
+  };
+}
+
+function normalizeWorkflowValidationIssue(input: ApiRecord): WorkflowValidationIssue {
+  return {
+    code: getString(input, 'code'),
+    severity:
+      (getString(input, 'severity') as WorkflowValidationIssue['severity']) || 'error',
+    message: getString(input, 'message'),
+    nodeId: getOptionalString(input, 'nodeId') ?? getOptionalString(input, 'node_id'),
+    portKey: getOptionalString(input, 'portKey') ?? getOptionalString(input, 'port_key'),
+    paramKey: getOptionalString(input, 'paramKey') ?? getOptionalString(input, 'param_key'),
+    expected: getOptionalString(input, 'expected'),
+    actual: getOptionalString(input, 'actual'),
+    suggestion: getOptionalString(input, 'suggestion'),
+  };
+}
+
+function normalizeWorkflowValidationResult(input: ApiRecord): WorkflowValidationResult {
+  const rawIssues = Array.isArray(input.issues) ? (input.issues as ApiRecord[]) : [];
+  return {
+    valid: Boolean(input.valid),
+    errors: getStringArray<string>(input, 'errors'),
+    warnings: getStringArray<string>(input, 'warnings'),
+    issues: rawIssues.map(normalizeWorkflowValidationIssue),
   };
 }
 
@@ -2301,17 +2344,13 @@ export async function deleteWorkflowVersion(
 export async function validateWorkflow(
   token: string,
   workflowVersion: WorkflowVersionDetail,
-): Promise<{ valid: boolean; errors: string[]; warnings: string[] }> {
+): Promise<WorkflowValidationResult> {
   const payload = await requestJson<ApiRecord>('/workflows/validate', {
     method: 'POST',
     token,
     body: toWorkflowValidationPayload(workflowVersion),
   });
-  return {
-    valid: Boolean(payload.valid),
-    errors: getStringArray<string>(payload, 'errors'),
-    warnings: getStringArray<string>(payload, 'warnings'),
-  };
+  return normalizeWorkflowValidationResult(payload);
 }
 
 export async function testWorkflowNode(

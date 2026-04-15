@@ -6,9 +6,11 @@ workspace governance.
 
 ## Release Snapshot
 
-- Current release target: `v5.4`
+- Current release target: `v6`
 - Cross-page handoff is now contract-driven for datasets, ROIs, model versions, and GEE credentials.
 - Workflow node extension rules are documented in `docs/architecture/workflow-node-extension-standard.md`.
+- Structured workflow composition now includes nested subgraphs, boundary-node-derived interfaces, and explicit control-flow primitives instead of ad hoc page coupling.
+- External HTTP API workflow nodes now share a versioned contract documented in `docs/architecture/custom-api-node-contract.md`.
 - Workspace module documentation is generated from `apps/web/src/config/workspace-modules.json`.
 - Workflow node scaffolding and contract validation are now built into local scripts and CI.
 - Personal assets, workflows, spatial overlays, and workspace settings are documented as separate, composable surfaces.
@@ -75,6 +77,7 @@ npm run dev --workspace @platform/web
 - `docs/README.md`: docs index and governance entry
 - `docs/architecture/overview.md`: stable boundaries and runtime flows
 - `docs/architecture/workflow-node-extension-standard.md`: required workflow node integration rules
+- `docs/architecture/custom-api-node-contract.md`: versioned request and response contract for `provider_http_api` workflow nodes
 - `docs/generated/module-catalog.md`: generated module registry snapshot
 - `docs/api/openapi.json`: generated API contract snapshot
 
@@ -103,5 +106,5 @@ Use it before editing the real catalog, runtime, mock catalog, and tests.
 
 - Remote: [iqboshi/platform](https://github.com/iqboshi/platform.git)
 - Default branch: `main`
-- Release tags: `v5.0`, `v5.1`, `v5.2`, `v5.3`, `v5.4`
+- Release tags: `v5.0`, `v5.1`, `v5.2`, `v5.3`, `v5.4`, `v6`
 - Merge policy: PR or protected-branch push only after validation passes

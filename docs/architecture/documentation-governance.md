@@ -1,6 +1,6 @@
 ---
 source_of_truth: manual
-last_verified_at: 2026-04-12
+last_verified_at: 2026-04-16
 owned_by: platform-team
 derived_from:
   - scripts/validate_docs.py
@@ -31,7 +31,8 @@ Every Markdown file in `docs/` must declare:
 1. Change code or registry sources first.
 2. Regenerate generated docs.
 3. Update manual docs only where stable behavior or architecture changed.
-4. Run documentation validation before merging.
+4. Before any GitHub push or release tag, verify that manual docs still match the current implementation.
+5. Run documentation validation before merging or pushing.
 
 ## Commands
 

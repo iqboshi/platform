@@ -75,6 +75,8 @@ export function workflowCategoryKey(category: WorkflowNodeCatalogItem['category'
       return 'workflows.category.split';
     case 'inference':
       return 'workflows.category.inference';
+    case 'control':
+      return 'workflows.category.control';
     default:
       return 'workflows.category.postprocess';
   }

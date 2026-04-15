@@ -31,7 +31,10 @@ from platform_backend.services.platform_store import (
     update_workflow_version,
 )
 from platform_backend.services.spatial_store import resolve_saved_rois_in_workflow_graph
-from platform_backend.workflows.validation import validate_workflow_graph
+from platform_backend.workflows.validation import (
+    resolve_dataset_semantics_from_db,
+    validate_workflow_graph,
+)
 
 router = APIRouter()
 DatabaseDep = Annotated[Session, Depends(get_db)]
@@ -94,6 +97,8 @@ def save_workflow_version_route(
         return save_current_workflow_version(db, request, current_user)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get(
@@ -211,7 +216,12 @@ def validate_workflow(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return validate_workflow_graph(resolved_graph)
+    return validate_workflow_graph(
+        resolved_graph,
+        dataset_semantics_resolver=lambda dataset_version_id: resolve_dataset_semantics_from_db(
+            db, dataset_version_id
+        ),
+    )
 
 
 @router.post(

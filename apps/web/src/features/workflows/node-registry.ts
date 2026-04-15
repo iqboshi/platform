@@ -2,7 +2,6 @@ import type {
   DatasetSummary,
   DatasetVersionSummary,
   GeeCredentialSummary,
-  ModelAlgorithmKey,
   ModelVersionSummary,
   SpatialRoiSummary,
   WorkflowEdge,
@@ -10,11 +9,26 @@ import type {
   WorkflowNodeCatalogItem,
   WorkflowParamDefinition,
   WorkflowParamOption,
+  WorkflowPortContract,
   WorkflowPortDataType,
   WorkflowPortDefinition,
   WorkflowTemplateDefinition,
+  WorkflowVersionDetail,
 } from '@platform/types';
 import type { Connection } from '@xyflow/react';
+import {
+  arePortContractsCompatible,
+  datasetMatchesPortContract,
+  getPortContract,
+  parseBinding,
+} from './workflow-semantics';
+import {
+  getEffectiveInputContracts,
+  getEffectiveNodeInputDefs,
+  getEffectiveNodeOutputDefs,
+  getEffectiveOutputContracts,
+  syncCallSubgraphNodeInterfaces,
+} from './workflow-subgraphs';
 
 export type WorkflowNodeDefinition = WorkflowNodeCatalogItem;
 export type WorkflowTemplate = WorkflowTemplateDefinition;
@@ -27,41 +41,119 @@ export interface WorkflowEditorContext {
   spatialRois: SpatialRoiSummary[];
 }
 
-function algorithmForNodeType(nodeType: string): ModelAlgorithmKey | undefined {
-  if (nodeType === 'tabular.linear_regression_predict') {
-    return 'linear_regression';
-  }
-  if (nodeType === 'tabular.svm_regression_predict') {
-    return 'svm_regression';
-  }
-  if (nodeType === 'tabular.random_forest_regression_predict') {
-    return 'random_forest_regression';
-  }
-  return undefined;
+export interface WorkflowParameterOptionsResult {
+  options: WorkflowParamOption[];
+  emptyReason?: 'no_compatible_dataset_versions';
 }
 
 function compatibleModelVersions(
   context: WorkflowEditorContext,
   nodeType: string,
 ): ModelVersionSummary[] {
+  if (nodeType === 'custom.api_predict' || nodeType === 'custom.api_predict_samples') {
+    return context.modelVersions.filter((item) => item.sourceType === 'custom_api');
+  }
   if (nodeType === 'source.model_version') {
     return context.modelVersions;
   }
+  return context.modelVersions.filter((item) => item.sourceType !== 'custom_api');
+}
 
-  if (nodeType === 'custom.api_predict') {
-    return context.modelVersions.filter((item) => item.sourceType === 'custom_api');
+function compatibleDatasetVersions(
+  context: WorkflowEditorContext,
+  nodeType: string,
+  options?: {
+    nodeId?: string;
+    workflowVersion?: WorkflowVersionDetail;
+    definitions?: WorkflowNodeDefinition[];
+  },
+): DatasetVersionSummary[] {
+  if (nodeType !== 'source.dataset_version' || !options?.nodeId || !options.workflowVersion || !options.definitions) {
+    return context.datasetVersions;
   }
 
-  const requiredAlgorithm = algorithmForNodeType(nodeType);
-  return context.modelVersions.filter((item) => {
-    if (item.sourceType === 'custom_api') {
-      return false;
-    }
-    if (!requiredAlgorithm) {
-      return true;
-    }
-    return item.algorithmKey === requiredAlgorithm;
-  });
+  const nodeById = new Map(options.workflowVersion.graph.nodes.map((node) => [node.id, node]));
+  const outgoingContracts = options.workflowVersion.graph.edges
+    .filter((edge) => edge.source === options.nodeId)
+    .map((edge) => {
+      const targetNode = nodeById.get(edge.target);
+      const targetDefinition = targetNode
+        ? getWorkflowDefinitionByType(options.definitions ?? [], targetNode.type)
+        : undefined;
+      let targetHandle = edge.targetHandle;
+      if (!targetHandle && targetNode) {
+        targetHandle = Object.entries(targetNode.inputBindings).find(([, binding]) => {
+          const parsed = parseBinding(binding);
+          return parsed?.nodeId === options.nodeId && parsed?.portKey === edge.sourceHandle;
+        })?.[0];
+      }
+      const contracts = targetNode
+        ? getEffectiveInputContracts(targetNode, targetDefinition)
+        : targetDefinition?.inputContracts ?? [];
+      return contracts.find((contract) => contract.portKey === targetHandle);
+    })
+    .filter((contract): contract is WorkflowPortContract => Boolean(contract));
+
+  if (!outgoingContracts.length) {
+    return context.datasetVersions;
+  }
+
+  return context.datasetVersions.filter((version) =>
+    outgoingContracts.every((contract) => datasetMatchesPortContract(context, version.id, contract).ok),
+  );
+}
+
+function resolveDatasetVersionEmptyReason(
+  context: WorkflowEditorContext,
+  definition: WorkflowParamDefinition,
+  nodeType: string,
+  options?: {
+    nodeId?: string;
+    workflowVersion?: WorkflowVersionDetail;
+    definitions?: WorkflowNodeDefinition[];
+  },
+): WorkflowParameterOptionsResult['emptyReason'] {
+  if (definition.fieldType !== 'datasetVersion') {
+    return undefined;
+  }
+  if (compatibleDatasetVersions(context, nodeType, options).length > 0) {
+    return undefined;
+  }
+  if (nodeType === 'source.dataset_version' && options?.nodeId && options.workflowVersion && options.definitions) {
+    return 'no_compatible_dataset_versions';
+  }
+  return undefined;
+}
+
+function buildDatasetVersionOptionsResult(
+  context: WorkflowEditorContext,
+  definition: WorkflowParamDefinition,
+  nodeType: string,
+  options?: {
+    nodeId?: string;
+    workflowVersion?: WorkflowVersionDetail;
+    definitions?: WorkflowNodeDefinition[];
+  },
+): WorkflowParameterOptionsResult {
+  const versions =
+    nodeType === 'source.dataset_version'
+      ? context.datasetVersions
+      : compatibleDatasetVersions(context, nodeType, options);
+  return {
+    options: formatDatasetVersionOptions(context, versions),
+    emptyReason: resolveDatasetVersionEmptyReason(context, definition, nodeType, options),
+  };
+}
+
+function formatDatasetVersionOptions(
+  context: WorkflowEditorContext,
+  versions: DatasetVersionSummary[],
+): WorkflowParamOption[] {
+  const datasetNames = new Map(context.datasets.map((item) => [item.id, item.name]));
+  return versions.map((item) => ({
+    value: item.id,
+    label: `${datasetNames.get(item.datasetId) ?? item.datasetId} / v${item.version}`,
+  }));
 }
 
 const dataTypeLabels: Record<WorkflowPortDataType, string> = {
@@ -70,8 +162,20 @@ const dataTypeLabels: Record<WorkflowPortDataType, string> = {
   raster: 'Raster',
   vector: 'Vector',
   roi: 'ROI',
+  geo_raster: 'Geo Raster',
+  image_collection: 'Image Collection',
+  feature_collection: 'Feature Collection',
+  mask_raster: 'Mask Raster',
+  mask_collection: 'Mask Collection',
+  scene_collection: 'Scene Collection',
+  scene: 'Scene',
   tile_set: 'Tiles',
   label_set: 'Labels',
+  annotation_set: 'Annotations',
+  prediction_set: 'Predictions',
+  sample_set: 'Samples',
+  value: 'Value',
+  value_list: 'Value List',
   model_version: 'Model Version',
   model_ref: 'Model',
   metrics_report: 'Metrics',
@@ -80,53 +184,76 @@ const dataTypeLabels: Record<WorkflowPortDataType, string> = {
   artifact: 'Artifact',
 };
 
+function defaultCredentialMode(context: WorkflowEditorContext): string {
+  if (context.geeCredentials.some((item) => item.isPlatformDefault)) {
+    return 'platform_default';
+  }
+  return context.geeCredentials.length ? 'personal' : 'platform_default';
+}
+
+function applyParamDependencies(
+  definition: WorkflowNodeDefinition,
+  params: Record<string, unknown>,
+  context: WorkflowEditorContext,
+): Record<string, unknown> {
+  const nextParams = { ...params };
+  const hasPersonalCredentialField = definition.params.some(
+    (field) => field.key === 'personalCredentialId' || field.fieldType === 'geeCredential',
+  );
+  const hasRoiField = definition.params.some(
+    (field) => field.key === 'roiId' || field.fieldType === 'spatialRoi',
+  );
+
+  if (hasPersonalCredentialField) {
+    const credentialMode =
+      typeof nextParams.credentialMode === 'string'
+        ? nextParams.credentialMode
+        : defaultCredentialMode(context);
+    nextParams.credentialMode = credentialMode;
+    if (credentialMode === 'platform_default') {
+      nextParams.personalCredentialId = '';
+    }
+  }
+
+  if (hasRoiField && nextParams.roiMode === 'saved_roi' && !nextParams.roiId) {
+    nextParams.roiId = '';
+  }
+
+  return nextParams;
+}
+
 export function createDefaultParams(
   definition: WorkflowNodeDefinition,
   context: WorkflowEditorContext,
 ): Record<string, unknown> {
   const defaults: Record<string, unknown> = {};
-  const matchingModels = compatibleModelVersions(context, definition.type);
-  const hasPlatformDefaultGeeCredential = context.geeCredentials.some(
-    (item) => item.isPlatformDefault,
-  );
 
   for (const field of definition.params) {
     if (
-      definition.type === 'source.sentinel2_gee_download' &&
-      field.key === 'credentialMode'
+      field.key === 'credentialMode' &&
+      (field.options ?? []).some((option) => ['platform_default', 'personal'].includes(option.value))
     ) {
-      defaults[field.key] =
-        hasPlatformDefaultGeeCredential
-          ? 'platform_default'
-          : context.geeCredentials.length > 0
-          ? 'personal'
-          : field.defaultValue ?? 'platform_default';
+      defaults[field.key] = defaultCredentialMode(context);
       continue;
     }
 
     if (field.fieldType === 'datasetVersion') {
-      defaults[field.key] = context.datasetVersions[0]?.id ?? '';
+      defaults[field.key] = '';
       continue;
     }
 
     if (field.fieldType === 'modelVersion') {
-      defaults[field.key] = matchingModels[0]?.id ?? '';
+      defaults[field.key] = '';
       continue;
     }
 
-    if (
-      definition.type === 'source.sentinel2_gee_download' &&
-      field.key === 'personalCredentialId'
-    ) {
-      defaults[field.key] = context.geeCredentials[0]?.id ?? '';
+    if (field.fieldType === 'spatialRoi') {
+      defaults[field.key] = '';
       continue;
     }
 
-    if (
-      definition.type === 'source.sentinel2_gee_download' &&
-      field.key === 'roiId'
-    ) {
-      defaults[field.key] = context.spatialRois[0]?.id ?? '';
+    if (field.fieldType === 'geeCredential') {
+      defaults[field.key] = '';
       continue;
     }
 
@@ -135,45 +262,54 @@ export function createDefaultParams(
     }
   }
 
-  return defaults;
+  return applyParamDependencies(definition, defaults, context);
 }
 
 export function resolveParameterOptions(
   definition: WorkflowParamDefinition,
   context: WorkflowEditorContext,
-  nodeType?: string,
-): WorkflowParamOption[] {
-  if (nodeType === 'source.sentinel2_gee_download' && definition.key === 'personalCredentialId') {
-    return context.geeCredentials.map((item) => ({
-      value: item.id,
-      label: `${item.name}${item.projectId ? ` / ${item.projectId}` : ''}`,
-    }));
-  }
-
-  if (nodeType === 'source.sentinel2_gee_download' && definition.key === 'roiId') {
-    return context.spatialRois.map((item) => ({
-      value: item.id,
-      label: `${item.name}${item.tags?.length ? ` / ${item.tags.join(', ')}` : ''}`,
-    }));
-  }
-
+  options?: {
+    nodeId?: string;
+    nodeType?: string;
+    workflowVersion?: WorkflowVersionDetail;
+    definitions?: WorkflowNodeDefinition[];
+  },
+): WorkflowParameterOptionsResult {
+  const nodeType = options?.nodeType ?? '';
   if (definition.fieldType === 'datasetVersion') {
-    const datasetNames = new Map(context.datasets.map((item) => [item.id, item.name]));
-    return context.datasetVersions.map((item) => ({
-      value: item.id,
-      label: `${datasetNames.get(item.datasetId) ?? item.datasetId} / v${item.version}`,
-    }));
+    return buildDatasetVersionOptionsResult(context, definition, nodeType, options);
   }
 
   if (definition.fieldType === 'modelVersion') {
-    const models = nodeType ? compatibleModelVersions(context, nodeType) : context.modelVersions;
-    return models.map((item) => ({
-      value: item.id,
-      label: `${item.modelName ?? item.modelId} / ${item.version} / ${item.framework}`,
-    }));
+    return {
+      options: compatibleModelVersions(context, nodeType).map((item) => ({
+        value: item.id,
+        label: `${item.modelName ?? item.modelId} / ${item.version} / ${item.framework}`,
+      })),
+    };
   }
 
-  return definition.options ?? [];
+  if (definition.fieldType === 'spatialRoi') {
+    return {
+      options: context.spatialRois.map((item) => ({
+        value: item.id,
+        label: `${item.name}${item.tags?.length ? ` / ${item.tags.join(', ')}` : ''}`,
+      })),
+    };
+  }
+
+  if (definition.fieldType === 'geeCredential') {
+    return {
+      options: context.geeCredentials.map((item) => ({
+        value: item.id,
+        label: `${item.name}${item.projectId ? ` / ${item.projectId}` : ''}`,
+      })),
+    };
+  }
+
+  return {
+    options: definition.options ?? [],
+  };
 }
 
 export function getWorkflowDefinitionByType(
@@ -208,13 +344,17 @@ function getNodePort(
   }
 
   const definition = getWorkflowDefinitionByType(definitions, node.type);
-  const ports = kind === 'input' ? definition?.inputs ?? [] : node.outputDefs;
+  const ports =
+    kind === 'input'
+      ? getEffectiveNodeInputDefs(node, definition)
+      : getEffectiveNodeOutputDefs(node, definition);
   return ports.find((port) => port.key === handle);
 }
 
 export function canConnectPorts(
   definitions: WorkflowNodeDefinition[],
   nodes: WorkflowNode[],
+  context: WorkflowEditorContext,
   connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
 ): boolean {
   if (!connection.source || !connection.sourceHandle || !connection.target || !connection.targetHandle) {
@@ -223,6 +363,12 @@ export function canConnectPorts(
 
   const sourceNode = nodes.find((node) => node.id === connection.source);
   const targetNode = nodes.find((node) => node.id === connection.target);
+  const sourceDefinition = sourceNode
+    ? getWorkflowDefinitionByType(definitions, sourceNode.type)
+    : undefined;
+  const targetDefinition = targetNode
+    ? getWorkflowDefinitionByType(definitions, targetNode.type)
+    : undefined;
   const sourcePort = getNodePort(definitions, sourceNode, connection.sourceHandle, 'output');
   const targetPort = getNodePort(definitions, targetNode, connection.targetHandle, 'input');
 
@@ -230,7 +376,39 @@ export function canConnectPorts(
     return false;
   }
 
-  return sourcePort.dataTypes.some((dataType) => targetPort.dataTypes.includes(dataType));
+  if (!sourcePort.dataTypes.some((dataType) => targetPort.dataTypes.includes(dataType))) {
+    return false;
+  }
+
+  const targetContract = getPortContract(targetDefinition, 'input', connection.targetHandle);
+  const effectiveTargetContract = targetNode
+    ? getEffectiveInputContracts(targetNode, targetDefinition).find(
+        (contract) => contract.portKey === connection.targetHandle,
+      )
+    : targetContract;
+  if (!effectiveTargetContract) {
+    return true;
+  }
+
+  if (sourceNode.type === 'source.dataset_version') {
+    const datasetVersionId =
+      typeof sourceNode.params.datasetVersionId === 'string' ? sourceNode.params.datasetVersionId : '';
+    if (datasetVersionId.trim()) {
+      return datasetMatchesPortContract(context, datasetVersionId, effectiveTargetContract).ok;
+    }
+    return true;
+  }
+
+  const sourceContract = sourceNode
+    ? getEffectiveOutputContracts(sourceNode, sourceDefinition).find(
+        (contract) => contract.portKey === connection.sourceHandle,
+      )
+    : getPortContract(sourceDefinition, 'output', connection.sourceHandle);
+  if (sourceContract) {
+    return arePortContractsCompatible(sourceContract, effectiveTargetContract).ok;
+  }
+
+  return true;
 }
 
 export function catalogMatchesFilters(
@@ -273,34 +451,36 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function applySentinelCredentialDefaults(
+function clearTemplateAssetBindings(
+  definition: WorkflowNodeDefinition | undefined,
   params: Record<string, unknown>,
-  context: WorkflowEditorContext,
 ): Record<string, unknown> {
-  if (!context.geeCredentials.length) {
+  if (!definition) {
     return params;
   }
 
-  const credentialMode =
-    typeof params.credentialMode === 'string' ? params.credentialMode : 'platform_default';
-  const personalCredentialId =
-    typeof params.personalCredentialId === 'string' ? params.personalCredentialId : '';
+  let nextParams: Record<string, unknown> | undefined;
+  for (const field of definition.params) {
+    if (
+      field.fieldType !== 'datasetVersion' &&
+      field.fieldType !== 'modelVersion' &&
+      field.fieldType !== 'spatialRoi' &&
+      field.fieldType !== 'geeCredential'
+    ) {
+      continue;
+    }
 
-  if (credentialMode === 'personal' && !personalCredentialId) {
-    return {
-      ...params,
-      personalCredentialId: context.geeCredentials[0]?.id ?? '',
-    };
+    if (!(field.key in params)) {
+      continue;
+    }
+
+    if (!nextParams) {
+      nextParams = { ...params };
+    }
+    nextParams[field.key] = '';
   }
 
-  if (credentialMode === 'platform_default' && personalCredentialId) {
-    return {
-      ...params,
-      personalCredentialId: '',
-    };
-  }
-
-  return params;
+  return nextParams ?? params;
 }
 
 export function instantiateTemplateGraph(
@@ -323,31 +503,56 @@ export function instantiateTemplateGraph(
 
   const nodes = template.graph.nodes.map((node) => {
     const definition = getWorkflowDefinitionByType(definitions, node.type);
+    const syncedNode = syncCallSubgraphNodeInterfaces(node);
     const nextId = nodeIdMap.get(node.id) ?? node.id;
-    const mergedParams = {
-      ...(definition ? createDefaultParams(definition, context) : {}),
-      ...node.params,
-      ...(options?.useSampleBindings ? sampleBindings.get(node.id) ?? {} : {}),
-    };
+    const templateParams = options?.useSampleBindings
+      ? syncedNode.params
+      : clearTemplateAssetBindings(definition, syncedNode.params);
+    const mergedParams = applyParamDependencies(
+      definition ?? {
+        ...node,
+        label: node.type,
+        category: 'preprocess',
+        description: '',
+        runtimeKind: 'transform',
+        supportedTasks: [],
+        tags: [],
+        inputs: [],
+        outputs: node.outputDefs,
+        params: [],
+      },
+      {
+        ...(definition ? createDefaultParams(definition, context) : {}),
+        ...templateParams,
+        ...(options?.useSampleBindings ? sampleBindings.get(node.id) ?? {} : {}),
+      },
+      context,
+    );
 
     return {
       id: nextId,
-      type: node.type,
+      type: syncedNode.type,
       position: {
-        x: anchorPosition.x + (node.position.x - minX),
-        y: anchorPosition.y + (node.position.y - minY),
+        x: anchorPosition.x + (syncedNode.position.x - minX),
+        y: anchorPosition.y + (syncedNode.position.y - minY),
       },
-      params:
-        node.type === 'source.sentinel2_gee_download'
-          ? applySentinelCredentialDefaults(mergedParams, context)
-          : mergedParams,
+      params: mergedParams,
       inputBindings: Object.fromEntries(
-        Object.entries(node.inputBindings).map(([key, binding]) => {
+        Object.entries(syncedNode.inputBindings).map(([key, binding]) => {
           const [sourceNodeId, sourceHandle] = binding.split(':');
           return [key, `${nodeIdMap.get(sourceNodeId) ?? sourceNodeId}:${sourceHandle}`];
         }),
       ),
-      outputDefs: definition?.outputs ?? node.outputDefs,
+      inputDefs: getEffectiveNodeInputDefs(syncedNode, definition),
+      inputContracts: getEffectiveInputContracts(syncedNode, definition),
+      outputDefs: getEffectiveNodeOutputDefs(syncedNode, definition),
+      outputContracts: getEffectiveOutputContracts(syncedNode, definition),
+      subgraph: syncedNode.subgraph
+        ? {
+            nodes: syncedNode.subgraph.nodes.map((childNode) => syncCallSubgraphNodeInterfaces(childNode)),
+            edges: syncedNode.subgraph.edges.map((edge) => ({ ...edge })),
+          }
+        : undefined,
     } satisfies WorkflowNode;
   });
 

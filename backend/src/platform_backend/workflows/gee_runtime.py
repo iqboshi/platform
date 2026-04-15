@@ -15,8 +15,18 @@ import requests
 from platform_backend.core.settings import get_settings
 from platform_backend.domain_enums import DatasetKind
 from platform_backend.models.entities import User, WorkflowVersion
+from platform_backend.workflows.subgraph_runtime import (
+    CALL_SUBGRAPH_NODE_TYPE,
+    SUBGRAPH_INPUT_NODE_TYPE,
+    SUBGRAPH_OUTPUT_NODE_TYPE,
+)
 
-SUPPORTED_GEE_NODE_TYPES = {"source.sentinel2_gee_download"}
+SUPPORTED_GEE_NODE_TYPES = {
+    "source.sentinel2_gee_download",
+    CALL_SUBGRAPH_NODE_TYPE,
+    SUBGRAPH_INPUT_NODE_TYPE,
+    SUBGRAPH_OUTPUT_NODE_TYPE,
+}
 SENTINEL2_COLLECTION_ID = "COPERNICUS/S2_SR_HARMONIZED"
 GEE_DOWNLOAD_SAFETY_FILL_RATIO = 0.8
 GEE_DOWNLOAD_MAX_GRID_DIMENSION = 10_000
@@ -105,20 +115,32 @@ CreatePrivateDatasetVersionFn = Callable[..., Any]
 
 
 def supports_gee_node(node_type: str) -> bool:
-    return node_type in SUPPORTED_GEE_NODE_TYPES
+    return node_type == "source.sentinel2_gee_download"
 
 
 def is_supported_gee_graph(graph_json: dict[str, object]) -> bool:
-    nodes = graph_json.get("nodes", [])
-    if not isinstance(nodes, list) or not nodes:
+    node_types = _collect_graph_node_types(graph_json)
+    if not node_types:
         return False
-
-    node_types = {
-        str(node.get("type", ""))
-        for node in nodes
-        if isinstance(node, dict) and str(node.get("type", "")).strip()
-    }
     return bool(node_types) and node_types.issubset(SUPPORTED_GEE_NODE_TYPES)
+
+
+def _collect_graph_node_types(graph_json: dict[str, object]) -> set[str]:
+    nodes = graph_json.get("nodes", [])
+    if not isinstance(nodes, list):
+        return set()
+
+    node_types: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = str(node.get("type", "")).strip()
+        if node_type:
+            node_types.add(node_type)
+        subgraph = node.get("subgraph")
+        if isinstance(subgraph, dict):
+            node_types.update(_collect_graph_node_types(subgraph))
+    return node_types
 
 
 def parse_bbox(value: object) -> tuple[float, float, float, float]:
@@ -761,6 +783,41 @@ def _find_node(graph_json: dict[str, object], node_id: str) -> dict[str, object]
     raise LookupError(f"Workflow node was not found: {node_id}")
 
 
+def _subgraph_output_ports(graph_json: dict[str, object]) -> list[dict[str, object]]:
+    ports: list[dict[str, object]] = []
+    for node in sorted(
+        [
+            item
+            for item in _workflow_nodes(graph_json)
+            if str(item.get("type", "")).strip() == SUBGRAPH_OUTPUT_NODE_TYPE
+        ],
+        key=lambda item: (
+            float(item.get("position", {}).get("y", 0.0)),
+            float(item.get("position", {}).get("x", 0.0)),
+            str(item.get("id", "")),
+        ),
+    ):
+        raw_ports = node.get("input_defs", [])
+        if not isinstance(raw_ports, list):
+            continue
+        ports.extend(port for port in raw_ports if isinstance(port, dict))
+    return ports
+
+
+def _first_sentinel_node(graph_json: dict[str, object]) -> dict[str, object] | None:
+    for node in _workflow_nodes(graph_json):
+        node_type = str(node.get("type", "")).strip()
+        if node_type == "source.sentinel2_gee_download":
+            return node
+        if node_type == CALL_SUBGRAPH_NODE_TYPE:
+            subgraph = node.get("subgraph")
+            if isinstance(subgraph, dict):
+                nested = _first_sentinel_node(subgraph)
+                if nested is not None:
+                    return nested
+    return None
+
+
 def test_gee_node(
     *,
     graph_json: dict[str, object],
@@ -769,11 +826,22 @@ def test_gee_node(
 ) -> dict[str, object]:
     node = _find_node(graph_json, target_node_id)
     node_type = str(node.get("type", "")).strip()
-    if node_type != "source.sentinel2_gee_download":
+    preview_node = node
+    preview_ports = [{"key": "dataset"}]
+    if node_type == CALL_SUBGRAPH_NODE_TYPE:
+        subgraph = node.get("subgraph")
+        if not isinstance(subgraph, dict):
+            raise ValueError(f"Node {target_node_id} is missing a valid subgraph definition.")
+        sentinel_node = _first_sentinel_node(subgraph)
+        if sentinel_node is None:
+            raise NotImplementedError("GEE subgraphs currently require a nested source.sentinel2_gee_download node.")
+        preview_node = sentinel_node
+        preview_ports = _subgraph_output_ports(subgraph) or preview_ports
+    if str(preview_node.get("type", "")).strip() != "source.sentinel2_gee_download":
         raise NotImplementedError(f"GEE node testing is not supported for {node_type}.")
 
     params = parse_sentinel_download_params(
-        node.get("params", {}) if isinstance(node.get("params", {}), dict) else {}
+        preview_node.get("params", {}) if isinstance(preview_node.get("params", {}), dict) else {}
     )
     credential = resolve_credential(params.credential_mode, params.personal_credential_id)
     scene_metadata = preview_sentinel_scene(params, credential)
@@ -788,7 +856,7 @@ def test_gee_node(
         "node_id": target_node_id,
         "input_preview": {},
         "output_preview": {
-            "dataset": {
+            str(port.get("key", "dataset")): {
                 "kind": "dataset_version",
                 "dataset_name": dataset_name,
                 "version": 1,
@@ -799,6 +867,8 @@ def test_gee_node(
                 ),
                 **scene_metadata,
             }
+            for port in preview_ports
+            if str(port.get("key", "")).strip()
         },
     }
 
@@ -822,15 +892,9 @@ def execute_gee_graph(
         if isinstance(workflow_version.graph_json, dict)
         else {}
     )
-    source_nodes = [
-        node
-        for node in _workflow_nodes(graph_json)
-        if str(node.get("type", "")).strip() == "source.sentinel2_gee_download"
-    ]
-    if not source_nodes:
+    source_node = _first_sentinel_node(graph_json)
+    if source_node is None:
         raise LookupError("No Sentinel-2 source node is defined in the workflow graph.")
-
-    source_node = source_nodes[0]
     source_node_id = str(source_node.get("id", "sentinel-source"))
     params = parse_sentinel_download_params(
         source_node.get("params", {}) if isinstance(source_node.get("params", {}), dict) else {}

@@ -34,6 +34,8 @@ from platform_backend.models.entities import (
     WorkspaceMembership,
 )
 from platform_backend.seed_data import (
+    SEED_IMAGE_COLLECTION_DATASET_ID,
+    SEED_IMAGE_COLLECTION_DATASET_VERSION_ID,
     SEED_LINEAR_MODEL_ID,
     SEED_LINEAR_MODEL_VERSION_ID,
     SEED_PRODUCT_INSPECTION_ARM_ID,
@@ -41,6 +43,10 @@ from platform_backend.seed_data import (
     SEED_PRODUCT_SENSOR_HOUSING_ID,
     SEED_RANDOM_FOREST_MODEL_ID,
     SEED_RANDOM_FOREST_MODEL_VERSION_ID,
+    SEED_RASTER_DATASET_ID,
+    SEED_RASTER_DATASET_VERSION_ID,
+    SEED_SEGMENTATION_MODEL_ID,
+    SEED_SEGMENTATION_MODEL_VERSION_ID,
     SEED_SVM_MODEL_ID,
     SEED_SVM_MODEL_VERSION_ID,
     SEED_TABULAR_GROUND_TRUTH_DATASET_ID,
@@ -49,6 +55,8 @@ from platform_backend.seed_data import (
     SEED_TABULAR_INPUT_DATASET_VERSION_ID,
     SEED_TABULAR_PREDICTION_DATASET_ID,
     SEED_TABULAR_PREDICTION_DATASET_VERSION_ID,
+    SEED_VECTOR_DATASET_ID,
+    SEED_VECTOR_DATASET_VERSION_ID,
 )
 from platform_backend.workflows.catalog import catalog_definition
 from platform_backend.workflows.tabular_runtime import (
@@ -257,6 +265,89 @@ def _ensure_model_seed(
         model_version.metadata_json = metadata_json
 
 
+def _ensure_custom_api_model_seed(
+    *,
+    session,
+    workspace: Workspace,
+    model_id: str,
+    model_version_id: str,
+    model_name: str,
+    version: str,
+    task_type: str,
+    description: str,
+    file_name: str,
+    prediction_endpoint_url: str,
+    training_endpoint_url: str | None = None,
+    response_mode: str = "prediction_masks",
+    default_prediction_column: str = "prediction",
+    default_parameters: dict[str, object] | None = None,
+) -> None:
+    model = session.get(Model, model_id)
+    if model is None:
+        model = Model(
+            id=model_id,
+            workspace_id=workspace.id,
+            name=model_name,
+            task_type=task_type,
+            description=description,
+        )
+        session.add(model)
+        session.flush()
+    else:
+        model.name = model_name
+        model.task_type = task_type
+        model.description = description
+
+    target_dir = _ensure_storage_root() / "seed" / "models" / model_id / version
+    target_path = target_dir / file_name
+    api_config = {
+        "endpoint_url": prediction_endpoint_url.strip(),
+        "training_endpoint_url": (training_endpoint_url or "").strip(),
+        "timeout_seconds": 45,
+        "auth_type": "none",
+        "auth_token": "",
+        "auth_header_name": "",
+        "response_mode": response_mode,
+        "default_prediction_column": default_prediction_column,
+        "default_parameters": dict(default_parameters or {}),
+    }
+    _write_text_if_changed(target_path, json.dumps(api_config, indent=2))
+
+    metadata_json = {
+        "kind": "custom_api_model",
+        "source_type": "custom_api",
+        "execution_mode": "external_api",
+        "artifact_format": "json",
+        "visibility": "workspace",
+        "seeded": True,
+        "platform_asset": True,
+        "owner_display_name": "Platform",
+        "default_parameters": dict(default_parameters or {}),
+        "api_config": api_config,
+    }
+
+    model_version = session.get(ModelVersion, model_version_id)
+    if model_version is None:
+        model_version = ModelVersion(
+            id=model_version_id,
+            model_id=model.id,
+            version=version,
+            framework="http-api",
+            task_type=task_type,
+            weights_path=str(target_path.resolve()),
+            metadata_json=metadata_json,
+        )
+        session.add(model_version)
+        return
+
+    model_version.model_id = model.id
+    model_version.version = version
+    model_version.framework = "http-api"
+    model_version.task_type = task_type
+    model_version.weights_path = str(target_path.resolve())
+    model_version.metadata_json = metadata_json
+
+
 def _ensure_product_seed(
     *,
     session,
@@ -318,10 +409,7 @@ def _ensure_product_seed(
 _COMPACT_WORKFLOW_NODE_TYPES = {
     "source.dataset_version",
     "table.load_csv",
-    "tabular.linear_regression_predict",
-    "tabular.svm_regression_predict",
-    "tabular.random_forest_regression_predict",
-    "tabular.predict",
+    "tabular.predict_model",
     "metrics.validate_regression",
     "export.table",
     "export.metrics",
@@ -329,6 +417,85 @@ _COMPACT_WORKFLOW_NODE_TYPES = {
 
 
 def _ensure_seed_assets(session, workspace: Workspace, owner_user: User) -> None:
+    _ensure_dataset_seed(
+        session=session,
+        workspace=workspace,
+        dataset_id=SEED_RASTER_DATASET_ID,
+        dataset_version_id=SEED_RASTER_DATASET_VERSION_ID,
+        name="Sample Geo Raster",
+        kind=DatasetKind.RASTER,
+        description="Seeded raster placeholder for geospatial and sample workflow templates.",
+        file_name="sample-geo-raster.tif",
+        content_type="image/tiff",
+        content="FAKE-GEOTIFF-DATA",
+        projection="EPSG:4326",
+        metadata={
+            "bands": 3,
+            "width": 4096,
+            "height": 3072,
+            "contentType": "image/tiff",
+        },
+    )
+    _ensure_dataset_seed(
+        session=session,
+        workspace=workspace,
+        dataset_id=SEED_IMAGE_COLLECTION_DATASET_ID,
+        dataset_version_id=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID,
+        name="Sample RGB Image Collection",
+        kind=DatasetKind.RASTER,
+        description="Seeded RGB image collection archive for image patch workflow templates.",
+        file_name="sample-image-collection.zip",
+        content_type="application/zip",
+        content="FAKE-ZIP-IMAGE-COLLECTION",
+        metadata={
+            "contentType": "application/zip",
+            "format": "zip",
+            "sampleKind": "image_tile",
+            "channels": 3,
+            "imageCount": 12,
+        },
+    )
+    _ensure_dataset_seed(
+        session=session,
+        workspace=workspace,
+        dataset_id=SEED_VECTOR_DATASET_ID,
+        dataset_version_id=SEED_VECTOR_DATASET_VERSION_ID,
+        name="Sample Vector Labels",
+        kind=DatasetKind.VECTOR,
+        description="Seeded polygon labels for geospatial sample workflow templates.",
+        file_name="sample-vector-labels.geojson",
+        content_type="application/geo+json",
+        content=json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"class": "crop"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [116.10, 39.70],
+                                    [116.20, 39.70],
+                                    [116.20, 39.80],
+                                    [116.10, 39.80],
+                                    [116.10, 39.70],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        projection="EPSG:4326",
+        metadata={
+            "featureCount": 1,
+            "geometryType": "Polygon",
+            "contentType": "application/geo+json",
+        },
+    )
     _ensure_dataset_seed(
         session=session,
         workspace=workspace,
@@ -418,6 +585,21 @@ def _ensure_seed_assets(session, workspace: Workspace, owner_user: User) -> None
         ),
         feature_names=["feature_a", "feature_b"],
         default_parameters={"roundDigits": 4},
+    )
+    _ensure_custom_api_model_seed(
+        session=session,
+        workspace=workspace,
+        model_id=SEED_SEGMENTATION_MODEL_ID,
+        model_version_id=SEED_SEGMENTATION_MODEL_VERSION_ID,
+        model_name="Seed Segmentation API",
+        version="1.0.0",
+        task_type="semantic_segmentation",
+        description="Seeded external segmentation model for workflow templates.",
+        file_name="seed-segmentation-api.json",
+        prediction_endpoint_url="https://example.com/predict",
+        training_endpoint_url="https://example.com/train",
+        response_mode="prediction_masks",
+        default_parameters={"threshold": 0.5},
     )
     _ensure_model_seed(
         session=session,
@@ -581,15 +763,15 @@ def _default_workflow_graph() -> dict[str, object]:
             },
             {
                 "id": "predict-table",
-                "type": "tabular.linear_regression_predict",
+                "type": "tabular.predict_model",
                 "position": {"x": 560.0, "y": 160.0},
                 "params": {
                     "modelVersionId": SEED_LINEAR_MODEL_VERSION_ID,
                     "predictionColumn": "prediction",
-                    "roundDigits": 4,
+                    "runtimeParametersJson": "{\"roundDigits\": 4}",
                 },
                 "input_bindings": {"table": "load-table:table"},
-                "output_defs": output_defs("tabular.linear_regression_predict"),
+                "output_defs": output_defs("tabular.predict_model"),
             },
             {
                 "id": "export-table",

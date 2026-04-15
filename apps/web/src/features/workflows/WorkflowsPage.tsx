@@ -1,6 +1,7 @@
 import type { PlatformDataSnapshot } from '@/lib/api';
+import type { WorkflowStarterInputKind, WorkflowValidationResult } from '@platform/types';
 
-import { Alert, App, Button, Col, Modal, Progress, Row, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Col, Modal, Progress, Row, Segmented, Space, Table, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -30,9 +31,11 @@ import {
   attachModelVersionToWorkflow,
   attachSavedRoiToWorkflow,
 } from './draft-handoff';
+import { localizeWorkflowCatalog, localizeWorkflowTemplates } from './workflow-i18n';
+import { getEffectiveWorkflowValidationState } from './workflow-validation-state';
 import { buildWorkflowStats } from './workflow-utils';
 
-const { Paragraph } = Typography;
+const { Paragraph, Text } = Typography;
 
 const ASSET_IMPORT_PAGINATION = {
   pageSize: 6,
@@ -40,6 +43,15 @@ const ASSET_IMPORT_PAGINATION = {
   pageSizeOptions: ['6', '12', '24'],
   hideOnSinglePage: true,
 };
+
+type WorkflowViewMode = 'compose' | 'asset_flow';
+
+interface PendingStarterTargetSelection {
+  inputKind: WorkflowStarterInputKind;
+  resourceId: string;
+  label: string;
+  matchedNodeIds: string[];
+}
 
 export function WorkflowsPage({
   snapshot,
@@ -78,16 +90,47 @@ export function WorkflowsPage({
   const [runProgressOpen, setRunProgressOpen] = useState(false);
   const [runProgressPercent, setRunProgressPercent] = useState(0);
   const [runProgressMessage, setRunProgressMessage] = useState('');
+  const [lastValidationResult, setLastValidationResult] = useState<WorkflowValidationResult | null>(null);
+  const [lastValidationGraphSignature, setLastValidationGraphSignature] = useState<string | null>(null);
   const runProgressTimerRef = useRef<number | null>(null);
   const [assetFlowRefreshSignal, setAssetFlowRefreshSignal] = useState(0);
+  const [viewMode, setViewMode] = useState<WorkflowViewMode>('compose');
   const [handoffNotice, setHandoffNotice] = useState<{
     type: 'success' | 'warning';
     title: string;
     description: string;
   } | null>(null);
+  const [pendingStarterTargetSelection, setPendingStarterTargetSelection] =
+    useState<PendingStarterTargetSelection | null>(null);
+  const workflowModeCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            composeLabel: '编排',
+            composeDescription: '运行前的工作流图编排、校验与保存。',
+            assetFlowLabel: '资产流',
+            assetFlowDescription: '运行后的输入资产、执行链路与结果资产衔接。',
+          }
+        : {
+            composeLabel: 'Composer',
+            composeDescription: 'Build, validate, and save the workflow graph before execution.',
+            assetFlowLabel: 'Asset Flow',
+            assetFlowDescription:
+              'Review post-run lineage between inputs, executions, and reusable outputs.',
+          },
+    [locale],
+  );
+  const localizedWorkflowCatalog = useMemo(
+    () => localizeWorkflowCatalog(locale, snapshot.workflowCatalog),
+    [locale, snapshot.workflowCatalog],
+  );
+  const localizedWorkflowTemplates = useMemo(
+    () => localizeWorkflowTemplates(locale, snapshot.workflowTemplates),
+    [locale, snapshot.workflowTemplates],
+  );
   const stats = useMemo(
-    () => buildWorkflowStats(snapshot.workflowCatalog, draftWorkflowVersion),
-    [draftWorkflowVersion, snapshot.workflowCatalog],
+    () => buildWorkflowStats(localizedWorkflowCatalog, draftWorkflowVersion),
+    [draftWorkflowVersion, localizedWorkflowCatalog],
   );
   const workflowEditorContext = useMemo<WorkflowEditorContext>(
     () => ({
@@ -159,10 +202,292 @@ export function WorkflowsPage({
           },
     [locale],
   );
+  const starterLinkCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            datasetAmbiguous: '当前工作流中有多个可接收数据集输入的节点，请先明确目标节点。',
+            modelMissing: '当前工作流没有可接收模型版本的节点。',
+            modelAmbiguous: '当前工作流中有多个可接收模型版本输入的节点，请先明确目标节点。',
+            roiAmbiguous: '当前工作流中有多个可接收 ROI 输入的节点，请先明确目标节点。',
+            geeMissing: '当前工作流没有可接收 GEE 凭据的节点。',
+            geeAmbiguous: '当前工作流中有多个可接收 GEE 凭据输入的节点，请先明确目标节点。',
+            chooserTitle: '选择目标节点',
+            chooserDescription: '这个输入可以接到多个节点，请明确要绑定到哪一个 starter。',
+            chooserSelect: '绑定到此节点',
+            chooserCurrentValue: '当前值',
+            chooserUnbound: '未绑定',
+            chooserApplied: '已绑定到所选 starter 节点。',
+          }
+        : {
+            datasetAmbiguous:
+              'The current workflow exposes multiple compatible dataset starters. Select one explicitly before retrying.',
+            modelMissing: 'The current workflow does not expose any compatible model starter.',
+            modelAmbiguous:
+              'The current workflow exposes multiple compatible model starters. Select one explicitly before retrying.',
+            roiAmbiguous:
+              'The current workflow exposes multiple compatible ROI starters. Select one explicitly before retrying.',
+            geeMissing: 'The current workflow does not expose any compatible GEE starter.',
+            geeAmbiguous:
+              'The current workflow exposes multiple compatible GEE starters. Select one explicitly before retrying.',
+            chooserTitle: 'Select Target Node',
+            chooserDescription:
+              'This input matches multiple starter nodes. Choose which node should receive it.',
+            chooserSelect: 'Bind To This Node',
+            chooserCurrentValue: 'Current value',
+            chooserUnbound: 'Unbound',
+            chooserApplied: 'The input has been bound to the selected starter node.',
+          },
+    [locale],
+  );
+  const handoffCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            datasetReceived: (label: string) => `已接收数据集输入：${label}`,
+            modelReceived: (label: string) => `已接收模型输入：${label}`,
+            roiReceived: (label: string) => `已接收 ROI：${label}`,
+            geeReceived: (label: string) => `已接收 GEE 凭据：${label}`,
+            unableBindTarget: (label: string) => `未能绑定到目标节点：${label}`,
+            unableReceiveDataset: (label: string) => `未能接收数据集输入：${label}`,
+            unableReceiveModel: (label: string) => `未能接收模型输入：${label}`,
+            unableReceiveRoi: (label: string) => `未能接收 ROI：${label}`,
+            unableReceiveGee: (label: string) => `未能接收 GEE 凭据：${label}`,
+            datasetUnavailable: '该数据集版本在当前作用域中已不可用。',
+            modelUnavailable: '该模型版本在当前作用域中已不可用。',
+            roiUnavailable: '该 ROI 在当前作用域中已不可用。',
+            geeUnavailable: '该 GEE 凭据在当前作用域中已不可用。',
+            datasetCreatedStarter:
+              '当前草稿中没有兼容的数据集 starter，已自动创建并绑定到该版本。',
+            datasetBoundExisting: '该数据集版本已绑定到当前草稿中的兼容节点。',
+            modelCreatedStarter: '已自动添加模型 starter 节点并绑定到该版本。',
+            modelBoundExisting: '该模型版本已绑定到当前草稿中的兼容节点。',
+            roiCreatedStarter:
+              '当前草稿中没有兼容的 Sentinel ROI starter，已自动创建并绑定到该 ROI。',
+            roiBoundExisting: '该 ROI 已绑定到当前草稿中的兼容节点。',
+            geeCreatedStarter:
+              '已自动添加兼容的 Sentinel starter 节点并绑定到该凭据。',
+            geeBoundExisting: '该凭据已绑定到当前草稿中的兼容节点。',
+            modelAttached: '模型版本已附加到当前工作流草稿。',
+            geeAttached: 'GEE 凭据已附加到当前工作流草稿。',
+          }
+        : {
+            datasetReceived: (label: string) => `Dataset input received: ${label}`,
+            modelReceived: (label: string) => `Model input received: ${label}`,
+            roiReceived: (label: string) => `ROI received: ${label}`,
+            geeReceived: (label: string) => `GEE credential received: ${label}`,
+            unableBindTarget: (label: string) => `Unable to bind to target node: ${label}`,
+            unableReceiveDataset: (label: string) => `Unable to receive dataset input: ${label}`,
+            unableReceiveModel: (label: string) => `Unable to receive model input: ${label}`,
+            unableReceiveRoi: (label: string) => `Unable to receive ROI: ${label}`,
+            unableReceiveGee: (label: string) => `Unable to receive GEE credential: ${label}`,
+            datasetUnavailable: 'This dataset version is no longer available in the current scope.',
+            modelUnavailable: 'This model version is no longer available in the current scope.',
+            roiUnavailable: 'This ROI is no longer available in the current scope.',
+            geeUnavailable: 'This GEE credential is no longer available in the current scope.',
+            datasetCreatedStarter:
+              'The draft had no dataset starter node, so one was created automatically and bound to this version.',
+            datasetBoundExisting:
+              'This dataset version has been bound to an existing compatible node in the current draft.',
+            modelCreatedStarter: 'A model starter node was added automatically and bound to this version.',
+            modelBoundExisting:
+              'This model version has been bound to an existing compatible node in the current draft.',
+            roiCreatedStarter:
+              'The draft had no compatible Sentinel ROI starter, so one was created automatically and bound to this ROI.',
+            roiBoundExisting: 'This ROI has been bound to an existing compatible node in the current draft.',
+            geeCreatedStarter:
+              'A compatible Sentinel starter node was added automatically and bound to this credential.',
+            geeBoundExisting: 'This credential has been bound to an existing compatible node in the current draft.',
+            modelAttached: 'The model version has been attached to the current workflow draft.',
+            geeAttached: 'The GEE credential has been attached to the current workflow draft.',
+          },
+    [locale],
+  );
   const hasSentinelDownload = useMemo(
     () =>
       draftWorkflowVersion.graph.nodes.some((node) => node.type === 'source.sentinel2_gee_download'),
     [draftWorkflowVersion.graph.nodes],
+  );
+  const pendingStarterTargetCandidates = useMemo(
+    () => {
+      if (!pendingStarterTargetSelection) {
+        return [];
+      }
+
+      return pendingStarterTargetSelection.matchedNodeIds.reduce<
+        Array<{
+          nodeId: string;
+          nodeType: string;
+          label: string;
+          currentValue: string | undefined;
+        }>
+      >((candidates, nodeId) => {
+          const node = draftWorkflowVersion.graph.nodes.find((item) => item.id === nodeId);
+          if (!node) {
+            return candidates;
+          }
+          const definition = localizedWorkflowCatalog.find((item) => item.type === node.type);
+          const binding = definition?.starterBindings?.find(
+            (item) => item.inputKind === pendingStarterTargetSelection.inputKind,
+          );
+          const currentValue =
+            binding && typeof node.params[binding.paramKey] === 'string'
+              ? String(node.params[binding.paramKey]).trim() || undefined
+              : undefined;
+          candidates.push({
+            nodeId,
+            nodeType: node.type,
+            label: definition?.label ?? node.type,
+            currentValue,
+          });
+          return candidates;
+        }, []);
+    },
+    [draftWorkflowVersion.graph.nodes, localizedWorkflowCatalog, pendingStarterTargetSelection],
+  );
+  const effectiveValidationState = useMemo(
+    () =>
+      getEffectiveWorkflowValidationState({
+        definitions: localizedWorkflowCatalog,
+        workflowVersion: draftWorkflowVersion,
+        context: workflowEditorContext,
+        validationResult: lastValidationResult,
+        validationGraphSignature: lastValidationGraphSignature,
+      }),
+    [
+      draftWorkflowVersion,
+      lastValidationGraphSignature,
+      lastValidationResult,
+      localizedWorkflowCatalog,
+      workflowEditorContext,
+    ],
+  );
+  const runDisabled =
+    !draftWorkflowVersion.graph.nodes.length || effectiveValidationState.hasErrors;
+  const openStarterTargetSelection = useCallback(
+    (
+      inputKind: WorkflowStarterInputKind,
+      resourceId: string,
+      label: string,
+      matchedNodeIds: string[],
+    ) => {
+      if (matchedNodeIds.length < 2) {
+        return;
+      }
+      setPendingStarterTargetSelection({
+        inputKind,
+        resourceId,
+        label,
+        matchedNodeIds,
+      });
+    },
+    [],
+  );
+  const applyExplicitStarterTarget = useCallback(
+    (targetNodeId: string) => {
+      if (!pendingStarterTargetSelection) {
+        return;
+      }
+
+      let result:
+        | ReturnType<typeof attachDatasetVersionToWorkflow>
+        | ReturnType<typeof attachSavedRoiToWorkflow>
+        | ReturnType<typeof attachModelVersionToWorkflow>
+        | ReturnType<typeof attachGeeCredentialToWorkflow>;
+      let successTitle = pendingStarterTargetSelection.label;
+      let successMessage = starterLinkCopy.chooserApplied;
+      let failureDescription = '';
+
+      if (pendingStarterTargetSelection.inputKind === 'dataset_version') {
+        result = attachDatasetVersionToWorkflow(
+          draftWorkflowVersionRef.current,
+          pendingStarterTargetSelection.resourceId,
+          localizedWorkflowCatalog,
+          workflowEditorContext,
+          { targetNodeId },
+        );
+        successTitle =
+          locale === 'zh-CN'
+            ? `已接收数据输入：${pendingStarterTargetSelection.label}`
+            : `Dataset input received: ${pendingStarterTargetSelection.label}`;
+        successMessage = runTableCopy.datasetLinked;
+        failureDescription = runTableCopy.datasetLinkMissing;
+      } else if (pendingStarterTargetSelection.inputKind === 'spatial_roi') {
+        result = attachSavedRoiToWorkflow(
+          draftWorkflowVersionRef.current,
+          pendingStarterTargetSelection.resourceId,
+          localizedWorkflowCatalog,
+          workflowEditorContext,
+          { targetNodeId },
+        );
+        successTitle =
+          locale === 'zh-CN'
+            ? `已接收 ROI：${pendingStarterTargetSelection.label}`
+            : `ROI received: ${pendingStarterTargetSelection.label}`;
+        successMessage = runTableCopy.roiLinked;
+        failureDescription = runTableCopy.roiLinkMissing;
+      } else if (pendingStarterTargetSelection.inputKind === 'model_version') {
+        result = attachModelVersionToWorkflow(
+          draftWorkflowVersionRef.current,
+          pendingStarterTargetSelection.resourceId,
+          localizedWorkflowCatalog,
+          workflowEditorContext,
+          { targetNodeId },
+        );
+        successTitle = handoffCopy.modelReceived(pendingStarterTargetSelection.label);
+        successMessage = handoffCopy.modelAttached;
+        failureDescription = starterLinkCopy.modelMissing;
+      } else {
+        result = attachGeeCredentialToWorkflow(
+          draftWorkflowVersionRef.current,
+          pendingStarterTargetSelection.resourceId,
+          localizedWorkflowCatalog,
+          workflowEditorContext,
+          { targetNodeId },
+        );
+        successTitle = handoffCopy.geeReceived(pendingStarterTargetSelection.label);
+        successMessage = handoffCopy.geeAttached;
+        failureDescription = starterLinkCopy.geeMissing;
+      }
+
+      if (result.applied) {
+        draftWorkflowVersionRef.current = result.workflowVersion;
+        setDraftWorkflowVersion(result.workflowVersion);
+        setHandoffNotice({
+          type: 'success',
+          title: successTitle,
+          description: starterLinkCopy.chooserApplied,
+        });
+        message.success(successMessage);
+      } else {
+        setHandoffNotice({
+          type: 'warning',
+          title:
+            locale === 'zh-CN'
+              ? `未能绑定到目标节点：${pendingStarterTargetSelection.label}`
+              : `Unable to bind to target node: ${pendingStarterTargetSelection.label}`,
+          description: failureDescription,
+        });
+        message.warning(failureDescription);
+      }
+
+      setPendingStarterTargetSelection(null);
+    },
+    [
+      locale,
+      message,
+      pendingStarterTargetSelection,
+      runTableCopy.datasetLinkMissing,
+      runTableCopy.datasetLinked,
+      runTableCopy.roiLinkMissing,
+      runTableCopy.roiLinked,
+      handoffCopy,
+      localizedWorkflowCatalog,
+      starterLinkCopy.chooserApplied,
+      starterLinkCopy.geeMissing,
+      starterLinkCopy.modelMissing,
+      workflowEditorContext,
+    ],
   );
 
   useEffect(() => {
@@ -202,6 +527,24 @@ export function WorkflowsPage({
       disposed = true;
     };
   }, [currentUser?.role, token]);
+
+  useEffect(() => {
+    const handoff = readHandoffFromSearchParams(searchParams);
+    const hasWorkflowInputLink =
+      (handoff?.target === 'workflow' &&
+        (handoff.inputKind === 'dataset_version' ||
+          handoff.inputKind === 'spatial_roi' ||
+          handoff.inputKind === 'model_version' ||
+          handoff.inputKind === 'gee_credential')) ||
+      searchParams.has('datasetVersionId') ||
+      searchParams.has('roiId') ||
+      searchParams.has('modelVersionId') ||
+      searchParams.has('geeCredentialId');
+
+    if (hasWorkflowInputLink) {
+      setViewMode('compose');
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const handoff = readHandoffFromSearchParams(searchParams);
@@ -273,8 +616,11 @@ export function WorkflowsPage({
         const linkedDatasetResult = attachDatasetVersionToWorkflow(
           nextWorkflowVersion,
           linkedDatasetVersionId,
-          snapshot.workflowCatalog,
+          localizedWorkflowCatalog,
           workflowEditorContext,
+          {
+            targetNodeId: handoff?.target === 'workflow' ? handoff.targetNodeId : undefined,
+          },
         );
         if (linkedDatasetResult.applied) {
           nextWorkflowVersion = linkedDatasetResult.workflowVersion;
@@ -296,15 +642,27 @@ export function WorkflowsPage({
           });
           message.success(runTableCopy.datasetLinked);
         } else {
+          const datasetFailureDescription =
+            linkedDatasetResult.failureReason === 'ambiguous_existing_target'
+              ? starterLinkCopy.datasetAmbiguous
+              : runTableCopy.datasetLinkMissing;
+          if (linkedDatasetResult.failureReason === 'ambiguous_existing_target') {
+            openStarterTargetSelection(
+              'dataset_version',
+              linkedDatasetVersionId,
+              handoff?.label ?? linkedDatasetVersionId,
+              linkedDatasetResult.matchedNodeIds ?? [],
+            );
+          }
           setHandoffNotice({
             type: 'warning',
             title:
               locale === 'zh-CN'
                 ? `未能接收数据输入：${handoff?.label ?? linkedDatasetVersionId}`
                 : `Unable to receive dataset input: ${handoff?.label ?? linkedDatasetVersionId}`,
-            description: runTableCopy.datasetLinkMissing,
+            description: datasetFailureDescription,
           });
-          message.warning(runTableCopy.datasetLinkMissing);
+          message.warning(datasetFailureDescription);
         }
       }
     } else if (linkedModelVersionId) {
@@ -312,35 +670,50 @@ export function WorkflowsPage({
       if (!modelVersionExists) {
         setHandoffNotice({
           type: 'warning',
-          title: `Unable to receive model input: ${handoff?.label ?? linkedModelVersionId}`,
-          description: 'This model version is no longer available in the current scope.',
+          title: handoffCopy.unableReceiveModel(handoff?.label ?? linkedModelVersionId),
+          description: handoffCopy.modelUnavailable,
         });
-        message.warning('This model version is no longer available in the current scope.');
+        message.warning(handoffCopy.modelUnavailable);
       } else {
         const linkedModelResult = attachModelVersionToWorkflow(
           nextWorkflowVersion,
           linkedModelVersionId,
-          snapshot.workflowCatalog,
+          localizedWorkflowCatalog,
           workflowEditorContext,
+          {
+            targetNodeId: handoff?.target === 'workflow' ? handoff.targetNodeId : undefined,
+          },
         );
         if (linkedModelResult.applied) {
           nextWorkflowVersion = linkedModelResult.workflowVersion;
           changed = true;
           setHandoffNotice({
             type: 'success',
-            title: `Model input received: ${handoff?.label ?? linkedModelVersionId}`,
+            title: handoffCopy.modelReceived(handoff?.label ?? linkedModelVersionId),
             description: linkedModelResult.createdStarter
-              ? 'A model starter node was added automatically and bound to this version.'
-              : 'This model version has been bound to an existing compatible node in the current draft.',
+              ? handoffCopy.modelCreatedStarter
+              : handoffCopy.modelBoundExisting,
           });
-          message.success('The model version has been attached to the current workflow draft.');
+          message.success(handoffCopy.modelAttached);
         } else {
+          const modelFailureDescription =
+            linkedModelResult.failureReason === 'ambiguous_existing_target'
+              ? starterLinkCopy.modelAmbiguous
+              : starterLinkCopy.modelMissing;
+          if (linkedModelResult.failureReason === 'ambiguous_existing_target') {
+            openStarterTargetSelection(
+              'model_version',
+              linkedModelVersionId,
+              handoff?.label ?? linkedModelVersionId,
+              linkedModelResult.matchedNodeIds ?? [],
+            );
+          }
           setHandoffNotice({
             type: 'warning',
-            title: `Unable to receive model input: ${handoff?.label ?? linkedModelVersionId}`,
-            description: 'The current workflow does not expose any compatible model starter.',
+            title: handoffCopy.unableReceiveModel(handoff?.label ?? linkedModelVersionId),
+            description: modelFailureDescription,
           });
-          message.warning('The current workflow does not expose any compatible model starter.');
+          message.warning(modelFailureDescription);
         }
       }
     } else if (linkedRoiId) {
@@ -366,8 +739,11 @@ export function WorkflowsPage({
         const linkedRoiResult = attachSavedRoiToWorkflow(
           nextWorkflowVersion,
           linkedRoiId,
-          snapshot.workflowCatalog,
+          localizedWorkflowCatalog,
           workflowEditorContext,
+          {
+            targetNodeId: handoff?.target === 'workflow' ? handoff.targetNodeId : undefined,
+          },
         );
         if (linkedRoiResult.applied) {
           nextWorkflowVersion = linkedRoiResult.workflowVersion;
@@ -389,15 +765,27 @@ export function WorkflowsPage({
           });
           message.success(runTableCopy.roiLinked);
         } else {
+          const roiFailureDescription =
+            linkedRoiResult.failureReason === 'ambiguous_existing_target'
+              ? starterLinkCopy.roiAmbiguous
+              : runTableCopy.roiLinkMissing;
+          if (linkedRoiResult.failureReason === 'ambiguous_existing_target') {
+            openStarterTargetSelection(
+              'spatial_roi',
+              linkedRoiId,
+              handoff?.label ?? linkedRoiId,
+              linkedRoiResult.matchedNodeIds ?? [],
+            );
+          }
           setHandoffNotice({
             type: 'warning',
             title:
               locale === 'zh-CN'
                 ? `未能接收 ROI：${handoff?.label ?? linkedRoiId}`
                 : `Unable to receive ROI: ${handoff?.label ?? linkedRoiId}`,
-            description: runTableCopy.roiLinkMissing,
+            description: roiFailureDescription,
           });
-          message.warning(runTableCopy.roiLinkMissing);
+          message.warning(roiFailureDescription);
         }
       }
     } else if (linkedGeeCredentialId) {
@@ -405,35 +793,50 @@ export function WorkflowsPage({
       if (!credentialExists) {
         setHandoffNotice({
           type: 'warning',
-          title: `Unable to receive GEE credential: ${handoff?.label ?? linkedGeeCredentialId}`,
-          description: 'This GEE credential is no longer available in the current scope.',
+          title: handoffCopy.unableReceiveGee(handoff?.label ?? linkedGeeCredentialId),
+          description: handoffCopy.geeUnavailable,
         });
-        message.warning('This GEE credential is no longer available in the current scope.');
+        message.warning(handoffCopy.geeUnavailable);
       } else {
         const linkedCredentialResult = attachGeeCredentialToWorkflow(
           nextWorkflowVersion,
           linkedGeeCredentialId,
-          snapshot.workflowCatalog,
+          localizedWorkflowCatalog,
           workflowEditorContext,
+          {
+            targetNodeId: handoff?.target === 'workflow' ? handoff.targetNodeId : undefined,
+          },
         );
         if (linkedCredentialResult.applied) {
           nextWorkflowVersion = linkedCredentialResult.workflowVersion;
           changed = true;
           setHandoffNotice({
             type: 'success',
-            title: `GEE credential received: ${handoff?.label ?? linkedGeeCredentialId}`,
+            title: handoffCopy.geeReceived(handoff?.label ?? linkedGeeCredentialId),
             description: linkedCredentialResult.createdStarter
-              ? 'A compatible Sentinel starter node was added automatically and bound to this credential.'
-              : 'This credential has been bound to an existing compatible node in the current draft.',
+              ? handoffCopy.geeCreatedStarter
+              : handoffCopy.geeBoundExisting,
           });
-          message.success('The GEE credential has been attached to the current workflow draft.');
+          message.success(handoffCopy.geeAttached);
         } else {
+          const geeFailureDescription =
+            linkedCredentialResult.failureReason === 'ambiguous_existing_target'
+              ? starterLinkCopy.geeAmbiguous
+              : starterLinkCopy.geeMissing;
+          if (linkedCredentialResult.failureReason === 'ambiguous_existing_target') {
+            openStarterTargetSelection(
+              'gee_credential',
+              linkedGeeCredentialId,
+              handoff?.label ?? linkedGeeCredentialId,
+              linkedCredentialResult.matchedNodeIds ?? [],
+            );
+          }
           setHandoffNotice({
             type: 'warning',
-            title: `Unable to receive GEE credential: ${handoff?.label ?? linkedGeeCredentialId}`,
-            description: 'The current workflow does not expose any compatible GEE starter.',
+            title: handoffCopy.unableReceiveGee(handoff?.label ?? linkedGeeCredentialId),
+            description: geeFailureDescription,
           });
-          message.warning('The current workflow does not expose any compatible GEE starter.');
+          message.warning(geeFailureDescription);
         }
       }
     }
@@ -450,14 +853,17 @@ export function WorkflowsPage({
     setSearchParams(nextSearch, { replace: true });
   }, [
     locale,
+    handoffCopy,
     message,
+    openStarterTargetSelection,
     runTableCopy,
     searchParams,
     setSearchParams,
     snapshot.datasetVersions,
     snapshot.geeCredentials,
     snapshot.modelVersions,
-    snapshot.workflowCatalog,
+    localizedWorkflowCatalog,
+    starterLinkCopy,
     spatialRois,
     spatialRoisLoaded,
     workflowEditorContext,
@@ -529,11 +935,14 @@ export function WorkflowsPage({
       return;
     }
     try {
+      const graphSignature = JSON.stringify(draftWorkflowVersion.graph);
       const result = await validateWorkflow(token, draftWorkflowVersion);
+      setLastValidationResult(result);
+      setLastValidationGraphSignature(graphSignature);
       if (result.valid) {
         message.success(t('workflows.validateSuccess'));
       } else {
-        message.warning(`${t('workflows.validateFailure')} ${result.errors.join('; ')}`);
+        message.warning(`${t('workflows.validateFailure')} (${result.errors.length})`);
       }
     } catch (error) {
       message.error(isApiError(error) ? error.message : t('error.request_failed'));
@@ -715,7 +1124,84 @@ export function WorkflowsPage({
             <h2 className="section-title">{t('workflows.title')}</h2>
             <Paragraph className="section-copy">{t('workflows.copy')}</Paragraph>
           </div>
-          <div className="section-actions">
+        </div>
+      </div>
+
+      <Card className="panel-card workflow-page-mode-bar" variant="borderless">
+        <div className="workflow-page-mode-copy">
+          <div className="panel-kicker">
+            {viewMode === 'compose'
+              ? workflowModeCopy.composeLabel
+              : workflowModeCopy.assetFlowLabel}
+          </div>
+          <Paragraph className="workflow-page-mode-description">
+            {viewMode === 'compose'
+              ? workflowModeCopy.composeDescription
+              : workflowModeCopy.assetFlowDescription}
+          </Paragraph>
+        </div>
+        <Segmented
+          value={viewMode}
+          options={[
+            { label: workflowModeCopy.composeLabel, value: 'compose' },
+            { label: workflowModeCopy.assetFlowLabel, value: 'asset_flow' },
+          ]}
+          onChange={(value) => setViewMode(value as WorkflowViewMode)}
+        />
+      </Card>
+
+      {handoffNotice ? (
+        <Alert
+          type={handoffNotice.type}
+          showIcon
+          closable
+          className="workflow-handoff-alert"
+          message={handoffNotice.title}
+          description={handoffNotice.description}
+          onClose={() => setHandoffNotice(null)}
+        />
+      ) : null}
+
+      <Modal
+        open={Boolean(pendingStarterTargetSelection)}
+        title={starterLinkCopy.chooserTitle}
+        footer={null}
+        onCancel={() => setPendingStarterTargetSelection(null)}
+      >
+        <Paragraph>{starterLinkCopy.chooserDescription}</Paragraph>
+        {pendingStarterTargetSelection ? (
+          <Paragraph type="secondary">{pendingStarterTargetSelection.label}</Paragraph>
+        ) : null}
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {pendingStarterTargetCandidates.map((candidate) => (
+            <Card key={candidate.nodeId} size="small">
+              <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                <div>
+                  <Text strong>{candidate.label}</Text>
+                </div>
+                <Space wrap size={[8, 8]}>
+                  <Tag>{candidate.nodeType}</Tag>
+                  <Tag>{candidate.nodeId}</Tag>
+                </Space>
+                <Text type="secondary">
+                  {starterLinkCopy.chooserCurrentValue}:{' '}
+                  {candidate.currentValue ?? starterLinkCopy.chooserUnbound}
+                </Text>
+                <Button
+                  data-testid={`starter-target-${candidate.nodeId}`}
+                  onClick={() => applyExplicitStarterTarget(candidate.nodeId)}
+                >
+                  {starterLinkCopy.chooserSelect}
+                </Button>
+              </Space>
+            </Card>
+          ))}
+        </Space>
+      </Modal>
+
+      {viewMode === 'compose' ? (
+        <>
+          <div className="section-actions workflow-action-bar">
             {hasPermission('workflow.manage') ? (
               <Button onClick={onImportWorkflowClick}>{t('workflows.importFile')}</Button>
             ) : null}
@@ -732,72 +1218,62 @@ export function WorkflowsPage({
             {hasPermission('workflow.run') ? (
               <Button
                 type="primary"
-                disabled={!draftWorkflowVersion.graph.nodes.length}
+                disabled={runDisabled}
                 onClick={() => void onRun()}
               >
                 {t('workflows.run')}
               </Button>
             ) : null}
           </div>
-        </div>
-      </div>
 
-      {handoffNotice ? (
-        <Alert
-          type={handoffNotice.type}
-          showIcon
-          closable
-          className="workflow-handoff-alert"
-          message={handoffNotice.title}
-          description={handoffNotice.description}
-          onClose={() => setHandoffNotice(null)}
+          <Row gutter={[20, 20]}>
+            <Col xs={24} md={8}>
+              <StatCard
+                label={t('workflows.nodesLabel')}
+                value={String(stats.nodeCount)}
+                detail={t('workflows.nodesDetail')}
+              />
+            </Col>
+            <Col xs={24} md={8}>
+              <StatCard
+                label={t('workflows.edgesLabel')}
+                value={String(stats.edgeCount)}
+                detail={t('workflows.edgesDetail')}
+              />
+            </Col>
+            <Col xs={24} md={8}>
+              <StatCard
+                label={t('workflows.categoriesLabel')}
+                value={String(stats.categoryCount)}
+                detail={t('workflows.categoriesDetail')}
+              />
+            </Col>
+          </Row>
+
+          <WorkflowCanvas
+            catalog={localizedWorkflowCatalog}
+            templates={localizedWorkflowTemplates}
+            workflowVersion={draftWorkflowVersion}
+            validationResult={lastValidationResult}
+            validationGraphSignature={lastValidationGraphSignature}
+            canManage={hasPermission('workflow.manage')}
+            canTest={hasPermission('workflow.run')}
+            datasets={snapshot.datasets}
+            datasetVersions={snapshot.datasetVersions}
+            geeCredentials={snapshot.geeCredentials}
+            modelVersions={snapshot.modelVersions}
+            spatialRois={spatialRois}
+            authToken={token}
+            onWorkflowChange={setDraftWorkflowVersion}
+          />
+        </>
+      ) : (
+        <AssetFlowPanel
+          token={token}
+          scope={currentUser?.role === 'ADMIN' ? 'all' : 'mine'}
+          refreshSignal={assetFlowRefreshSignal}
         />
-      ) : null}
-
-      <Row gutter={[20, 20]}>
-        <Col xs={24} md={8}>
-          <StatCard
-            label={t('workflows.nodesLabel')}
-            value={String(stats.nodeCount)}
-            detail={t('workflows.nodesDetail')}
-          />
-        </Col>
-        <Col xs={24} md={8}>
-          <StatCard
-            label={t('workflows.edgesLabel')}
-            value={String(stats.edgeCount)}
-            detail={t('workflows.edgesDetail')}
-          />
-        </Col>
-        <Col xs={24} md={8}>
-          <StatCard
-            label={t('workflows.categoriesLabel')}
-            value={String(stats.categoryCount)}
-            detail={t('workflows.categoriesDetail')}
-          />
-        </Col>
-      </Row>
-
-      <WorkflowCanvas
-        catalog={snapshot.workflowCatalog}
-        templates={snapshot.workflowTemplates}
-        workflowVersion={draftWorkflowVersion}
-        canManage={hasPermission('workflow.manage')}
-        canTest={hasPermission('workflow.run')}
-        datasets={snapshot.datasets}
-        datasetVersions={snapshot.datasetVersions}
-        geeCredentials={snapshot.geeCredentials}
-        modelVersions={snapshot.modelVersions}
-        spatialRois={spatialRois}
-        authToken={token}
-        onWorkflowChange={setDraftWorkflowVersion}
-      />
-
-      <AssetFlowPanel
-        token={token}
-        scope={currentUser?.role === 'ADMIN' ? 'all' : 'mine'}
-        refreshSignal={assetFlowRefreshSignal}
-      />
+      )}
 
       <Modal
         title={t('workflows.assetImportTitle')}

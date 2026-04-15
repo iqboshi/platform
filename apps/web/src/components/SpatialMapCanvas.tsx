@@ -5,8 +5,10 @@ import GeoJSON from 'ol/format/GeoJSON';
 import type Geometry from 'ol/geom/Geometry';
 import Point from 'ol/geom/Point';
 import Draw, { createBox } from 'ol/interaction/Draw';
+import DragPan from 'ol/interaction/DragPan';
 import Modify from 'ol/interaction/Modify';
 import Select from 'ol/interaction/Select';
+import Snap from 'ol/interaction/Snap';
 import OlMap from 'ol/Map';
 import { unByKey } from 'ol/Observable';
 import { pointerMove as pointerMoveCondition } from 'ol/events/condition';
@@ -18,6 +20,7 @@ import View from 'ol/View';
 import { fromLonLat, transformExtent } from 'ol/proj';
 import GeoTIFFSource from 'ol/source/GeoTIFF';
 import VectorSource from 'ol/source/Vector';
+import { getArea as getGeometryArea } from 'ol/sphere';
 import { Circle as CircleStyle, Fill, Stroke, Style, Text as TextStyle } from 'ol/style';
 import { useEffect, useRef, useState } from 'react';
 
@@ -52,6 +55,7 @@ export interface SpatialCoordinateLabelPoint {
 
 interface SpatialMapCanvasProps {
   token?: string | null;
+  locale?: string;
   rois: SpatialRoiSummary[];
   overlays: SpatialOverlaySummary[];
   savedCoordinatePoints?: SpatialCoordinateLabelPoint[];
@@ -65,6 +69,7 @@ interface SpatialMapCanvasProps {
   focusRequest?: SpatialMapFocusRequest;
   geometryEditEnabled: boolean;
   onDrawComplete: (draft: SpatialDraftGeometry) => void;
+  onDrawCancel?: () => void;
   onSelectRoi: (roiId?: string) => void;
   onSelectedRoiGeometryChange: (draft: SpatialDraftGeometry) => void;
   onOverlayError?: (message: string) => void;
@@ -75,6 +80,11 @@ interface OverlayLayerEntry {
   id: string;
   layer: BaseLayer;
   objectUrl?: string;
+}
+
+interface DrawMetrics {
+  pointCount: number;
+  areaSquareMeters: number;
 }
 
 const geoJsonFormat = new GeoJSON();
@@ -151,8 +161,81 @@ function toDraftGeometry(
   };
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT' ||
+    tagName === 'OPTION'
+  );
+}
+
+function setDragPanEnabled(map: OlMap, enabled: boolean): void {
+  map.getInteractions().forEach((interaction) => {
+    if (interaction instanceof DragPan) {
+      interaction.setActive(enabled);
+    }
+  });
+}
+
+function calculateDrawMetrics(
+  feature: Feature<Geometry>,
+  drawMode: 'rectangle' | 'polygon',
+): DrawMetrics | null {
+  const geometry = feature.getGeometry();
+  if (!geometry || geometry.getType() !== 'Polygon') {
+    return null;
+  }
+
+  const coordinates = (
+    geoJsonFormat.writeGeometryObject(geometry, {
+      featureProjection: 'EPSG:3857',
+      dataProjection: 'EPSG:4326',
+    }) as { coordinates?: number[][][] }
+  ).coordinates?.[0];
+
+  if (!coordinates?.length) {
+    return null;
+  }
+
+  const ring = coordinates.slice(0, -1);
+  const deduped = ring.filter((coordinate, index) => {
+    if (index === 0) {
+      return true;
+    }
+    const previous = ring[index - 1];
+    return coordinate[0] !== previous[0] || coordinate[1] !== previous[1];
+  });
+
+  const rawPointCount = deduped.length;
+  const pointCount =
+    drawMode === 'polygon' ? Math.max(rawPointCount - 1, 1) : Math.max(rawPointCount, 0);
+
+  return {
+    pointCount,
+    areaSquareMeters: Math.max(getGeometryArea(geometry, { projection: 'EPSG:3857' }), 0),
+  };
+}
+
+function formatAreaValue(areaSquareMeters: number, locale: string): string {
+  const isChinese = locale === 'zh-CN';
+  if (areaSquareMeters >= 1_000_000) {
+    return `${(areaSquareMeters / 1_000_000).toFixed(2)} ${isChinese ? '平方千米' : 'km²'}`;
+  }
+  if (areaSquareMeters >= 10_000) {
+    return `${(areaSquareMeters / 10_000).toFixed(2)} ${isChinese ? '公顷' : 'ha'}`;
+  }
+  return `${Math.round(areaSquareMeters)} ${isChinese ? '平方米' : 'm²'}`;
+}
+
 export function SpatialMapCanvas({
   token,
+  locale = 'zh-CN',
   rois,
   overlays,
   savedCoordinatePoints = [],
@@ -166,6 +249,7 @@ export function SpatialMapCanvas({
   focusRequest,
   geometryEditEnabled,
   onDrawComplete,
+  onDrawCancel,
   onSelectRoi,
   onSelectedRoiGeometryChange,
   onOverlayError,
@@ -181,18 +265,24 @@ export function SpatialMapCanvas({
   const selectInteractionRef = useRef<Select | null>(null);
   const hoverInteractionRef = useRef<Select | null>(null);
   const modifyInteractionRef = useRef<Modify | null>(null);
+  const modifySnapInteractionRef = useRef<Snap | null>(null);
   const drawInteractionRef = useRef<Draw | null>(null);
+  const drawSnapInteractionRef = useRef<Snap | null>(null);
   const overlayLayersRef = useRef<Map<string, OverlayLayerEntry>>(new Map());
   const overlayLoadingRef = useRef<Set<string>>(new Set());
   const selectedRoiIdRef = useRef<string | undefined>(selectedRoiId);
   const onSelectRoiRef = useRef(onSelectRoi);
   const onDrawCompleteRef = useRef(onDrawComplete);
+  const onDrawCancelRef = useRef(onDrawCancel);
   const onSelectedRoiGeometryChangeRef = useRef(onSelectedRoiGeometryChange);
   const onOverlayErrorRef = useRef(onOverlayError);
   const onBaseLayerFallbackRef = useRef(onBaseLayerFallback);
   const fallbackTriedKeysRef = useRef<MapBaseLayerKey[]>([]);
   const selectedOverlayIdsRef = useRef<string[]>(selectedOverlayIds);
+  const drawingInProgressRef = useRef(false);
   const [baseLayerWarning, setBaseLayerWarning] = useState<string>();
+  const [drawingInProgress, setDrawingInProgress] = useState(false);
+  const [drawMetrics, setDrawMetrics] = useState<DrawMetrics | null>(null);
 
   useEffect(() => {
     onSelectRoiRef.current = onSelectRoi;
@@ -201,6 +291,10 @@ export function SpatialMapCanvas({
   useEffect(() => {
     onDrawCompleteRef.current = onDrawComplete;
   }, [onDrawComplete]);
+
+  useEffect(() => {
+    onDrawCancelRef.current = onDrawCancel;
+  }, [onDrawCancel]);
 
   useEffect(() => {
     onSelectedRoiGeometryChangeRef.current = onSelectedRoiGeometryChange;
@@ -375,6 +469,10 @@ export function SpatialMapCanvas({
         map.removeInteraction(modifyInteractionRef.current);
         modifyInteractionRef.current = null;
       }
+      if (modifySnapInteractionRef.current) {
+        map.removeInteraction(modifySnapInteractionRef.current);
+        modifySnapInteractionRef.current = null;
+      }
       if (hoverInteractionRef.current) {
         map.removeInteraction(hoverInteractionRef.current);
         hoverInteractionRef.current = null;
@@ -382,6 +480,10 @@ export function SpatialMapCanvas({
       if (drawInteractionRef.current) {
         map.removeInteraction(drawInteractionRef.current);
         drawInteractionRef.current = null;
+      }
+      if (drawSnapInteractionRef.current) {
+        map.removeInteraction(drawSnapInteractionRef.current);
+        drawSnapInteractionRef.current = null;
       }
       map.setTarget(undefined);
       mapRef.current = null;
@@ -495,9 +597,10 @@ export function SpatialMapCanvas({
 
   useEffect(() => {
     const map = mapRef.current;
+    const roiSource = roiSourceRef.current;
     const selectInteraction = selectInteractionRef.current;
     const selectedRoi = rois.find((item) => item.id === selectedRoiId);
-    if (!map || !selectInteraction || !selectedRoi) {
+    if (!map || !roiSource || !selectInteraction || !selectedRoi) {
       return;
     }
 
@@ -506,6 +609,10 @@ export function SpatialMapCanvas({
         map.removeInteraction(modifyInteractionRef.current);
         modifyInteractionRef.current = null;
       }
+      if (modifySnapInteractionRef.current) {
+        map.removeInteraction(modifySnapInteractionRef.current);
+        modifySnapInteractionRef.current = null;
+      }
       return;
     }
 
@@ -513,9 +620,19 @@ export function SpatialMapCanvas({
       map.removeInteraction(modifyInteractionRef.current);
       modifyInteractionRef.current = null;
     }
+    if (modifySnapInteractionRef.current) {
+      map.removeInteraction(modifySnapInteractionRef.current);
+      modifySnapInteractionRef.current = null;
+    }
 
     const modifyInteraction = new Modify({
       features: selectInteraction.getFeatures(),
+    });
+    const modifySnapInteraction = new Snap({
+      source: roiSource,
+      edge: true,
+      vertex: true,
+      pixelTolerance: 16,
     });
     modifyInteraction.on('modifyend', (event) => {
       const feature = event.features.item(0) as Feature<Geometry> | undefined;
@@ -528,12 +645,18 @@ export function SpatialMapCanvas({
     });
 
     map.addInteraction(modifyInteraction);
+    map.addInteraction(modifySnapInteraction);
     modifyInteractionRef.current = modifyInteraction;
+    modifySnapInteractionRef.current = modifySnapInteraction;
 
     return () => {
       if (modifyInteractionRef.current === modifyInteraction) {
         map.removeInteraction(modifyInteraction);
         modifyInteractionRef.current = null;
+      }
+      if (modifySnapInteractionRef.current === modifySnapInteraction) {
+        map.removeInteraction(modifySnapInteraction);
+        modifySnapInteractionRef.current = null;
       }
     };
   }, [geometryEditEnabled, rois, selectedRoiId]);
@@ -581,8 +704,9 @@ export function SpatialMapCanvas({
 
   useEffect(() => {
     const map = mapRef.current;
+    const roiSource = roiSourceRef.current;
     const draftSource = draftSourceRef.current;
-    if (!map || !draftSource) {
+    if (!map || !roiSource || !draftSource) {
       return;
     }
 
@@ -591,6 +715,14 @@ export function SpatialMapCanvas({
       map.removeInteraction(drawInteractionRef.current);
       drawInteractionRef.current = null;
     }
+    if (drawSnapInteractionRef.current) {
+      map.removeInteraction(drawSnapInteractionRef.current);
+      drawSnapInteractionRef.current = null;
+    }
+    drawingInProgressRef.current = false;
+    setDrawingInProgress(false);
+    setDrawMetrics(null);
+    setDragPanEnabled(map, true);
 
     if (!drawMode) {
       return;
@@ -601,23 +733,133 @@ export function SpatialMapCanvas({
       type: drawMode === 'rectangle' ? 'Circle' : 'Polygon',
       geometryFunction: drawMode === 'rectangle' ? createBox() : undefined,
     });
+    const drawSnapInteraction = new Snap({
+      source: roiSource,
+      edge: true,
+      vertex: true,
+      pixelTolerance: 16,
+    });
+    let geometryChangeKey: EventsKey | undefined;
 
-    drawInteraction.on('drawstart', () => {
+    setDragPanEnabled(map, false);
+
+    drawInteraction.on('drawstart', (event) => {
       draftSource.clear();
+      drawingInProgressRef.current = true;
+      setDrawingInProgress(true);
+      setDrawMetrics(calculateDrawMetrics(event.feature as Feature<Geometry>, drawMode));
+      geometryChangeKey = (event.feature as Feature<Geometry>).getGeometry()?.on('change', () => {
+        setDrawMetrics(calculateDrawMetrics(event.feature as Feature<Geometry>, drawMode));
+      });
     });
     drawInteraction.on('drawend', (event) => {
+      if (geometryChangeKey) {
+        unByKey(geometryChangeKey);
+        geometryChangeKey = undefined;
+      }
+      drawingInProgressRef.current = false;
+      setDrawingInProgress(false);
+      setDragPanEnabled(map, true);
+      drawInteraction.setActive(false);
+      map.removeInteraction(drawInteraction);
+      map.removeInteraction(drawSnapInteraction);
+      if (drawInteractionRef.current === drawInteraction) {
+        drawInteractionRef.current = null;
+      }
+      if (drawSnapInteractionRef.current === drawSnapInteraction) {
+        drawSnapInteractionRef.current = null;
+      }
+      setDrawMetrics(null);
       draftSource.clear();
       draftSource.addFeature(event.feature as Feature<Geometry>);
       onDrawCompleteRef.current(toDraftGeometry(event.feature as Feature<Geometry>, drawMode));
     });
+    drawInteraction.on('drawabort', () => {
+      if (geometryChangeKey) {
+        unByKey(geometryChangeKey);
+        geometryChangeKey = undefined;
+      }
+      drawingInProgressRef.current = false;
+      setDrawingInProgress(false);
+      setDrawMetrics(null);
+      setDragPanEnabled(map, true);
+      drawInteraction.setActive(false);
+      map.removeInteraction(drawInteraction);
+      map.removeInteraction(drawSnapInteraction);
+      if (drawInteractionRef.current === drawInteraction) {
+        drawInteractionRef.current = null;
+      }
+      if (drawSnapInteractionRef.current === drawSnapInteraction) {
+        drawSnapInteractionRef.current = null;
+      }
+    });
 
     map.addInteraction(drawInteraction);
+    map.addInteraction(drawSnapInteraction);
     drawInteractionRef.current = drawInteraction;
+    drawSnapInteractionRef.current = drawSnapInteraction;
+
+    const viewport = map.getViewport();
+    const handleContextMenu = (event: MouseEvent) => {
+      if (drawMode !== 'polygon' || !drawingInProgressRef.current) {
+        return;
+      }
+      event.preventDefault();
+      drawInteraction.finishDrawing();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        drawingInProgressRef.current = false;
+        setDrawingInProgress(false);
+        drawInteraction.abortDrawing();
+        onDrawCancelRef.current?.();
+        return;
+      }
+      if (
+        event.key === 'Enter' &&
+        drawMode === 'polygon' &&
+        drawingInProgressRef.current
+      ) {
+        event.preventDefault();
+        drawInteraction.finishDrawing();
+        return;
+      }
+      if (
+        drawMode === 'polygon' &&
+        drawingInProgressRef.current &&
+        (event.key === 'Backspace' ||
+          event.key === 'Delete' ||
+          ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z'))
+      ) {
+        event.preventDefault();
+        drawInteraction.removeLastPoint();
+      }
+    };
+
+    viewport.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
+      if (geometryChangeKey) {
+        unByKey(geometryChangeKey);
+      }
+      viewport.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+      drawingInProgressRef.current = false;
+      setDrawingInProgress(false);
+      setDrawMetrics(null);
+      setDragPanEnabled(map, true);
       if (drawInteractionRef.current === drawInteraction) {
         map.removeInteraction(drawInteraction);
         drawInteractionRef.current = null;
+      }
+      if (drawSnapInteractionRef.current === drawSnapInteraction) {
+        map.removeInteraction(drawSnapInteraction);
+        drawSnapInteractionRef.current = null;
       }
     };
   }, [drawMode]);
@@ -722,9 +964,57 @@ export function SpatialMapCanvas({
     });
   }, [overlayOpacities, overlays, selectedOverlayIds, token]);
 
+  const drawBanner = (() => {
+    if (!drawMode) {
+      return null;
+    }
+    const metricsText = drawMetrics
+      ? locale === 'zh-CN'
+        ? `点数 ${drawMetrics.pointCount} · 面积 ${formatAreaValue(drawMetrics.areaSquareMeters, locale)} · ROI 吸附已开启`
+        : `Points ${drawMetrics.pointCount} · Area ${formatAreaValue(drawMetrics.areaSquareMeters, locale)} · ROI snapping on`
+      : null;
+    if (locale === 'zh-CN') {
+      if (drawMode === 'rectangle') {
+        return {
+          title: '矩形绘制中',
+          body: '左键拖拽绘制，松开完成，Esc 取消。',
+          metrics: metricsText,
+        };
+      }
+      return {
+        title: '多边形绘制中',
+        body: drawingInProgress
+          ? '左键继续加点，Backspace/Delete/Ctrl+Z 撤销上一点，右键或 Enter 完成，Esc 取消。'
+          : '左键开始落点，继续左键连边，Backspace/Delete/Ctrl+Z 撤销上一点，右键或 Enter 完成，Esc 取消。',
+        metrics: metricsText,
+      };
+    }
+    if (drawMode === 'rectangle') {
+      return {
+        title: 'Rectangle Drawing',
+        body: 'Left drag to draw, release to finish, Esc to cancel.',
+        metrics: metricsText,
+      };
+    }
+    return {
+      title: 'Polygon Drawing',
+      body: drawingInProgress
+        ? 'Left click to add points, Backspace/Delete/Ctrl+Z undo last point, right click or Enter to finish, Esc to cancel.'
+        : 'Left click to start, keep clicking to add edges, Backspace/Delete/Ctrl+Z undo last point, right click or Enter to finish, Esc to cancel.',
+      metrics: metricsText,
+    };
+  })();
+
   return (
     <div className="spatial-map-canvas-shell">
       <div ref={containerRef} className="spatial-map-canvas" />
+      {drawBanner ? (
+        <div className="spatial-map-draw-banner">
+          <strong>{drawBanner.title}</strong>
+          <span>{drawBanner.body}</span>
+          {drawBanner.metrics ? <span className="spatial-map-draw-banner-metrics">{drawBanner.metrics}</span> : null}
+        </div>
+      ) : null}
       {baseLayerWarning ? (
         <div className="spatial-map-warning-banner">{baseLayerWarning}</div>
       ) : null}

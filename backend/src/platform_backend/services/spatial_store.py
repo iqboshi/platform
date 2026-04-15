@@ -31,7 +31,7 @@ from platform_backend.schemas.spatial import (
     SpatialRoiSummary,
     SpatialRoiUpdateRequest,
 )
-from platform_backend.schemas.workflow import WorkflowGraph
+from platform_backend.schemas.workflow import WorkflowGraph, WorkflowNode
 
 
 def _is_admin_user(current_user: UserProfile | User | None) -> bool:
@@ -542,28 +542,27 @@ def resolve_saved_rois_in_workflow_graph(
     *,
     current_user: UserProfile | User,
 ) -> WorkflowGraph:
-    graph_json = deepcopy(graph.model_dump(mode="json"))
-    nodes = graph_json.get("nodes", [])
-    if not isinstance(nodes, list):
-        return graph
+    resolved_nodes: list[WorkflowNode] = []
+    for node in graph.nodes:
+        params = dict(node.params)
+        if str(params.get("roiMode", "")).strip() == "saved_roi":
+            roi_id = str(params.get("roiId", "")).strip()
+            if not roi_id:
+                raise ValueError(f"Node {node.id} requires roiId when roiMode is saved_roi.")
+            params["bbox"] = resolve_spatial_roi_bbox(
+                db,
+                roi_id,
+                current_user=current_user,
+            )
+        subgraph = (
+            resolve_saved_rois_in_workflow_graph(
+                db,
+                node.subgraph,
+                current_user=current_user,
+            )
+            if node.subgraph is not None
+            else None
+        )
+        resolved_nodes.append(node.model_copy(update={"params": params, "subgraph": subgraph}))
 
-    for node in nodes:
-        if (
-            not isinstance(node, dict)
-            or str(node.get("type", "")) != "source.sentinel2_gee_download"
-        ):
-            continue
-        params = node.get("params", {})
-        if not isinstance(params, dict):
-            continue
-        roi_mode = str(params.get("roiMode", "manual_bbox") or "manual_bbox").strip()
-        if roi_mode != "saved_roi":
-            continue
-        roi_id = str(params.get("roiId", "")).strip()
-        if not roi_id:
-            raise ValueError("roiId is required when roiMode is saved_roi.")
-        bbox = resolve_spatial_roi_bbox(db, roi_id, current_user=current_user)
-        params["bbox"] = bbox
-        node["params"] = params
-
-    return WorkflowGraph.model_validate(graph_json)
+    return graph.model_copy(update={"nodes": resolved_nodes})

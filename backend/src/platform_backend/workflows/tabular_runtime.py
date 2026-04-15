@@ -19,8 +19,19 @@ from platform_backend.models.entities import (
     ModelVersion,
     WorkflowVersion,
 )
+from platform_backend.workflows.catalog import catalog_definition
+from platform_backend.workflows.subgraph_runtime import (
+    CALL_SUBGRAPH_NODE_TYPE,
+    FOR_EACH_INDEX_PORT_KEY,
+    FOR_EACH_ITEM_PORT_KEY,
+    FOR_EACH_NODE_TYPE,
+    FOR_EACH_RESERVED_INPUT_PORT_KEYS,
+    SUBGRAPH_INPUT_NODE_TYPE,
+    SUBGRAPH_OUTPUT_NODE_TYPE,
+)
 
 TABULAR_MODEL_KIND = "tabular_model"
+CUSTOM_API_SPEC_VERSION = "platform.custom_api.v1"
 
 ALGORITHM_LINEAR_REGRESSION = "linear_regression"
 ALGORITHM_SVM_REGRESSION = "svm_regression"
@@ -43,12 +54,24 @@ TABULAR_EXECUTABLE_NODE_TYPES = {
     "source.model_version",
     "table.load_csv",
     "table.train_test_split",
+    "tabular.train_regression_model",
+    "tabular.predict_model",
     "metrics.validate_regression",
     "export.table",
     "export.metrics",
     "model.save_trained_model",
     "custom.api_predict",
     "tabular.predict",
+    "control.boolean_literal",
+    "control.list_literal",
+    "control.compare",
+    "control.not",
+    "control.guard",
+    "control.coalesce",
+    FOR_EACH_NODE_TYPE,
+    CALL_SUBGRAPH_NODE_TYPE,
+    SUBGRAPH_INPUT_NODE_TYPE,
+    SUBGRAPH_OUTPUT_NODE_TYPE,
     *TABULAR_NODE_ALGORITHMS.keys(),
     *TABULAR_TRAIN_NODE_ALGORITHMS.keys(),
 }
@@ -102,6 +125,98 @@ class TabularExecutionState:
     result_model_version_id: str | None = None
     artifact_path: str | None = None
     latest_metrics: dict[str, float] = field(default_factory=dict)
+    subgraph_inputs: dict[str, Any] = field(default_factory=dict)
+
+
+def _skipped_value(reason: str) -> dict[str, Any]:
+    return {"kind": "skipped", "reason": reason}
+
+
+def _is_skipped_value(value: Any) -> bool:
+    return isinstance(value, dict) and str(value.get("kind", "")).strip() == "skipped"
+
+
+def _infer_value_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "json"
+
+
+def _wrap_control_value(value: Any, *, value_type: str | None = None) -> dict[str, Any]:
+    return {
+        "kind": "value",
+        "value": value,
+        "valueType": value_type or _infer_value_type(value),
+        "summary": str(value),
+    }
+
+
+def _unwrap_control_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        kind = str(value.get("kind", "")).strip()
+        if kind == "value":
+            return value.get("value")
+        if kind == "value_list":
+            return value.get("items", [])
+    return value
+
+
+def _require_boolean_control_value(value: Any, *, field_name: str) -> bool:
+    raw = _unwrap_control_value(value)
+    if not isinstance(raw, bool):
+        raise ValueError(f"{field_name} must resolve to a boolean value.")
+    return raw
+
+
+def _resolve_optional_input_value(
+    resolved_outputs: dict[str, dict[str, Any]],
+    bindings: dict[str, str],
+    key: str,
+) -> Any | None:
+    binding = str(bindings.get(key, "")).strip()
+    if not binding:
+        return None
+    value = _resolve_input_value(resolved_outputs, bindings, key)
+    if _is_skipped_value(value):
+        return None
+    return value
+
+
+def _required_input_skip_reason(
+    node_type: str,
+    node: dict[str, Any],
+    resolved_outputs: dict[str, dict[str, Any]],
+    bindings: dict[str, str],
+) -> str | None:
+    if node_type == "control.coalesce":
+        return None
+    for port in _node_input_defs(node):
+        if not bool(port.get("required", False)):
+            continue
+        port_key = str(port.get("key", "")).strip()
+        binding = str(bindings.get(port_key, "")).strip()
+        if not binding:
+            continue
+        value = _resolve_input_value(resolved_outputs, bindings, port_key)
+        if _is_skipped_value(value):
+            return f"{node_type} skipped because upstream branch `{port_key}` is inactive."
+    return None
+
+
+def _skip_outputs_for_node(node: dict[str, Any], reason: str) -> dict[str, Any]:
+    return {
+        str(port.get("key", "")).strip(): _skipped_value(reason)
+        for port in _node_output_defs(node)
+        if str(port.get("key", "")).strip()
+    }
 
 
 def parse_json_value(text: str, *, field_name: str) -> Any:
@@ -362,20 +477,16 @@ def create_tabular_model_metadata(
 
 
 def is_supported_tabular_graph(graph_json: dict[str, Any]) -> bool:
-    nodes = graph_json.get("nodes", [])
-    if not isinstance(nodes, list) or not nodes:
+    node_types = _collect_graph_node_types(graph_json)
+    if not node_types:
         return False
-
-    node_types = {
-        str(node.get("type", ""))
-        for node in nodes
-        if isinstance(node, dict)
-    }
     executable_entry_types = {
         "metrics.validate_regression",
         "export.table",
         "export.metrics",
         "table.train_test_split",
+        "tabular.train_regression_model",
+        "tabular.predict_model",
         "model.save_trained_model",
         "custom.api_predict",
         "tabular.predict",
@@ -386,6 +497,102 @@ def is_supported_tabular_graph(graph_json: dict[str, Any]) -> bool:
         return False
 
     return node_types.issubset(TABULAR_EXECUTABLE_NODE_TYPES)
+
+
+def _collect_graph_node_types(graph_json: dict[str, Any]) -> set[str]:
+    nodes = graph_json.get("nodes", [])
+    if not isinstance(nodes, list):
+        return set()
+
+    node_types: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = str(node.get("type", "")).strip()
+        if node_type:
+            node_types.add(node_type)
+        subgraph = node.get("subgraph")
+        if isinstance(subgraph, dict):
+            node_types.update(_collect_graph_node_types(subgraph))
+    return node_types
+
+
+def _node_input_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
+    node_type = str(node.get("type", "")).strip()
+    if node_type == CALL_SUBGRAPH_NODE_TYPE:
+        subgraph = node.get("subgraph")
+        if isinstance(subgraph, dict):
+            return _subgraph_interface_ports(subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs")
+    if node_type == FOR_EACH_NODE_TYPE:
+        subgraph = node.get("subgraph")
+        if isinstance(subgraph, dict):
+            base_inputs = [
+                port.model_dump(mode="json")
+                for port in catalog_definition(FOR_EACH_NODE_TYPE).inputs
+            ]
+            base_input_keys = {str(port.get("key", "")).strip() for port in base_inputs}
+            dynamic_inputs = [
+                dict(port)
+                for port in _subgraph_interface_ports(subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs")
+                if str(port.get("key", "")).strip() not in FOR_EACH_RESERVED_INPUT_PORT_KEYS
+                and str(port.get("key", "")).strip() not in base_input_keys
+            ]
+            return [*base_inputs, *dynamic_inputs]
+    input_defs = node.get("input_defs", [])
+    if isinstance(input_defs, list) and input_defs:
+        return [port for port in input_defs if isinstance(port, dict)]
+    return [port.model_dump(mode="json") for port in catalog_definition(str(node.get("type", "")).strip()).inputs]
+
+
+def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
+    node_type = str(node.get("type", "")).strip()
+    if node_type == CALL_SUBGRAPH_NODE_TYPE:
+        subgraph = node.get("subgraph")
+        if isinstance(subgraph, dict):
+            return _subgraph_interface_ports(subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs")
+    if node_type == FOR_EACH_NODE_TYPE:
+        subgraph = node.get("subgraph")
+        if isinstance(subgraph, dict):
+            aggregated_outputs: list[dict[str, Any]] = []
+            for port in _subgraph_interface_ports(subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs"):
+                cloned = dict(port)
+                cloned["data_types"] = ["value_list"]
+                aggregated_outputs.append(cloned)
+            return aggregated_outputs
+    output_defs = node.get("output_defs", [])
+    if isinstance(output_defs, list) and output_defs:
+        return [port for port in output_defs if isinstance(port, dict)]
+    return [port.model_dump(mode="json") for port in catalog_definition(str(node.get("type", "")).strip()).outputs]
+
+
+def _subgraph_interface_ports(
+    graph_json: dict[str, Any],
+    boundary_type: str,
+    port_field: str,
+) -> list[dict[str, Any]]:
+    nodes = graph_json.get("nodes", [])
+    if not isinstance(nodes, list):
+        return []
+
+    boundary_nodes = sorted(
+        [
+            node
+            for node in nodes
+            if isinstance(node, dict) and str(node.get("type", "")).strip() == boundary_type
+        ],
+        key=lambda node: (
+            float(node.get("position", {}).get("y", 0.0)),
+            float(node.get("position", {}).get("x", 0.0)),
+            str(node.get("id", "")),
+        ),
+    )
+    ports: list[dict[str, Any]] = []
+    for boundary_node in boundary_nodes:
+        raw_ports = boundary_node.get(port_field, [])
+        if not isinstance(raw_ports, list):
+            continue
+        ports.extend(port for port in raw_ports if isinstance(port, dict))
+    return ports
 
 
 def _topological_node_order(
@@ -530,13 +737,13 @@ def _merged_runtime_parameters(
 ) -> dict[str, Any]:
     runtime_parameters = dict(model_spec.default_parameters)
     runtime_parameters.update(params)
-    if node_type == "tabular.predict":
-        legacy_runtime = params.get("runtimeParametersJson")
-        if isinstance(legacy_runtime, str) and legacy_runtime.strip():
+    if node_type in {"tabular.predict", "tabular.predict_model"}:
+        runtime_payload = params.get("runtimeParametersJson")
+        if isinstance(runtime_payload, str) and runtime_payload.strip():
             runtime_parameters.update(
                 _snake_to_camel_parameters(
                     parse_json_object(
-                        legacy_runtime,
+                        runtime_payload,
                         field_name=f"runtimeParametersJson for {node_type}",
                     )
                 )
@@ -734,13 +941,33 @@ def _train_model_node(
     train_table: TableArtifact,
     evaluation_table: TableArtifact | None,
 ) -> tuple[TrainedModelArtifact, MetricsArtifact]:
-    algorithm_key = TABULAR_TRAIN_NODE_ALGORITHMS[node_type]
+    if node_type == "tabular.train_regression_model":
+        algorithm_key = str(params.get("algorithm", "")).strip()
+    else:
+        algorithm_key = TABULAR_TRAIN_NODE_ALGORITHMS[node_type]
+    if algorithm_key not in {
+        ALGORITHM_LINEAR_REGRESSION,
+        ALGORITHM_SVM_REGRESSION,
+        ALGORITHM_RANDOM_FOREST_REGRESSION,
+    }:
+        raise ValueError(f"{node_type} requires a supported algorithm.")
     feature_names = _parse_feature_names_param(params.get("featureColumns"))
     if not feature_names:
         raise ValueError(f"{node_type} requires featureColumns.")
     target_column = str(params.get("targetColumn", "")).strip()
     if not target_column:
         raise ValueError(f"{node_type} requires targetColumn.")
+    working_params = dict(params)
+    hyperparameters_json = params.get("hyperparametersJson")
+    if isinstance(hyperparameters_json, str) and hyperparameters_json.strip():
+        working_params.update(
+            _snake_to_camel_parameters(
+                parse_json_object(
+                    hyperparameters_json,
+                    field_name=f"hyperparametersJson for {node_type}",
+                )
+            )
+        )
 
     train_matrix = _extract_feature_matrix(train_table, feature_names)
     train_targets = _extract_target_values(train_table, target_column)
@@ -748,7 +975,7 @@ def _train_model_node(
         algorithm_key,
         feature_matrix=train_matrix,
         target_values=train_targets,
-        params=params,
+        params=working_params,
     )
     evaluation_source = evaluation_table or train_table
     prediction_table = _predict_with_estimator(
@@ -915,6 +1142,96 @@ def _load_custom_api_config(model_version: ModelVersion) -> dict[str, Any]:
     return api_config
 
 
+def _custom_api_request_payload(
+    *,
+    model_version: ModelVersion,
+    table: TableArtifact,
+    runtime_parameters: dict[str, Any],
+    response_mode: str,
+) -> dict[str, Any]:
+    metadata = model_version.metadata_json if isinstance(model_version.metadata_json, dict) else {}
+    return {
+        "specVersion": CUSTOM_API_SPEC_VERSION,
+        "operation": "predict_table",
+        "taskType": str(model_version.task_type or "").strip() or None,
+        "model": {
+            "modelVersionId": model_version.id,
+            "modelId": model_version.model_id,
+            "version": model_version.version,
+            "framework": model_version.framework,
+            "sourceType": str(metadata.get("source_type", "")).strip() or None,
+        },
+        "input": {
+            "kind": "table",
+            "columns": list(table.columns),
+            "rows": table.rows,
+            "rowCount": len(table.rows),
+        },
+        "parameters": runtime_parameters,
+        "requestedResponseMode": response_mode,
+        # Legacy top-level fields are kept for backward compatibility.
+        "columns": list(table.columns),
+        "rows": table.rows,
+    }
+
+
+def _table_from_custom_api_response(
+    *,
+    response_payload: dict[str, Any],
+    response_mode: str,
+    prediction_column: str,
+    table: TableArtifact,
+) -> TableArtifact:
+    output_payload = response_payload.get("output")
+    if isinstance(output_payload, dict):
+        if response_mode == "prediction_values" and "predictions" not in response_payload:
+            response_payload = {
+                **response_payload,
+                "predictions": output_payload.get("predictions"),
+            }
+        elif response_mode == "table_rows" and "rows" not in response_payload:
+            response_payload = {
+                **response_payload,
+                "rows": output_payload.get("rows"),
+            }
+
+    if response_mode == "prediction_values":
+        predictions = response_payload.get("predictions")
+        if not isinstance(predictions, list):
+            raise ValueError("Custom API response must include a 'predictions' array.")
+        if len(predictions) != len(table.rows):
+            raise ValueError("Custom API predictions length must match the input row count.")
+
+        columns = list(table.columns)
+        if prediction_column not in columns:
+            columns.append(prediction_column)
+        rows = [
+            {**row, prediction_column: prediction}
+            for row, prediction in zip(table.rows, predictions, strict=True)
+        ]
+        return TableArtifact(columns=columns, rows=rows)
+
+    if response_mode != "table_rows":
+        raise ValueError(f"Unsupported custom API responseMode: {response_mode}")
+
+    rows_payload = response_payload.get("rows")
+    if not isinstance(rows_payload, list):
+        raise ValueError("Custom API response must include a 'rows' array.")
+    if len(rows_payload) != len(table.rows):
+        raise ValueError("Custom API response row count must match the input row count.")
+
+    merged_rows: list[dict[str, Any]] = []
+    merged_columns = list(table.columns)
+    for row, extra in zip(table.rows, rows_payload, strict=True):
+        if not isinstance(extra, dict):
+            raise ValueError("Each custom API response row must be an object.")
+        merged_rows.append({**row, **extra})
+        for key in extra:
+            if key not in merged_columns:
+                merged_columns.append(key)
+    return TableArtifact(columns=merged_columns, rows=merged_rows)
+
+
 def _predict_with_custom_api_model(
     *,
     db,
@@ -941,12 +1258,19 @@ def _predict_with_custom_api_model(
         runtime_parameters.update(
             parse_json_object(node_runtime_parameters, field_name="callParametersJson")
         )
+    response_mode = str(api_config.get("response_mode", "prediction_values")).strip()
+    prediction_column = (
+        str(params.get("predictionColumn", "")).strip()
+        or str(api_config.get("default_prediction_column", "")).strip()
+        or "prediction"
+    )
 
-    request_payload = {
-        "columns": list(table.columns),
-        "rows": table.rows,
-        "parameters": runtime_parameters,
-    }
+    request_payload = _custom_api_request_payload(
+        model_version=model_version,
+        table=table,
+        runtime_parameters=runtime_parameters,
+        response_mode=response_mode,
+    )
     body = json.dumps(request_payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     auth_type = str(api_config.get("auth_type", "none")).strip()
@@ -973,6 +1297,8 @@ def _predict_with_custom_api_model(
     try:
         with urllib_request.urlopen(request_obj, timeout=timeout_seconds) as response:
             response_payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(response_payload, dict):
+            raise ValueError("Custom API response must be a JSON object.")
     except urllib_error.HTTPError as exc:
         payload = exc.read().decode("utf-8", errors="ignore")
         raise RuntimeError(
@@ -981,45 +1307,12 @@ def _predict_with_custom_api_model(
     except urllib_error.URLError as exc:
         raise RuntimeError(f"Custom API request failed: {exc.reason}") from exc
 
-    response_mode = str(api_config.get("response_mode", "prediction_values")).strip()
-    prediction_column = (
-        str(params.get("predictionColumn", "")).strip()
-        or str(api_config.get("default_prediction_column", "")).strip()
-        or "prediction"
+    return _table_from_custom_api_response(
+        response_payload=response_payload,
+        response_mode=response_mode,
+        prediction_column=prediction_column,
+        table=table,
     )
-
-    if response_mode == "prediction_values":
-        predictions = response_payload.get("predictions")
-        if not isinstance(predictions, list):
-            raise ValueError("Custom API response must include a 'predictions' array.")
-        if len(predictions) != len(table.rows):
-            raise ValueError("Custom API predictions length must match the input row count.")
-
-        columns = list(table.columns)
-        if prediction_column not in columns:
-            columns.append(prediction_column)
-        rows = [
-            {**row, prediction_column: prediction}
-            for row, prediction in zip(table.rows, predictions, strict=True)
-        ]
-    return TableArtifact(columns=columns, rows=rows)
-
-    rows_payload = response_payload.get("rows")
-    if not isinstance(rows_payload, list):
-        raise ValueError("Custom API response must include a 'rows' array.")
-    if len(rows_payload) != len(table.rows):
-        raise ValueError("Custom API response row count must match the input row count.")
-
-    merged_rows: list[dict[str, Any]] = []
-    merged_columns = list(table.columns)
-    for row, extra in zip(table.rows, rows_payload, strict=True):
-        if not isinstance(extra, dict):
-            raise ValueError("Each custom API response row must be an object.")
-        merged_rows.append({**row, **extra})
-        for key in extra:
-            if key not in merged_columns:
-                merged_columns.append(key)
-    return TableArtifact(columns=merged_columns, rows=merged_rows)
 
 
 def _write_trained_model_artifact(
@@ -1166,9 +1459,8 @@ def _resolve_model_version_id(
     node_type: str,
 ) -> str:
     if str(bindings.get("model", "")).strip():
-        bound_model_version_id = str(
-            _resolve_input_value(resolved_outputs, bindings, "model")
-        ).strip()
+        bound_model = _resolve_optional_input_value(resolved_outputs, bindings, "model")
+        bound_model_version_id = str(bound_model or "").strip()
         if bound_model_version_id:
             return bound_model_version_id
 
@@ -1405,6 +1697,8 @@ def _serialize_preview_value(db, value: Any) -> dict[str, Any]:
         return _metrics_preview(value)
     if isinstance(value, TrainedModelArtifact):
         return _trained_model_preview(value)
+    if isinstance(value, dict) and isinstance(value.get("kind"), str):
+        return dict(value)
     if isinstance(value, str):
         if db.get(DatasetVersion, value) is not None:
             return _dataset_version_preview(db, value)
@@ -1432,6 +1726,244 @@ def _preview_bindings(
     return preview
 
 
+def _collect_structural_subgraph_inputs(
+    *,
+    node_type: str,
+    subgraph: dict[str, Any],
+    state: TabularExecutionState,
+    bindings: dict[str, str],
+    exclude_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    provided_inputs: dict[str, Any] = {}
+    excluded = exclude_keys or set()
+    input_ports = _subgraph_interface_ports(subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs")
+    for port in input_ports:
+        port_key = str(port.get("key", "")).strip()
+        if not port_key or port_key in excluded:
+            continue
+        binding = str(bindings.get(port_key, "")).strip()
+        if binding:
+            provided_inputs[port_key] = _resolve_input_value(state.resolved_outputs, bindings, port_key)
+        elif bool(port.get("required", False)):
+            raise ValueError(f"{node_type} requires subgraph input `{port_key}`.")
+        else:
+            provided_inputs[port_key] = _skipped_value(
+                f"{node_type} did not receive a value for subgraph input `{port_key}`."
+            )
+    return provided_inputs
+
+
+def _propagate_tabular_child_state(
+    parent_state: TabularExecutionState,
+    child_state: TabularExecutionState,
+) -> None:
+    parent_state.result_dataset_version_id = child_state.result_dataset_version_id
+    parent_state.result_model_version_id = child_state.result_model_version_id
+    parent_state.artifact_path = child_state.artifact_path
+    parent_state.latest_metrics = child_state.latest_metrics
+
+
+def _execute_tabular_subgraph_body(
+    *,
+    db,
+    subgraph: dict[str, Any],
+    provided_inputs: dict[str, Any],
+    state: TabularExecutionState,
+    storage_root: Path,
+    run_id: str,
+    persist_outputs: bool,
+    workspace_id: str | None,
+    current_user: Any | None,
+    create_private_dataset_version: CreatePrivateDatasetVersionFn | None,
+    create_private_model_version: CreatePrivateModelVersionFn | None,
+) -> tuple[dict[str, Any], TabularExecutionState]:
+    raw_nodes = subgraph.get("nodes", [])
+    if not isinstance(raw_nodes, list):
+        raise ValueError("Subgraph nodes must be a list.")
+
+    child_state = TabularExecutionState(
+        saved_dataset_version_ids=state.saved_dataset_version_ids,
+        saved_model_version_ids=state.saved_model_version_ids,
+        result_dataset_version_id=state.result_dataset_version_id,
+        result_model_version_id=state.result_model_version_id,
+        artifact_path=state.artifact_path,
+        latest_metrics=dict(state.latest_metrics),
+        subgraph_inputs=provided_inputs,
+    )
+    for inner_node in _topological_node_order(raw_nodes):
+        inner_node_id = str(inner_node.get("id", "")).strip()
+        child_state.resolved_outputs[inner_node_id] = _execute_tabular_node(
+            db=db,
+            node=inner_node,
+            state=child_state,
+            storage_root=storage_root,
+            run_id=run_id,
+            persist_outputs=persist_outputs,
+            workspace_id=workspace_id,
+            current_user=current_user,
+            create_private_dataset_version=create_private_dataset_version,
+            create_private_model_version=create_private_model_version,
+        )
+
+    outputs: dict[str, Any] = {}
+    output_nodes = sorted(
+        [
+            item
+            for item in raw_nodes
+            if isinstance(item, dict) and str(item.get("type", "")).strip() == SUBGRAPH_OUTPUT_NODE_TYPE
+        ],
+        key=lambda item: (
+            float(item.get("position", {}).get("y", 0.0)),
+            float(item.get("position", {}).get("x", 0.0)),
+            str(item.get("id", "")),
+        ),
+    )
+    for output_node in output_nodes:
+        input_defs = output_node.get("input_defs", [])
+        output_bindings = output_node.get("input_bindings", {})
+        if not isinstance(input_defs, list) or not input_defs:
+            continue
+        if not isinstance(output_bindings, dict):
+            raise ValueError(f"Subgraph output node {output_node.get('id', '')} has invalid bindings.")
+        port_key = str(input_defs[0].get("key", "")).strip()
+        if not port_key:
+            continue
+        binding = str(output_bindings.get(port_key, "")).strip()
+        if not binding and bool(input_defs[0].get("required", False)):
+            raise ValueError(f"Subgraph output `{port_key}` is required but not bound.")
+        outputs[port_key] = (
+            _resolve_input_value(child_state.resolved_outputs, output_bindings, port_key)
+            if binding
+            else _skipped_value(f"Subgraph output `{port_key}` is not bound.")
+        )
+
+    return outputs, child_state
+
+
+def _execute_tabular_subgraph(
+    *,
+    db,
+    node: dict[str, Any],
+    state: TabularExecutionState,
+    bindings: dict[str, str],
+    storage_root: Path,
+    run_id: str,
+    persist_outputs: bool,
+    workspace_id: str | None,
+    current_user: Any | None,
+    create_private_dataset_version: CreatePrivateDatasetVersionFn | None,
+    create_private_model_version: CreatePrivateModelVersionFn | None,
+) -> dict[str, Any]:
+    node_id = str(node.get("id", "")).strip()
+    subgraph = node.get("subgraph")
+    if not isinstance(subgraph, dict):
+        raise ValueError(f"Node {node_id} is missing a valid subgraph definition.")
+
+    provided_inputs = _collect_structural_subgraph_inputs(
+        node_type=CALL_SUBGRAPH_NODE_TYPE,
+        subgraph=subgraph,
+        state=state,
+        bindings=bindings,
+    )
+    outputs, child_state = _execute_tabular_subgraph_body(
+        db=db,
+        subgraph=subgraph,
+        provided_inputs=provided_inputs,
+        state=state,
+        storage_root=storage_root,
+        run_id=run_id,
+        persist_outputs=persist_outputs,
+        workspace_id=workspace_id,
+        current_user=current_user,
+        create_private_dataset_version=create_private_dataset_version,
+        create_private_model_version=create_private_model_version,
+    )
+    _propagate_tabular_child_state(state, child_state)
+    return outputs
+
+
+def _execute_tabular_for_each(
+    *,
+    db,
+    node: dict[str, Any],
+    state: TabularExecutionState,
+    bindings: dict[str, str],
+    storage_root: Path,
+    run_id: str,
+    persist_outputs: bool,
+    workspace_id: str | None,
+    current_user: Any | None,
+    create_private_dataset_version: CreatePrivateDatasetVersionFn | None,
+    create_private_model_version: CreatePrivateModelVersionFn | None,
+) -> dict[str, Any]:
+    node_id = str(node.get("id", "")).strip()
+    subgraph = node.get("subgraph")
+    if not isinstance(subgraph, dict):
+        raise ValueError(f"Node {node_id} is missing a valid subgraph definition.")
+
+    raw_items = _unwrap_control_value(_resolve_input_value(state.resolved_outputs, bindings, "items"))
+    if not isinstance(raw_items, list):
+        raise ValueError(f"Node {node_id} requires `items` to resolve to a JSON array.")
+
+    shared_inputs = _collect_structural_subgraph_inputs(
+        node_type=FOR_EACH_NODE_TYPE,
+        subgraph=subgraph,
+        state=state,
+        bindings=bindings,
+        exclude_keys=FOR_EACH_RESERVED_INPUT_PORT_KEYS,
+    )
+
+    aggregated_outputs: dict[str, list[Any]] = {}
+    output_ports = _subgraph_interface_ports(subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs")
+    output_keys = [
+        str(port.get("key", "")).strip()
+        for port in output_ports
+        if str(port.get("key", "")).strip()
+    ]
+    for port_key in output_keys:
+        aggregated_outputs.setdefault(port_key, [])
+
+    for index, item in enumerate(raw_items):
+        iteration_inputs = {
+            **shared_inputs,
+            FOR_EACH_ITEM_PORT_KEY: item,
+            FOR_EACH_INDEX_PORT_KEY: index,
+        }
+        iteration_outputs, child_state = _execute_tabular_subgraph_body(
+            db=db,
+            subgraph=subgraph,
+            provided_inputs=iteration_inputs,
+            state=state,
+            storage_root=storage_root,
+            run_id=run_id,
+            persist_outputs=persist_outputs,
+            workspace_id=workspace_id,
+            current_user=current_user,
+            create_private_dataset_version=create_private_dataset_version,
+            create_private_model_version=create_private_model_version,
+        )
+        _propagate_tabular_child_state(state, child_state)
+        for port_key in output_keys:
+            aggregated_outputs[port_key].append(
+                iteration_outputs.get(
+                    port_key,
+                    _skipped_value(
+                        f"{FOR_EACH_NODE_TYPE} iteration {index} did not emit `{port_key}`."
+                    ),
+                )
+            )
+
+    return {
+        port_key: {
+            "kind": "value_list",
+            "items": items,
+            "count": len(items),
+            "summary": f"{len(items)} collected values",
+        }
+        for port_key, items in aggregated_outputs.items()
+    }
+
+
 def _execute_tabular_node(
     *,
     db,
@@ -1452,6 +1984,10 @@ def _execute_tabular_node(
     if not isinstance(params, dict) or not isinstance(bindings, dict):
         raise ValueError(f"Node {node_id} has invalid params or input bindings.")
 
+    skip_reason = _required_input_skip_reason(node_type, node, state.resolved_outputs, bindings)
+    if skip_reason is not None:
+        return _skip_outputs_for_node(node, skip_reason)
+
     if node_type == "source.dataset_version":
         dataset_version_id = str(params.get("datasetVersionId", "")).strip()
         if not dataset_version_id:
@@ -1463,6 +1999,120 @@ def _execute_tabular_node(
         if not model_version_id:
             raise ValueError(f"Node {node_id} is missing modelVersionId.")
         return {"model": model_version_id}
+
+    if node_type == SUBGRAPH_INPUT_NODE_TYPE:
+        output_defs = node.get("output_defs", [])
+        if not isinstance(output_defs, list) or not output_defs:
+            raise ValueError(f"Node {node_id} must declare one subgraph output port.")
+        port_key = str(output_defs[0].get("key", "")).strip()
+        if not port_key:
+            raise ValueError(f"Node {node_id} subgraph output port key is missing.")
+        return {
+            port_key: state.subgraph_inputs.get(
+                port_key,
+                _skipped_value(f"Subgraph input `{port_key}` was not provided."),
+            )
+        }
+
+    if node_type == SUBGRAPH_OUTPUT_NODE_TYPE:
+        return {}
+
+    if node_type == CALL_SUBGRAPH_NODE_TYPE:
+        return _execute_tabular_subgraph(
+            db=db,
+            node=node,
+            state=state,
+            bindings=bindings,
+            storage_root=storage_root,
+            run_id=run_id,
+            persist_outputs=persist_outputs,
+            workspace_id=workspace_id,
+            current_user=current_user,
+            create_private_dataset_version=create_private_dataset_version,
+            create_private_model_version=create_private_model_version,
+        )
+
+    if node_type == FOR_EACH_NODE_TYPE:
+        return _execute_tabular_for_each(
+            db=db,
+            node=node,
+            state=state,
+            bindings=bindings,
+            storage_root=storage_root,
+            run_id=run_id,
+            persist_outputs=persist_outputs,
+            workspace_id=workspace_id,
+            current_user=current_user,
+            create_private_dataset_version=create_private_dataset_version,
+            create_private_model_version=create_private_model_version,
+        )
+
+    if node_type == "control.boolean_literal":
+        return {"value": _wrap_control_value(bool(params.get("value", False)), value_type="boolean")}
+
+    if node_type == "control.list_literal":
+        items = parse_json_value(str(params.get("itemsJson", "[]") or "[]"), field_name="itemsJson")
+        if not isinstance(items, list):
+            raise ValueError("itemsJson must be a JSON array.")
+        return {"items": {"kind": "value_list", "items": items, "count": len(items)}}
+
+    if node_type == "control.compare":
+        left = _unwrap_control_value(_resolve_input_value(state.resolved_outputs, bindings, "left"))
+        right_bound = _resolve_optional_input_value(state.resolved_outputs, bindings, "right")
+        right = (
+            _unwrap_control_value(right_bound)
+            if right_bound is not None
+            else parse_json_value(str(params.get("rightValueJson", "true") or "true"), field_name="rightValueJson")
+        )
+        operator = str(params.get("operator", "eq") or "eq").strip()
+        if operator == "eq":
+            result = left == right
+        elif operator == "ne":
+            result = left != right
+        elif operator == "gt":
+            result = left > right
+        elif operator == "gte":
+            result = left >= right
+        elif operator == "lt":
+            result = left < right
+        elif operator == "lte":
+            result = left <= right
+        elif operator == "contains":
+            if isinstance(left, str):
+                result = str(right) in left
+            elif isinstance(left, dict):
+                result = right in left or str(right) in left
+            elif isinstance(left, list | tuple | set):
+                result = right in left
+            else:
+                raise ValueError("contains operator requires a string, array, set, tuple, or object on the left side.")
+        else:
+            raise ValueError(f"Unsupported compare operator: {operator}")
+        return {"result": _wrap_control_value(result, value_type="boolean")}
+
+    if node_type == "control.not":
+        value = _require_boolean_control_value(
+            _resolve_input_value(state.resolved_outputs, bindings, "value"),
+            field_name="value",
+        )
+        return {"result": _wrap_control_value(not value, value_type="boolean")}
+
+    if node_type == "control.guard":
+        enabled = _require_boolean_control_value(
+            _resolve_input_value(state.resolved_outputs, bindings, "enabled"),
+            field_name="enabled",
+        )
+        payload = _resolve_input_value(state.resolved_outputs, bindings, "payload")
+        if not enabled:
+            return {"payload": _skipped_value("control.guard disabled this branch.")}
+        return {"payload": payload}
+
+    if node_type == "control.coalesce":
+        for key in ("primary", "fallback"):
+            value = _resolve_optional_input_value(state.resolved_outputs, bindings, key)
+            if value is not None:
+                return {"output": value}
+        return {"output": _skipped_value("control.coalesce did not receive an active payload.")}
 
     if node_type == "table.load_csv":
         dataset_version_id = _resolve_input_value(state.resolved_outputs, bindings, "dataset")
@@ -1482,7 +2132,7 @@ def _execute_tabular_node(
         )
         return {"trainTable": train_table, "testTable": test_table}
 
-    if node_type in TABULAR_NODE_ALGORITHMS or node_type == "tabular.predict":
+    if node_type in TABULAR_NODE_ALGORITHMS or node_type in {"tabular.predict", "tabular.predict_model"}:
         input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
         model_version_id = _resolve_model_version_id(
             resolved_outputs=state.resolved_outputs,
@@ -1517,11 +2167,11 @@ def _execute_tabular_node(
             )
         }
 
-    if node_type in TABULAR_TRAIN_NODE_ALGORITHMS:
+    if node_type in TABULAR_TRAIN_NODE_ALGORITHMS or node_type == "tabular.train_regression_model":
         train_table = _resolve_input_value(state.resolved_outputs, bindings, "trainTable")
         evaluation_table = None
         if str(bindings.get("testTable", "")).strip():
-            evaluation_table = _resolve_input_value(state.resolved_outputs, bindings, "testTable")
+            evaluation_table = _resolve_optional_input_value(state.resolved_outputs, bindings, "testTable")
         model_artifact, report = _train_model_node(
             node_type=node_type,
             params=params,
@@ -1599,6 +2249,7 @@ def _execute_tabular_node(
             )
             state.saved_model_version_ids.append(model_summary.id)
             state.result_model_version_id = model_summary.id
+            node_outputs["model"] = model_summary.id
             node_outputs["modelVersionId"] = model_summary.id
         return node_outputs
 

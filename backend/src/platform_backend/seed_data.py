@@ -3,6 +3,9 @@ from __future__ import annotations
 SEED_RASTER_DATASET_ID = "seed-raster-ds"
 SEED_RASTER_DATASET_VERSION_ID = "seed-raster-dsv"
 
+SEED_IMAGE_COLLECTION_DATASET_ID = "seed-image-collection-ds"
+SEED_IMAGE_COLLECTION_DATASET_VERSION_ID = "seed-image-collection-dsv"
+
 SEED_VECTOR_DATASET_ID = "seed-vector-ds"
 SEED_VECTOR_DATASET_VERSION_ID = "seed-vector-dsv"
 

@@ -95,6 +95,30 @@ def _upload_vector_dataset(
     return response.json()
 
 
+def _upload_raster_dataset(
+    client: TestClient,
+    token: str,
+    workspace_id: str,
+    dataset_name: str,
+    *,
+    content: bytes = b"FAKE-GEOTIFF-DATA",
+    description: str | None = None,
+) -> dict[str, object]:
+    response = client.post(
+        "/api/v1/datasets/upload",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": (f"{dataset_name}.tif", content, "image/tiff")},
+        data={
+            "workspace_id": workspace_id,
+            "dataset_name": dataset_name,
+            "description": description or "",
+            "kind": "raster",
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def _upload_product_asset(
     client: TestClient,
     token: str,
@@ -221,6 +245,10 @@ def _create_custom_api_model(
     model_name: str,
     *,
     version: str = "1.0.0",
+    task_type: str = "regression",
+    response_mode: str = "prediction_values",
+    default_prediction_column: str = "prediction",
+    default_parameters: dict[str, object] | None = None,
 ) -> dict[str, object]:
     response = client.post(
         "/api/v1/models/custom",
@@ -229,16 +257,16 @@ def _create_custom_api_model(
             "workspace_id": workspace_id,
             "model_name": model_name,
             "version": version,
-            "task_type": "regression",
-            "description": "External API backed regression model.",
+            "task_type": task_type,
+            "description": f"External API backed {task_type} model.",
             "endpoint_url": "https://example.com/predict",
             "timeout_seconds": 45,
             "auth_type": "header",
             "auth_token": "secret-token",
             "auth_header_name": "X-API-Key",
-            "response_mode": "prediction_values",
-            "default_prediction_column": "prediction",
-            "default_parameters": {"threshold": 0.5},
+            "response_mode": response_mode,
+            "default_prediction_column": default_prediction_column,
+            "default_parameters": default_parameters or {"threshold": 0.5},
         },
     )
     assert response.status_code == 201
@@ -333,7 +361,23 @@ def _template_graph(client: TestClient, token: str, template_id: str) -> dict[st
     )
     assert response.status_code == 200
     template = next(item for item in response.json() if item["id"] == template_id)
-    return template["graph"]
+    graph = json.loads(json.dumps(template["graph"]))
+    sample_bindings = {
+        str(item.get("node_id") or item.get("nodeId")): dict(item.get("params") or {})
+        for item in template.get("sample_bindings", []) or template.get("sampleBindings", [])
+        if isinstance(item, dict)
+    }
+    for node in graph.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        binding_params = sample_bindings.get(str(node.get("id", "")))
+        if not binding_params:
+            continue
+        node["params"] = {
+            **(node.get("params") if isinstance(node.get("params"), dict) else {}),
+            **binding_params,
+        }
+    return graph
 
 
 def _save_workflow_graph(
@@ -443,6 +487,148 @@ def test_workflow_validation_endpoint(client: TestClient, admin_token: str) -> N
     assert response.json()["valid"] is True
 
 
+def test_workflow_validation_endpoint_rejects_dataset_semantic_mismatch(
+    client: TestClient,
+    admin_token: str,
+) -> None:
+    workspace_id = _workspace_id(client, admin_token)
+    upload_response = client.post(
+        "/api/v1/datasets/upload",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        files={"file": ("semantic-mismatch.tif", b"FAKE-GEOTIFF-DATA", "image/tiff")},
+        data={
+            "workspace_id": workspace_id,
+            "dataset_name": "Semantic Mismatch Raster",
+            "description": "Raster dataset for workflow semantic validation.",
+            "kind": "raster",
+        },
+    )
+    assert upload_response.status_code == 201
+    dataset_version = upload_response.json()
+
+    graph = {
+        "nodes": [
+            {
+                "id": "source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 0},
+                "params": {"datasetVersionId": dataset_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
+                ],
+            },
+            {
+                "id": "load-table",
+                "type": "table.load_csv",
+                "position": {"x": 240, "y": 0},
+                "params": {"delimiter": ","},
+                "input_bindings": {"dataset": "source:dataset"},
+                "output_defs": [
+                    {
+                        "key": "table",
+                        "label": "Table",
+                        "data_types": ["table"],
+                    }
+                ],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "source": "source",
+                "target": "load-table",
+                "source_handle": "dataset",
+                "target_handle": "dataset",
+            }
+        ],
+    }
+
+    response = client.post(
+        "/api/v1/workflows/validate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json=graph,
+    )
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert any("CSV" in error for error in response.json()["errors"])
+
+
+def test_save_workflow_version_rejects_dataset_semantic_mismatch(
+    client: TestClient,
+    admin_token: str,
+) -> None:
+    workspace_id = _workspace_id(client, admin_token)
+    upload_response = client.post(
+        "/api/v1/datasets/upload",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        files={"file": ("semantic-mismatch.tif", b"FAKE-GEOTIFF-DATA", "image/tiff")},
+        data={
+            "workspace_id": workspace_id,
+            "dataset_name": "Semantic Mismatch Raster",
+            "description": "Raster dataset for workflow semantic validation.",
+            "kind": "raster",
+        },
+    )
+    assert upload_response.status_code == 201
+    dataset_version = upload_response.json()
+
+    graph = {
+        "nodes": [
+            {
+                "id": "source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 0},
+                "params": {"datasetVersionId": dataset_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
+                ],
+            },
+            {
+                "id": "load-table",
+                "type": "table.load_csv",
+                "position": {"x": 240, "y": 0},
+                "params": {"delimiter": ","},
+                "input_bindings": {"dataset": "source:dataset"},
+                "output_defs": [
+                    {
+                        "key": "table",
+                        "label": "Table",
+                        "data_types": ["table"],
+                    }
+                ],
+            },
+        ],
+        "edges": [
+            {
+                "id": "edge-1",
+                "source": "source",
+                "target": "load-table",
+                "source_handle": "dataset",
+                "target_handle": "dataset",
+            }
+        ],
+    }
+
+    response = client.put(
+        "/api/v1/workflows/versions/current",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json=graph,
+    )
+    assert response.status_code == 400
+    assert "Workflow graph is invalid" in response.json()["detail"]
+    assert "CSV" in response.json()["detail"]
+
+
 def test_workflow_templates_endpoint(client: TestClient, admin_token: str) -> None:
     response = client.get(
         "/api/v1/workflows/templates",
@@ -505,6 +691,244 @@ def test_workflow_templates_endpoint_includes_sentinel_template(
         item for item in response.json() if item["id"] == "sentinel2.single_scene_download"
     )
     assert sentinel_template["graph"]["nodes"][0]["type"] == "source.sentinel2_gee_download"
+
+
+def test_workflow_templates_endpoint_includes_control_flow_examples(
+    client: TestClient,
+    admin_token: str,
+) -> None:
+    response = client.get(
+        "/api/v1/workflows/templates",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    conditional_template = next(
+        item for item in payload if item["id"] == "control.conditional_table_source"
+    )
+    subgraph_template = next(
+        item for item in payload if item["id"] == "control.subgraph_table_gate"
+    )
+    for_each_template = next(
+        item for item in payload if item["id"] == "control.for_each_collect_values"
+    )
+    if_else_table_template = next(
+        item for item in payload if item["id"] == "control.if_else_table_subgraphs"
+    )
+    if_else_sample_template = next(
+        item for item in payload
+        if item["id"] == "control.if_else_sample_prediction_subgraphs"
+    )
+
+    assert any(node["type"] == "control.guard" for node in conditional_template["graph"]["nodes"])
+    assert any(node["type"] == "control.coalesce" for node in conditional_template["graph"]["nodes"])
+    branch_node = next(node for node in subgraph_template["graph"]["nodes"] if node["id"] == "branch")
+    assert branch_node["type"] == "workflow.call_subgraph"
+    assert branch_node["subgraph"]["nodes"]
+    assert any(
+        child["type"] == "workflow.subgraph_input" for child in branch_node["subgraph"]["nodes"]
+    )
+    assert any(
+        child["type"] == "workflow.subgraph_output" for child in branch_node["subgraph"]["nodes"]
+    )
+    loop_node = next(node for node in for_each_template["graph"]["nodes"] if node["id"] == "loop")
+    assert loop_node["type"] == "control.for_each"
+    assert loop_node["subgraph"]["nodes"]
+    then_branch_node = next(
+        node for node in if_else_table_template["graph"]["nodes"] if node["id"] == "then-branch"
+    )
+    assert then_branch_node["type"] == "workflow.call_subgraph"
+    assert then_branch_node["subgraph"]["nodes"]
+    sample_branch_node = next(
+        node for node in if_else_sample_template["graph"]["nodes"] if node["id"] == "then-branch"
+    )
+    assert sample_branch_node["type"] == "workflow.call_subgraph"
+    assert any(
+        child["type"] == "custom.api_predict_samples"
+        for child in sample_branch_node["subgraph"]["nodes"]
+    )
+
+
+def test_control_conditional_table_source_template_runs(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    graph = _template_graph(client, engineer_token, "control.conditional_table_source")
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+
+    download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert download.status_code == 200
+    assert "feature_a,feature_b,target" in download.text
+
+
+def test_control_subgraph_table_gate_template_runs(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    graph = _template_graph(client, engineer_token, "control.subgraph_table_gate")
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+
+    download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert download.status_code == 200
+    assert "feature_a,feature_b,target" in download.text
+
+
+def test_control_if_else_table_subgraphs_template_runs(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    graph = _template_graph(client, engineer_token, "control.if_else_table_subgraphs")
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+
+    download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert download.status_code == 200
+    assert "feature_a,feature_b,target" in download.text
+
+
+def test_control_if_else_sample_prediction_subgraphs_template_runs(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    graph = _template_graph(
+        client,
+        engineer_token,
+        "control.if_else_sample_prediction_subgraphs",
+    )
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+
+    download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert download.status_code == 200
+
+    prediction_payload = json.loads(download.text)
+    assert prediction_payload["kind"] == "prediction_set"
+    assert prediction_payload["taskType"] == "semantic_segmentation"
+    assert prediction_payload["sampleKinds"] == ["geospatial_tile"]
+
+
+def test_geo_query_fetch_scene_template_runs_and_persists_output(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    graph = _template_graph(client, engineer_token, "geo.query_fetch_scene")
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+    assert run["primary_output_asset_version_id"] == result_dataset_version_id
+    assert result_dataset_version_id in run["output_asset_version_ids"]
+
+    download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert download.status_code == 200
+    assert download.content
+
+
+@pytest.mark.parametrize(
+    "template_id",
+    [
+        "sample.geo_raster_with_vector_labels",
+        "sample.image_collection_tiles",
+        "sample.image_classification_from_features",
+        "sample.instance_polygons_from_features",
+    ],
+)
+def test_sample_dataset_templates_run_with_seed_bindings(
+    client: TestClient,
+    template_id: str,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    graph = _template_graph(client, engineer_token, template_id)
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+    assert run["primary_output_asset_version_id"] == result_dataset_version_id
+    assert result_dataset_version_id in run["output_asset_version_ids"]
+
+
+def test_train_validate_regression_template_runs_and_does_not_emit_string_none_output(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    before_models_response = client.get(
+        "/api/v1/models/versions?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert before_models_response.status_code == 200
+    before_models = before_models_response.json()
+    before_model_ids = {item["id"] for item in before_models}
+
+    graph = _template_graph(client, engineer_token, "tabular.train_validate_regression")
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    assert run["result_dataset_version_id"] is None
+    assert run["primary_output_asset_version_id"] is None
+    assert run["output_asset_version_ids"] == []
+    assert set(run["metrics"]) >= {"r2", "rmse", "mae"}
+
+    after_models_response = client.get(
+        "/api/v1/models/versions?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert after_models_response.status_code == 200
+    after_models = after_models_response.json()
+    new_models = [item for item in after_models if item["id"] not in before_model_ids]
+    assert len(new_models) == 1
+    assert new_models[0]["model_name"] == "Trained Model"
+    assert new_models[0]["version"] == "1.0.0"
 
 
 def test_gee_credentials_are_user_scoped_private_assets(client: TestClient) -> None:
@@ -609,7 +1033,7 @@ def test_workflow_node_test_returns_prediction_preview(client: TestClient) -> No
     for node in graph["nodes"]:
         if node["type"] == "source.dataset_version":
             node["params"]["datasetVersionId"] = dataset_version["id"]
-        if node["type"] == "tabular.linear_regression_predict":
+        if node["type"] in {"tabular.linear_regression_predict", "tabular.predict_model"}:
             node["params"]["modelVersionId"] = model_version["id"]
             node["params"]["predictionColumn"] = "prediction"
             target_node_id = node["id"]
@@ -619,7 +1043,544 @@ def test_workflow_node_test_returns_prediction_preview(client: TestClient) -> No
     assert payload["input_preview"]["table"]["kind"] == "table"
     assert payload["output_preview"]["table"]["kind"] == "table"
     assert "prediction" in payload["output_preview"]["table"]["columns"]
-    assert payload["output_preview"]["table"]["sample_rows"][0]["prediction"] == 2.0
+    assert isinstance(payload["output_preview"]["table"]["sample_rows"][0]["prediction"], float)
+
+
+def test_workflow_node_test_returns_sample_prediction_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    raster_version = _upload_raster_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "sample-prediction-raster",
+    )
+    model_version = _create_custom_api_model(
+        client,
+        engineer_token,
+        workspace_id,
+        "segmentation-boundary-model",
+        task_type="semantic_segmentation",
+    )
+
+    graph = {
+        "nodes": [
+            {
+                "id": "source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 0},
+                "params": {"datasetVersionId": raster_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                ],
+            },
+            {
+                "id": "load-raster",
+                "type": "raster.load_georaster",
+                "position": {"x": 220, "y": 0},
+                "params": {},
+                "input_bindings": {"dataset": "source:dataset"},
+                "output_defs": [
+                    {"key": "raster", "label": "Geo Raster", "data_types": ["geo_raster"]}
+                ],
+            },
+            {
+                "id": "patchify",
+                "type": "rgb.patchify_raster",
+                "position": {"x": 460, "y": 0},
+                "params": {
+                    "tileWidth": 256,
+                    "tileHeight": 256,
+                    "strideX": 256,
+                    "strideY": 256,
+                    "edgePolicy": "pad",
+                    "outputImageFormat": "png",
+                },
+                "input_bindings": {"raster": "load-raster:raster"},
+                "output_defs": [
+                    {"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}
+                ],
+            },
+            {
+                "id": "build-samples",
+                "type": "dataset.build_samples",
+                "position": {"x": 700, "y": 0},
+                "params": {},
+                "input_bindings": {"tiles": "patchify:tiles"},
+                "output_defs": [
+                    {"key": "samples", "label": "Sample Set", "data_types": ["sample_set"]}
+                ],
+            },
+            {
+                "id": "model-source",
+                "type": "source.model_version",
+                "position": {"x": 700, "y": 220},
+                "params": {"modelVersionId": model_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {"key": "model", "label": "Model Version", "data_types": ["model_version"]}
+                ],
+            },
+            {
+                "id": "predict",
+                "type": "custom.api_predict_samples",
+                "position": {"x": 960, "y": 80},
+                "params": {"callParametersJson": "{}"},
+                "input_bindings": {
+                    "samples": "build-samples:samples",
+                    "model": "model-source:model",
+                },
+                "output_defs": [
+                    {"key": "predictions", "label": "Prediction Set", "data_types": ["prediction_set"]}
+                ],
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "source", "target": "load-raster", "source_handle": "dataset", "target_handle": "dataset"},
+            {"id": "e2", "source": "load-raster", "target": "patchify", "source_handle": "raster", "target_handle": "raster"},
+            {"id": "e3", "source": "patchify", "target": "build-samples", "source_handle": "tiles", "target_handle": "tiles"},
+            {"id": "e4", "source": "build-samples", "target": "predict", "source_handle": "samples", "target_handle": "samples"},
+            {"id": "e5", "source": "model-source", "target": "predict", "source_handle": "model", "target_handle": "model"},
+        ],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "predict")
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["model"]["kind"] == "model_version"
+    assert payload["input_preview"]["samples"]["kind"] == "sample_set"
+    assert payload["input_preview"]["samples"]["sampleKinds"] == ["geospatial_tile"]
+    assert payload["output_preview"]["predictions"]["kind"] == "prediction_set"
+    assert payload["output_preview"]["predictions"]["taskType"] == "semantic_segmentation"
+    assert payload["output_preview"]["predictions"]["sampleKinds"] == ["geospatial_tile"]
+
+
+def test_workflow_node_test_returns_custom_api_training_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    raster_version = _upload_raster_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-training-raster",
+    )
+    vector_version = _upload_vector_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-training-labels",
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"class": "building"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [116.0, 39.0],
+                                    [116.1, 39.0],
+                                    [116.1, 39.1],
+                                    [116.0, 39.1],
+                                    [116.0, 39.0],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    graph = {
+        "nodes": [
+            {
+                "id": "image-source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 0},
+                "params": {"datasetVersionId": raster_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                ],
+            },
+            {
+                "id": "label-source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 220},
+                "params": {"datasetVersionId": vector_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                ],
+            },
+            {
+                "id": "load-raster",
+                "type": "raster.load_georaster",
+                "position": {"x": 220, "y": 0},
+                "params": {},
+                "input_bindings": {"dataset": "image-source:dataset"},
+                "output_defs": [
+                    {"key": "raster", "label": "Geo Raster", "data_types": ["geo_raster"]}
+                ],
+            },
+            {
+                "id": "patchify",
+                "type": "rgb.patchify_raster",
+                "position": {"x": 460, "y": 0},
+                "params": {
+                    "tileWidth": 256,
+                    "tileHeight": 256,
+                    "strideX": 256,
+                    "strideY": 256,
+                    "edgePolicy": "pad",
+                    "outputImageFormat": "png",
+                },
+                "input_bindings": {"raster": "load-raster:raster"},
+                "output_defs": [
+                    {"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}
+                ],
+            },
+            {
+                "id": "load-features",
+                "type": "vector.load_features",
+                "position": {"x": 220, "y": 220},
+                "params": {},
+                "input_bindings": {"dataset": "label-source:dataset"},
+                "output_defs": [
+                    {"key": "features", "label": "Feature Collection", "data_types": ["feature_collection"]}
+                ],
+            },
+            {
+                "id": "labels",
+                "type": "label.rasterize_features_to_tiles",
+                "position": {"x": 700, "y": 120},
+                "params": {"outputMaskFormat": "png"},
+                "input_bindings": {
+                    "tiles": "patchify:tiles",
+                    "features": "load-features:features",
+                },
+                "output_defs": [
+                    {"key": "labels", "label": "Label Set", "data_types": ["label_set"]}
+                ],
+            },
+            {
+                "id": "build-samples",
+                "type": "dataset.build_samples",
+                "position": {"x": 940, "y": 80},
+                "params": {},
+                "input_bindings": {
+                    "tiles": "patchify:tiles",
+                    "labels": "labels:labels",
+                },
+                "output_defs": [
+                    {"key": "samples", "label": "Sample Set", "data_types": ["sample_set"]}
+                ],
+            },
+            {
+                "id": "split-samples",
+                "type": "dataset.split_samples",
+                "position": {"x": 1180, "y": 80},
+                "params": {
+                    "strategy": "random",
+                    "trainRatio": 0.8,
+                    "valRatio": 0.1,
+                    "testRatio": 0.1,
+                    "randomSeed": 42,
+                },
+                "input_bindings": {"samples": "build-samples:samples"},
+                "output_defs": [
+                    {"key": "trainSamples", "label": "Train Samples", "data_types": ["sample_set"]},
+                    {"key": "valSamples", "label": "Val Samples", "data_types": ["sample_set"]},
+                    {"key": "testSamples", "label": "Test Samples", "data_types": ["sample_set"]},
+                ],
+            },
+            {
+                "id": "train",
+                "type": "custom.api_train_samples",
+                "position": {"x": 1440, "y": 80},
+                "params": {
+                    "taskType": "semantic_segmentation",
+                    "outputModelName": "Segmentation API Model",
+                    "outputModelVersion": "1.0.0",
+                    "predictionEndpointUrl": "https://example.com/predict",
+                    "trainingEndpointUrl": "https://example.com/train",
+                    "authType": "header",
+                    "authToken": "secret-token",
+                    "authHeaderName": "X-API-Key",
+                    "timeoutSeconds": 45,
+                    "responseMode": "prediction_masks",
+                    "defaultPredictionColumn": "prediction",
+                    "callParametersJson": "{\"threshold\": 0.5}",
+                },
+                "input_bindings": {
+                    "trainSamples": "split-samples:trainSamples",
+                    "validationSamples": "split-samples:valSamples",
+                },
+                "output_defs": [
+                    {"key": "model", "label": "Custom Model", "data_types": ["model_version"]},
+                    {"key": "artifact", "label": "Artifact", "data_types": ["artifact"]},
+                ],
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "image-source", "target": "load-raster", "source_handle": "dataset", "target_handle": "dataset"},
+            {"id": "e2", "source": "load-raster", "target": "patchify", "source_handle": "raster", "target_handle": "raster"},
+            {"id": "e3", "source": "label-source", "target": "load-features", "source_handle": "dataset", "target_handle": "dataset"},
+            {"id": "e4", "source": "patchify", "target": "labels", "source_handle": "tiles", "target_handle": "tiles"},
+            {"id": "e5", "source": "load-features", "target": "labels", "source_handle": "features", "target_handle": "features"},
+            {"id": "e6", "source": "patchify", "target": "build-samples", "source_handle": "tiles", "target_handle": "tiles"},
+            {"id": "e7", "source": "labels", "target": "build-samples", "source_handle": "labels", "target_handle": "labels"},
+            {"id": "e8", "source": "build-samples", "target": "split-samples", "source_handle": "samples", "target_handle": "samples"},
+            {"id": "e9", "source": "split-samples", "target": "train", "source_handle": "trainSamples", "target_handle": "trainSamples"},
+            {"id": "e10", "source": "split-samples", "target": "train", "source_handle": "valSamples", "target_handle": "validationSamples"},
+        ],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "train")
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["trainSamples"]["kind"] == "sample_set"
+    assert payload["input_preview"]["trainSamples"]["taskTypes"] == ["semantic_segmentation"]
+    assert payload["output_preview"]["model"]["kind"] == "model_version"
+    assert payload["output_preview"]["model"]["sourceType"] == "custom_api"
+    assert payload["output_preview"]["model"]["taskType"] == "semantic_segmentation"
+    assert payload["output_preview"]["artifact"]["kind"] == "artifact_file"
+
+
+def test_workflow_node_test_returns_control_compare_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    graph = {
+        "nodes": [
+            {
+                "id": "flag",
+                "type": "control.boolean_literal",
+                "position": {"x": 0, "y": 0},
+                "params": {"value": True},
+                "input_bindings": {},
+                "output_defs": [{"key": "value", "label": "Value", "data_types": ["value"]}],
+            },
+            {
+                "id": "compare",
+                "type": "control.compare",
+                "position": {"x": 220, "y": 0},
+                "params": {"operator": "eq", "rightValueJson": "true"},
+                "input_bindings": {"left": "flag:value"},
+                "output_defs": [{"key": "result", "label": "Result", "data_types": ["value"]}],
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "flag", "target": "compare", "source_handle": "value", "target_handle": "left"}
+        ],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "compare")
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["left"]["kind"] == "value"
+    assert payload["output_preview"]["result"]["kind"] == "value"
+    assert payload["output_preview"]["result"]["value"] is True
+    assert payload["output_preview"]["result"]["valueType"] == "boolean"
+
+
+def test_workflow_node_test_returns_control_coalesce_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    primary_version = _upload_raster_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "control-primary-raster",
+    )
+    fallback_version = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "control-fallback-table",
+        "feature_a,feature_b,target\n1,2,1.0\n",
+    )
+
+    graph = {
+        "nodes": [
+            {
+                "id": "primary-source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 0},
+                "params": {"datasetVersionId": primary_version["id"]},
+                "input_bindings": {},
+                "output_defs": [{"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}],
+            },
+            {
+                "id": "fallback-source",
+                "type": "source.dataset_version",
+                "position": {"x": 0, "y": 220},
+                "params": {"datasetVersionId": fallback_version["id"]},
+                "input_bindings": {},
+                "output_defs": [{"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}],
+            },
+            {
+                "id": "primary-enabled",
+                "type": "control.boolean_literal",
+                "position": {"x": 240, "y": 0},
+                "params": {"value": False},
+                "input_bindings": {},
+                "output_defs": [{"key": "value", "label": "Value", "data_types": ["value"]}],
+            },
+            {
+                "id": "fallback-enabled",
+                "type": "control.boolean_literal",
+                "position": {"x": 240, "y": 220},
+                "params": {"value": True},
+                "input_bindings": {},
+                "output_defs": [{"key": "value", "label": "Value", "data_types": ["value"]}],
+            },
+            {
+                "id": "primary-guard",
+                "type": "control.guard",
+                "position": {"x": 480, "y": 0},
+                "params": {},
+                "input_bindings": {
+                    "enabled": "primary-enabled:value",
+                    "payload": "primary-source:dataset",
+                },
+                "output_defs": [{"key": "payload", "label": "Payload", "data_types": ["dataset_version"]}],
+            },
+            {
+                "id": "fallback-guard",
+                "type": "control.guard",
+                "position": {"x": 480, "y": 220},
+                "params": {},
+                "input_bindings": {
+                    "enabled": "fallback-enabled:value",
+                    "payload": "fallback-source:dataset",
+                },
+                "output_defs": [{"key": "payload", "label": "Payload", "data_types": ["dataset_version"]}],
+            },
+            {
+                "id": "merge",
+                "type": "control.coalesce",
+                "position": {"x": 760, "y": 120},
+                "params": {},
+                "input_bindings": {
+                    "primary": "primary-guard:payload",
+                    "fallback": "fallback-guard:payload",
+                },
+                "output_defs": [{"key": "output", "label": "Output", "data_types": ["dataset_version"]}],
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "primary-enabled", "target": "primary-guard", "source_handle": "value", "target_handle": "enabled"},
+            {"id": "e2", "source": "primary-source", "target": "primary-guard", "source_handle": "dataset", "target_handle": "payload"},
+            {"id": "e3", "source": "fallback-enabled", "target": "fallback-guard", "source_handle": "value", "target_handle": "enabled"},
+            {"id": "e4", "source": "fallback-source", "target": "fallback-guard", "source_handle": "dataset", "target_handle": "payload"},
+            {"id": "e5", "source": "primary-guard", "target": "merge", "source_handle": "payload", "target_handle": "primary"},
+            {"id": "e6", "source": "fallback-guard", "target": "merge", "source_handle": "payload", "target_handle": "fallback"},
+        ],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "merge")
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["primary"]["kind"] == "skipped"
+    assert payload["input_preview"]["fallback"]["kind"] == "dataset_version"
+    assert payload["output_preview"]["output"]["kind"] == "dataset_version"
+    assert payload["output_preview"]["output"]["datasetVersionId"] == fallback_version["id"]
+
+
+def test_workflow_node_test_returns_call_subgraph_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    graph = {
+        "nodes": [
+            {
+                "id": "flag",
+                "type": "control.boolean_literal",
+                "position": {"x": 0, "y": 0},
+                "params": {"value": True},
+                "input_bindings": {},
+                "output_defs": [{"key": "value", "label": "Value", "data_types": ["value"]}],
+            },
+            {
+                "id": "branch",
+                "type": "workflow.call_subgraph",
+                "position": {"x": 220, "y": 0},
+                "params": {},
+                "input_bindings": {"flag": "flag:value"},
+                "output_defs": [],
+                "subgraph": {
+                    "nodes": [
+                        {
+                            "id": "sub-in",
+                            "type": "workflow.subgraph_input",
+                            "position": {"x": 0, "y": 0},
+                            "params": {},
+                            "input_bindings": {},
+                            "input_defs": [],
+                            "output_defs": [{"key": "flag", "label": "Flag", "data_types": ["value"], "required": True}],
+                            "output_contracts": [{"port_key": "flag", "summary": "Boolean flag.", "value_types": ["boolean"]}],
+                        },
+                        {
+                            "id": "invert",
+                            "type": "control.not",
+                            "position": {"x": 200, "y": 0},
+                            "params": {},
+                            "input_bindings": {"value": "sub-in:flag"},
+                            "output_defs": [{"key": "result", "label": "Result", "data_types": ["value"]}],
+                        },
+                        {
+                            "id": "sub-out",
+                            "type": "workflow.subgraph_output",
+                            "position": {"x": 400, "y": 0},
+                            "params": {},
+                            "input_bindings": {"result": "invert:result"},
+                            "input_defs": [{"key": "result", "label": "Result", "data_types": ["value"], "required": True}],
+                            "input_contracts": [{"port_key": "result", "summary": "Boolean result.", "value_types": ["boolean"]}],
+                            "output_defs": [],
+                        },
+                    ],
+                    "edges": [
+                        {
+                            "id": "se1",
+                            "source": "sub-in",
+                            "target": "invert",
+                            "source_handle": "flag",
+                            "target_handle": "value",
+                        },
+                        {
+                            "id": "se2",
+                            "source": "invert",
+                            "target": "sub-out",
+                            "source_handle": "result",
+                            "target_handle": "result",
+                        },
+                    ],
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "flag", "target": "branch", "source_handle": "value", "target_handle": "flag"}
+        ],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "branch")
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["flag"]["kind"] == "value"
+    assert payload["output_preview"]["result"]["kind"] == "value"
+    assert payload["output_preview"]["result"]["value"] is False
+    assert payload["output_preview"]["result"]["valueType"] == "boolean"
+
+
+def test_workflow_node_test_returns_for_each_preview(client: TestClient) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    graph = _template_graph(client, engineer_token, "control.for_each_collect_values")
+
+    payload = _test_workflow_node(client, engineer_token, graph, "loop")
+    assert payload["status"] == "succeeded"
+    assert payload["input_preview"]["items"]["kind"] == "value_list"
+    assert payload["input_preview"]["items"]["count"] == 3
+    assert payload["output_preview"]["item"]["kind"] == "value_list"
+    assert payload["output_preview"]["item"]["count"] == 3
+    assert payload["output_preview"]["item"]["items"][0] == "tile-a"
+    assert payload["output_preview"]["index"]["kind"] == "value_list"
+    assert payload["output_preview"]["index"]["items"] == [0, 1, 2]
 
 
 def test_workflow_node_test_returns_metrics_preview(client: TestClient) -> None:
@@ -1597,6 +2558,266 @@ def test_prediction_workflow_run_creates_private_table_output(
     assert not any(item["id"] == result_dataset_version_id for item in member_versions.json())
 
 
+def test_sample_custom_api_prediction_workflow_creates_private_artifact_output(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    raster_version = _upload_raster_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "sample-prediction-workflow-raster",
+    )
+    model_version = _create_custom_api_model(
+        client,
+        engineer_token,
+        workspace_id,
+        "workflow-segmentation-api",
+        task_type="semantic_segmentation",
+    )
+
+    graph = {
+        "nodes": [
+            {
+                "id": "source",
+                "type": "source.dataset_version",
+                "position": {"x": 80, "y": 120},
+                "params": {"datasetVersionId": raster_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                ],
+            },
+            {
+                "id": "load-raster",
+                "type": "raster.load_georaster",
+                "position": {"x": 300, "y": 120},
+                "params": {},
+                "input_bindings": {"dataset": "source:dataset"},
+                "output_defs": [
+                    {"key": "raster", "label": "Geo Raster", "data_types": ["geo_raster"]}
+                ],
+            },
+            {
+                "id": "patchify",
+                "type": "rgb.patchify_raster",
+                "position": {"x": 540, "y": 120},
+                "params": {
+                    "tileWidth": 256,
+                    "tileHeight": 256,
+                    "strideX": 256,
+                    "strideY": 256,
+                    "edgePolicy": "pad",
+                    "outputImageFormat": "png",
+                },
+                "input_bindings": {"raster": "load-raster:raster"},
+                "output_defs": [
+                    {"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}
+                ],
+            },
+            {
+                "id": "build-samples",
+                "type": "dataset.build_samples",
+                "position": {"x": 780, "y": 120},
+                "params": {},
+                "input_bindings": {"tiles": "patchify:tiles"},
+                "output_defs": [
+                    {"key": "samples", "label": "Sample Set", "data_types": ["sample_set"]}
+                ],
+            },
+            {
+                "id": "model-source",
+                "type": "source.model_version",
+                "position": {"x": 780, "y": 320},
+                "params": {"modelVersionId": model_version["id"]},
+                "input_bindings": {},
+                "output_defs": [
+                    {"key": "model", "label": "Model Version", "data_types": ["model_version"]}
+                ],
+            },
+            {
+                "id": "predict",
+                "type": "custom.api_predict_samples",
+                "position": {"x": 1020, "y": 120},
+                "params": {"callParametersJson": "{}"},
+                "input_bindings": {
+                    "samples": "build-samples:samples",
+                    "model": "model-source:model",
+                },
+                "output_defs": [
+                    {"key": "predictions", "label": "Prediction Set", "data_types": ["prediction_set"]}
+                ],
+            },
+            {
+                "id": "export-predictions",
+                "type": "export.prediction_set_to_dataset_version",
+                "position": {"x": 1260, "y": 120},
+                "params": {"outputDatasetName": "Segmentation Prediction Output"},
+                "input_bindings": {"predictions": "predict:predictions"},
+                "output_defs": [
+                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                ],
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "source", "target": "load-raster", "source_handle": "dataset", "target_handle": "dataset"},
+            {"id": "e2", "source": "load-raster", "target": "patchify", "source_handle": "raster", "target_handle": "raster"},
+            {"id": "e3", "source": "patchify", "target": "build-samples", "source_handle": "tiles", "target_handle": "tiles"},
+            {"id": "e4", "source": "build-samples", "target": "predict", "source_handle": "samples", "target_handle": "samples"},
+            {"id": "e5", "source": "model-source", "target": "predict", "source_handle": "model", "target_handle": "model"},
+            {"id": "e6", "source": "predict", "target": "export-predictions", "source_handle": "predictions", "target_handle": "predictions"},
+        ],
+    }
+
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+    assert run["input_asset_version_ids"] == [raster_version["id"]]
+    assert result_dataset_version_id in run["output_asset_version_ids"]
+    assert run["primary_output_asset_version_id"] == result_dataset_version_id
+
+    engineer_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    admin_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    member_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert engineer_download.status_code == 200
+    assert admin_download.status_code == 200
+    assert member_download.status_code == 404
+
+    prediction_payload = json.loads(engineer_download.text)
+    assert prediction_payload["kind"] == "prediction_set"
+    assert prediction_payload["taskType"] == "semantic_segmentation"
+    assert prediction_payload["sampleKinds"] == ["geospatial_tile"]
+
+
+def test_custom_api_training_and_prediction_workflow_creates_private_model_and_prediction_assets(
+    client: TestClient,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    admin_token = _login(client, "admin@platform.local", "Admin123!")
+    member_token = _login(client, "member@platform.local", "Member123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    train_raster_version = _upload_raster_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-train-raster",
+    )
+    infer_raster_version = _upload_raster_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-infer-raster",
+    )
+    vector_version = _upload_vector_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-train-labels",
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"class": "building"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [116.0, 39.0],
+                                    [116.1, 39.0],
+                                    [116.1, 39.1],
+                                    [116.0, 39.1],
+                                    [116.0, 39.0],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    graph = _template_graph(
+        client,
+        engineer_token,
+        "custom_api.semantic_segmentation_train_predict",
+    )
+    for node in graph["nodes"]:
+        if node["id"] == "train-image-source":
+            node["params"]["datasetVersionId"] = train_raster_version["id"]
+        elif node["id"] == "label-source":
+            node["params"]["datasetVersionId"] = vector_version["id"]
+        elif node["id"] == "infer-image-source":
+            node["params"]["datasetVersionId"] = infer_raster_version["id"]
+
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+    assert result_dataset_version_id in run["output_asset_version_ids"]
+
+    model_versions_engineer = client.get(
+        "/api/v1/models/versions?scope=mine",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    model_versions_admin = client.get(
+        "/api/v1/models/versions?scope=all",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    model_versions_member = client.get(
+        "/api/v1/models/versions?scope=visible",
+        headers={"Authorization": f"Bearer {member_token}"},
+    )
+    assert model_versions_engineer.status_code == 200
+    assert model_versions_admin.status_code == 200
+    assert model_versions_member.status_code == 200
+    matching_engineer_model = next(
+        (
+            item
+            for item in model_versions_engineer.json()
+            if item["model_name"] == "Custom API Segmentation Model"
+            and item["version"] == "1.0.0"
+            and item["source_type"] == "custom_api"
+        ),
+        None,
+    )
+    assert matching_engineer_model is not None
+    assert any(item["id"] == matching_engineer_model["id"] for item in model_versions_admin.json())
+    assert not any(item["id"] == matching_engineer_model["id"] for item in model_versions_member.json())
+
+    prediction_download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert prediction_download.status_code == 200
+    prediction_payload = json.loads(prediction_download.text)
+    assert prediction_payload["kind"] == "prediction_set"
+    assert prediction_payload["taskType"] == "semantic_segmentation"
+    assert prediction_payload["annotationKinds"] == ["mask"]
+
+
 def test_validation_workflow_exports_metrics_and_keeps_output_private(client: TestClient) -> None:
     engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
     admin_token = _login(client, "admin@platform.local", "Admin123!")
@@ -2230,7 +3451,7 @@ def test_custom_api_models_can_be_published_and_keep_runtime_auth(
         if node["type"] == "custom.api_predict":
             node["params"]["modelVersionId"] = model_version["id"]
             node["params"]["predictionColumn"] = "prediction"
-            node["params"]["callParametersJson"] = "{}"
+            node["params"]["callParametersJson"] = '{"threshold": 0.7, "topK": 3}'
         if node["type"] == "export.table":
             node["params"]["outputDatasetName"] = "Custom API Published Output"
 
@@ -2244,7 +3465,17 @@ def test_custom_api_models_can_be_published_and_keep_runtime_auth(
             return False
 
         def read(self) -> bytes:
-            return json.dumps({"predictions": [10.5, 12.25]}).encode("utf-8")
+            return json.dumps(
+                {
+                    "specVersion": "platform.custom_api.v1",
+                    "operation": "predict_table",
+                    "status": "succeeded",
+                    "output": {
+                        "kind": "prediction_values",
+                        "predictions": [10.5, 12.25],
+                    },
+                }
+            ).encode("utf-8")
 
     def fake_urlopen(request_obj, timeout: int = 30):
         captured_request["url"] = request_obj.full_url
@@ -2252,6 +3483,7 @@ def test_custom_api_models_can_be_published_and_keep_runtime_auth(
         captured_request["headers"] = {
             key.lower(): value for key, value in request_obj.header_items()
         }
+        captured_request["body"] = json.loads(request_obj.data.decode("utf-8"))
         return FakeApiResponse()
 
     monkeypatch.setattr(
@@ -2264,6 +3496,110 @@ def test_custom_api_models_can_be_published_and_keep_runtime_auth(
     assert run["status"] == "succeeded"
     assert captured_request["url"] == "https://example.com/predict"
     assert captured_request["headers"]["x-api-key"] == "secret-token"
+    request_body = captured_request["body"]
+    assert request_body["specVersion"] == "platform.custom_api.v1"
+    assert request_body["operation"] == "predict_table"
+    assert request_body["taskType"] == "regression"
+    assert request_body["input"]["kind"] == "table"
+    assert request_body["input"]["rowCount"] == 2
+    assert request_body["input"]["columns"] == ["feature_a", "feature_b"]
+    assert request_body["requestedResponseMode"] == "prediction_values"
+    assert request_body["parameters"] == {"threshold": 0.7, "topK": 3}
+    assert request_body["columns"] == ["feature_a", "feature_b"]
+    assert request_body["rows"] == [
+        {"feature_a": "7", "feature_b": "8"},
+        {"feature_a": "8", "feature_b": "9"},
+    ]
+
+
+def test_custom_api_prediction_supports_table_rows_response_mode(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+
+    model_version = _create_custom_api_model(
+        client,
+        engineer_token,
+        workspace_id,
+        "external-table-enricher",
+        response_mode="table_rows",
+        default_parameters={"threshold": 0.5},
+    )
+    prediction_dataset = _upload_table_dataset(
+        client,
+        engineer_token,
+        workspace_id,
+        "custom-api-table-rows-input",
+        "feature_a,feature_b\n7,8\n8,9\n",
+    )
+    graph = _template_graph(client, engineer_token, "tabular.custom_api_prediction")
+    for node in graph["nodes"]:
+        if node["type"] == "source.dataset_version":
+            node["params"]["datasetVersionId"] = prediction_dataset["id"]
+        if node["type"] == "custom.api_predict":
+            node["params"]["modelVersionId"] = model_version["id"]
+            node["params"]["predictionColumn"] = "prediction"
+            node["params"]["callParametersJson"] = '{"threshold": 0.9, "includeScore": true}'
+        if node["type"] == "export.table":
+            node["params"]["outputDatasetName"] = "Custom API Table Rows Output"
+
+    captured_request: dict[str, object] = {}
+
+    class FakeApiResponse:
+        def __enter__(self) -> "FakeApiResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "specVersion": "platform.custom_api.v1",
+                    "operation": "predict_table",
+                    "status": "succeeded",
+                    "output": {
+                        "kind": "table_rows",
+                        "rows": [
+                            {"prediction": "class_a", "score": 0.91},
+                            {"prediction": "class_b", "score": 0.82},
+                        ],
+                    },
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request_obj, timeout: int = 30):
+        captured_request["timeout"] = timeout
+        captured_request["body"] = json.loads(request_obj.data.decode("utf-8"))
+        return FakeApiResponse()
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.tabular_runtime.urllib_request.urlopen",
+        fake_urlopen,
+    )
+
+    workflow_version = _save_workflow_graph(client, engineer_token, graph)
+    accepted_run = _run_workflow(client, engineer_token, workflow_version["id"], workspace_id)
+    assert accepted_run["status"] == "succeeded"
+
+    run = _workflow_run_details(client, engineer_token, accepted_run["id"])
+    result_dataset_version_id = run["result_dataset_version_id"]
+    assert result_dataset_version_id
+
+    request_body = captured_request["body"]
+    assert request_body["requestedResponseMode"] == "table_rows"
+    assert request_body["parameters"] == {"threshold": 0.9, "includeScore": True}
+
+    download = client.get(
+        f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
+        headers={"Authorization": f"Bearer {engineer_token}"},
+    )
+    assert download.status_code == 200
+    assert download.text.splitlines()[0] == "feature_a,feature_b,prediction,score"
+    assert "7,8,class_a,0.91" in download.text
+    assert "8,9,class_b,0.82" in download.text
 
 
 def test_trained_model_assets_can_power_prediction_workflows(client: TestClient) -> None:

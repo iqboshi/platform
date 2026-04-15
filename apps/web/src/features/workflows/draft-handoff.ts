@@ -11,6 +11,20 @@ import {
   type WorkflowEditorContext,
 } from './node-registry';
 
+type WorkflowStarterAttachFailureReason = 'no_compatible_target' | 'ambiguous_existing_target';
+
+interface WorkflowStarterAttachResult {
+  workflowVersion: WorkflowVersionDetail;
+  applied: boolean;
+  createdStarter: boolean;
+  failureReason?: WorkflowStarterAttachFailureReason;
+  matchedNodeIds?: string[];
+}
+
+interface WorkflowStarterAttachOptions {
+  targetNodeId?: string;
+}
+
 function createNodeId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -29,10 +43,25 @@ function nextStarterNodePosition(workflowVersion: WorkflowVersionDetail): { x: n
 }
 
 function bindingPatch(
+  definition: WorkflowNodeCatalogItem,
   binding: WorkflowNodeStarterBinding,
   resourceId: string,
 ): Record<string, unknown> {
+  const derivedPresetParams: Record<string, unknown> = {};
+  if (
+    binding.inputKind === 'spatial_roi' &&
+    definition.params.some((field) => field.key === 'roiMode')
+  ) {
+    derivedPresetParams.roiMode = 'saved_roi';
+  }
+  if (
+    binding.inputKind === 'gee_credential' &&
+    definition.params.some((field) => field.key === 'credentialMode')
+  ) {
+    derivedPresetParams.credentialMode = 'personal';
+  }
   return {
+    ...derivedPresetParams,
     ...(binding.presetParams ?? {}),
     [binding.paramKey]: resourceId,
   };
@@ -59,7 +88,7 @@ function appendStarterNode(
     position,
     params: {
       ...createDefaultParams(definition, editorContext),
-      ...bindingPatch(binding, resourceId),
+      ...bindingPatch(definition, binding, resourceId),
     },
     inputBindings: {},
     outputDefs: definition.outputs,
@@ -100,14 +129,36 @@ export function attachWorkflowStarterInput(
   resourceId: string,
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
-  for (const node of workflowVersion.graph.nodes) {
+  options: WorkflowStarterAttachOptions = {},
+): WorkflowStarterAttachResult {
+  const targetNodeId = typeof options.targetNodeId === 'string' && options.targetNodeId.trim()
+    ? options.targetNodeId
+    : undefined;
+  const existingMatches = workflowVersion.graph.nodes.flatMap((node) => {
+    if (targetNodeId && node.id !== targetNodeId) {
+      return [];
+    }
     const definition = getWorkflowDefinitionByType(definitions, node.type);
     const binding = starterBindingForInput(definition, inputKind);
-    if (!binding) {
-      continue;
+    if (!definition || !binding) {
+      return [];
     }
+    return [{ node, definition, binding }] as const;
+  });
 
+  if (existingMatches.length > 1) {
+    return {
+      workflowVersion,
+      applied: false,
+      createdStarter: false,
+      failureReason: 'ambiguous_existing_target',
+      matchedNodeIds: existingMatches.map((item) => item.node.id),
+    };
+  }
+
+  const existingMatch = existingMatches[0];
+  if (existingMatch) {
+    const { node, definition, binding } = existingMatch;
     return {
       workflowVersion: {
         ...workflowVersion,
@@ -119,7 +170,7 @@ export function attachWorkflowStarterInput(
                   ...item,
                   params: {
                     ...item.params,
-                    ...bindingPatch(binding, resourceId),
+                    ...bindingPatch(definition, binding, resourceId),
                   },
                 }
               : item,
@@ -128,6 +179,16 @@ export function attachWorkflowStarterInput(
       },
       applied: true,
       createdStarter: false,
+      matchedNodeIds: [node.id],
+    };
+  }
+
+  if (targetNodeId) {
+    return {
+      workflowVersion,
+      applied: false,
+      createdStarter: false,
+      failureReason: 'no_compatible_target',
     };
   }
 
@@ -137,6 +198,7 @@ export function attachWorkflowStarterInput(
       workflowVersion,
       applied: false,
       createdStarter: false,
+      failureReason: 'no_compatible_target',
     };
   }
 
@@ -158,13 +220,15 @@ export function attachDatasetVersionToWorkflow(
   datasetVersionId: string,
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  options: WorkflowStarterAttachOptions = {},
+): WorkflowStarterAttachResult {
   return attachWorkflowStarterInput(
     workflowVersion,
     'dataset_version',
     datasetVersionId,
     definitions,
     editorContext,
+    options,
   );
 }
 
@@ -173,13 +237,15 @@ export function attachSavedRoiToWorkflow(
   roiId: string,
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  options: WorkflowStarterAttachOptions = {},
+): WorkflowStarterAttachResult {
   return attachWorkflowStarterInput(
     workflowVersion,
     'spatial_roi',
     roiId,
     definitions,
     editorContext,
+    options,
   );
 }
 
@@ -188,13 +254,15 @@ export function attachModelVersionToWorkflow(
   modelVersionId: string,
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  options: WorkflowStarterAttachOptions = {},
+): WorkflowStarterAttachResult {
   return attachWorkflowStarterInput(
     workflowVersion,
     'model_version',
     modelVersionId,
     definitions,
     editorContext,
+    options,
   );
 }
 
@@ -203,12 +271,14 @@ export function attachGeeCredentialToWorkflow(
   geeCredentialId: string,
   definitions: WorkflowNodeCatalogItem[],
   editorContext: WorkflowEditorContext,
-): { workflowVersion: WorkflowVersionDetail; applied: boolean; createdStarter: boolean } {
+  options: WorkflowStarterAttachOptions = {},
+): WorkflowStarterAttachResult {
   return attachWorkflowStarterInput(
     workflowVersion,
     'gee_credential',
     geeCredentialId,
     definitions,
     editorContext,
+    options,
   );
 }

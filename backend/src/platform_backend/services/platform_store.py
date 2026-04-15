@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import platform_backend.workflows.gee_runtime as gee_runtime
+import platform_backend.workflows.patch_runtime as patch_runtime
 from platform_backend.core.settings import get_settings
 from platform_backend.core.visibility import (
     can_access_by_visibility,
@@ -81,6 +82,10 @@ from platform_backend.workflows.tabular_runtime import (
     is_supported_tabular_graph,
     summarize_csv_file,
     test_tabular_node,
+)
+from platform_backend.workflows.validation import (
+    resolve_dataset_semantics_from_db,
+    validate_workflow_graph,
 )
 
 PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY = "integration.gee.default_credential"
@@ -425,9 +430,8 @@ def _workflow_output_asset_version_ids(row: WorkflowRun) -> list[str]:
 
 def _workflow_primary_output_asset_version_id(row: WorkflowRun) -> str | None:
     metrics_payload = row.metrics_json if isinstance(row.metrics_json, dict) else {}
-    explicit_output_id = str(
-        metrics_payload.get("primary_output_asset_version_id", "")
-    ).strip()
+    raw_output_id = metrics_payload.get("primary_output_asset_version_id")
+    explicit_output_id = raw_output_id.strip() if isinstance(raw_output_id, str) else ""
     return explicit_output_id or row.result_dataset_version_id
 
 
@@ -1454,6 +1458,89 @@ def create_custom_api_model(
     return _model_version_summary(model_version, model.name)
 
 
+def create_custom_api_model_version(
+    db: Session,
+    *,
+    workspace_id: str,
+    current_user: UserProfile | User,
+    model_name: str,
+    version: str,
+    task_type: str,
+    prediction_endpoint_url: str,
+    training_endpoint_url: str | None = None,
+    auth_type: str = "none",
+    auth_token: str = "",
+    auth_header_name: str = "",
+    response_mode: str = "prediction_values",
+    timeout_seconds: int = 45,
+    default_prediction_column: str = "prediction",
+    default_parameters: dict[str, object] | None = None,
+    training_artifact_path: Path | None = None,
+    metadata: dict[str, object] | None = None,
+) -> ModelVersionSummary:
+    if not prediction_endpoint_url.strip():
+        raise ValueError("prediction_endpoint_url is required.")
+    if auth_type == "header" and not auth_header_name.strip():
+        raise ValueError("auth_header_name is required when auth_type is 'header'.")
+
+    model = _ensure_model_record(
+        db,
+        workspace_id=workspace_id,
+        model_name=model_name,
+        task_type=task_type,
+        description="Workflow-created external API model.",
+    )
+
+    target_dir = (
+        _storage_root()
+        / "workspaces"
+        / workspace_id
+        / "models"
+        / _slugify(model_name)
+        / version
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"{uuid4()}-workflow-custom-api-model.json"
+    api_config = {
+        "endpoint_url": prediction_endpoint_url.strip(),
+        "training_endpoint_url": (training_endpoint_url or "").strip(),
+        "timeout_seconds": timeout_seconds,
+        "auth_type": auth_type,
+        "auth_token": auth_token or "",
+        "auth_header_name": auth_header_name or "",
+        "response_mode": response_mode,
+        "default_prediction_column": default_prediction_column.strip() or "prediction",
+        "default_parameters": dict(default_parameters or {}),
+    }
+    target_path.write_text(json.dumps(api_config, indent=2), encoding="utf-8")
+
+    model_version = ModelVersion(
+        model_id=model.id,
+        version=version,
+        framework="http-api",
+        task_type=task_type,
+        weights_path=str(target_path.resolve()),
+        metadata_json={
+            "kind": "custom_api_model",
+            "source_type": "custom_api",
+            "execution_mode": "external_api",
+            "artifact_format": "json",
+            "visibility": "private",
+            "owner_user_id": current_user.id,
+            "owner_display_name": current_user.display_name,
+            "default_parameters": dict(default_parameters or {}),
+            "training_artifact_path": str(training_artifact_path.resolve())
+            if training_artifact_path is not None
+            else "",
+            "api_config": api_config,
+            **(metadata or {}),
+        },
+    )
+    db.add(model_version)
+    db.flush()
+    return _model_version_summary(model_version, model.name)
+
+
 def list_workflow_catalog() -> list[WorkflowCatalogItem]:
     return BUILTIN_NODE_CATALOG
 
@@ -1507,6 +1594,25 @@ def _next_workflow_version_number(db: Session, workflow_id: str) -> int:
         select(func.max(WorkflowVersion.version)).where(WorkflowVersion.workflow_id == workflow_id)
     )
     return (current or 0) + 1
+
+
+def _validate_workflow_graph_or_raise(
+    db: Session,
+    graph: WorkflowGraph,
+) -> None:
+    validation_result = validate_workflow_graph(
+        graph,
+        dataset_semantics_resolver=lambda dataset_version_id: resolve_dataset_semantics_from_db(
+            db, dataset_version_id
+        ),
+    )
+    if validation_result.valid:
+        return
+
+    summarized_errors = validation_result.errors[:5]
+    if len(validation_result.errors) > 5:
+        summarized_errors.append(f"... and {len(validation_result.errors) - 5} more errors")
+    raise ValueError("Workflow graph is invalid: " + "; ".join(summarized_errors))
 
 
 def _create_personal_workflow_version(
@@ -1568,6 +1674,13 @@ def save_current_workflow_version(
     graph: WorkflowGraph,
     current_user: UserProfile | User,
 ) -> WorkflowVersionSummary:
+    resolved_graph = resolve_saved_rois_in_workflow_graph(
+        db,
+        graph,
+        current_user=current_user,
+    )
+    _validate_workflow_graph_or_raise(db, resolved_graph)
+
     workflow = _first_workflow(db)
     workspace = db.scalar(select(Workspace).order_by(Workspace.created_at.asc()))
     if workflow is None:
@@ -1695,6 +1808,8 @@ def test_workflow_node(
     graph_json = resolved_graph.model_dump(mode="json")
     target_node = next((node for node in resolved_graph.nodes if node.id == node_id), None)
     target_node_type = target_node.type if target_node is not None else ""
+    gee_graph_supported = gee_runtime.is_supported_gee_graph(graph_json)
+    asset_graph_supported = patch_runtime.is_supported_asset_graph(graph_json)
 
     def resolve_credential(
         mode: str,
@@ -1708,10 +1823,18 @@ def test_workflow_node(
         )
 
     try:
-        if gee_runtime.supports_gee_node(target_node_type):
+        if gee_runtime.supports_gee_node(target_node_type) or gee_graph_supported:
             result = gee_runtime.test_gee_node(
                 graph_json=graph_json,
                 target_node_id=node_id,
+                resolve_credential=resolve_credential,
+            )
+        elif patch_runtime.supports_asset_node(target_node_type) or asset_graph_supported:
+            result = patch_runtime.test_asset_node(
+                db=db,
+                graph_json=graph_json,
+                target_node_id=node_id,
+                storage_root=_storage_root(),
                 resolve_credential=resolve_credential,
             )
         else:
@@ -1895,10 +2018,7 @@ def _extract_run_references(graph_json: dict[str, object]) -> tuple[str | None, 
                 if candidate:
                     model_version_id = candidate
             if node_type in {
-                "tabular.predict",
-                "tabular.linear_regression_predict",
-                "tabular.svm_regression_predict",
-                "tabular.random_forest_regression_predict",
+                "tabular.predict_model",
                 "custom.api_predict",
             }:
                 candidate = str(params.get("modelVersionId", "")).strip()
@@ -1906,6 +2026,26 @@ def _extract_run_references(graph_json: dict[str, object]) -> tuple[str | None, 
                     model_version_id = candidate
 
     return dataset_version_id, model_version_id
+
+
+def _collect_input_dataset_version_ids(graph_json: dict[str, object]) -> list[str]:
+    nodes = graph_json.get("nodes", [])
+    if not isinstance(nodes, list):
+        raise LookupError("Workflow graph is invalid.")
+
+    collected: list[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_type = str(node.get("type", ""))
+        params = node.get("params", {})
+        if not isinstance(params, dict):
+            continue
+        if node_type == "source.dataset_version":
+            candidate = str(params.get("datasetVersionId", "")).strip()
+            if candidate:
+                collected.append(candidate)
+    return _unique_string_values(collected)
 
 
 def _fallback_dataset_version(db: Session) -> DatasetVersion | None:
@@ -2011,10 +2151,13 @@ def create_workflow_run(
         WorkflowGraph.model_validate(graph_json),
         current_user=current_user,
     )
+    _validate_workflow_graph_or_raise(db, resolved_graph)
     graph_json = resolved_graph.model_dump(mode="json")
     gee_graph_supported = gee_runtime.is_supported_gee_graph(graph_json)
+    asset_graph_supported = patch_runtime.is_supported_asset_graph(graph_json)
+    tabular_graph_supported = is_supported_tabular_graph(graph_json)
     dataset_version_id, model_version_id = _extract_run_references(graph_json)
-    if not dataset_version_id and not gee_graph_supported:
+    if not dataset_version_id and not asset_graph_supported and not gee_graph_supported:
         raise LookupError("Workflow graph does not declare an input dataset version.")
 
     dataset_version = db.get(DatasetVersion, dataset_version_id) if dataset_version_id else None
@@ -2030,13 +2173,16 @@ def create_workflow_run(
     if model_version_id and model_version is None:
         raise LookupError(f"Model version not found: {model_version_id}")
 
+    # WorkflowRun currently requires a non-null model_version_id even for non-model workflows.
+    # Keep the graph-level reference semantics strict, but use a storage-level fallback so
+    # geospatial / GEE runs can still be recorded without injecting model nodes into the graph.
     fallback_model_version = model_version or _fallback_model_version(db)
     if fallback_model_version is None:
         raise LookupError("No model version is available to associate with this workflow run.")
 
-    input_asset_version_ids = (
-        [dataset_version.id] if dataset_version is not None else []
-    )
+    input_asset_version_ids = _collect_input_dataset_version_ids(graph_json)
+    if dataset_version is not None and dataset_version.id not in input_asset_version_ids:
+        input_asset_version_ids = _unique_string_values([dataset_version.id, *input_asset_version_ids])
 
     def resolve_credential(
         mode: str,
@@ -2052,7 +2198,7 @@ def create_workflow_run(
     run = WorkflowRun(
         workflow_version_id=workflow_version.id,
         input_dataset_version_id=fallback_dataset_version.id,
-        model_version_id=fallback_model_version.id,
+        model_version_id=fallback_model_version.id if fallback_model_version is not None else None,
         status=WorkflowRunStatus.QUEUED,
         submitted_by=current_user.id,
         started_at=datetime.now(UTC),
@@ -2067,8 +2213,10 @@ def create_workflow_run(
                 "workflow_runtime": (
                     "gee"
                     if gee_graph_supported
+                    else "asset"
+                    if asset_graph_supported
                     else "tabular"
-                    if is_supported_tabular_graph(graph_json)
+                    if tabular_graph_supported
                     else "placeholder"
                 ),
             },
@@ -2081,7 +2229,55 @@ def create_workflow_run(
     try:
         ensure_workflow_run_transition(run.status, WorkflowRunStatus.RUNNING)
         run.status = WorkflowRunStatus.RUNNING
-        if is_supported_tabular_graph(graph_json):
+        if gee_graph_supported:
+            runtime_result = gee_runtime.execute_gee_graph(
+                db=db,
+                workflow_version=workflow_version,
+                graph_json=graph_json,
+                current_user=current_user,
+                workspace_id=request.workspace_id,
+                run_id=run.id,
+                storage_root=_storage_root(),
+                resolve_credential=resolve_credential,
+                create_private_dataset_version=create_private_dataset_version,
+            )
+            ensure_workflow_run_transition(run.status, WorkflowRunStatus.SUCCEEDED)
+            run.status = WorkflowRunStatus.SUCCEEDED
+            run.finished_at = datetime.now(UTC)
+            run.result_dataset_version_id = runtime_result["result_dataset_version_id"]
+            output_dataset_version_ids = _unique_string_values(
+                [
+                    *(runtime_result["saved_dataset_version_ids"] or []),
+                    run.result_dataset_version_id,
+                ]
+            )
+            run.metrics_json = {
+                **run.metrics_json,
+                "metrics": runtime_result["metrics"],
+                "saved_dataset_version_ids": runtime_result["saved_dataset_version_ids"],
+                "saved_model_version_ids": runtime_result["saved_model_version_ids"],
+                "result_model_version_id": runtime_result["result_model_version_id"],
+                "artifact_path": runtime_result["artifact_path"],
+                "output_asset_version_ids": output_dataset_version_ids,
+                "primary_output_asset_version_id": run.result_dataset_version_id,
+            }
+            _attach_workflow_run_lineage_to_dataset_versions(
+                db,
+                run=run,
+                workflow_version_id=workflow_version.id,
+                output_dataset_version_ids=output_dataset_version_ids,
+                input_asset_version_ids=input_asset_version_ids,
+                model_version_id=None,
+            )
+            db.add(
+                JobLog(
+                    job_type="workflow_run",
+                    reference_id=run.id,
+                    status=JobStatus.SUCCEEDED,
+                    message=f"Executed GEE workflow run {run.id}.",
+                )
+            )
+        elif tabular_graph_supported:
             runtime_result = execute_tabular_graph(
                 db=db,
                 workflow_version=workflow_version,
@@ -2128,17 +2324,17 @@ def create_workflow_run(
                     message=f"Executed tabular workflow run {run.id}.",
                 )
             )
-        elif gee_graph_supported:
-            runtime_result = gee_runtime.execute_gee_graph(
+        elif asset_graph_supported:
+            runtime_result = patch_runtime.execute_asset_graph(
                 db=db,
-                workflow_version=workflow_version,
                 graph_json=graph_json,
                 current_user=current_user,
                 workspace_id=request.workspace_id,
                 run_id=run.id,
                 storage_root=_storage_root(),
-                resolve_credential=resolve_credential,
                 create_private_dataset_version=create_private_dataset_version,
+                create_custom_api_model_version=create_custom_api_model_version,
+                resolve_credential=resolve_credential,
             )
             ensure_workflow_run_transition(run.status, WorkflowRunStatus.SUCCEEDED)
             run.status = WorkflowRunStatus.SUCCEEDED
@@ -2166,14 +2362,14 @@ def create_workflow_run(
                 workflow_version_id=workflow_version.id,
                 output_dataset_version_ids=output_dataset_version_ids,
                 input_asset_version_ids=input_asset_version_ids,
-                model_version_id=model_version.id if model_version is not None else None,
+                model_version_id=None,
             )
             db.add(
                 JobLog(
                     job_type="workflow_run",
                     reference_id=run.id,
                     status=JobStatus.SUCCEEDED,
-                    message=f"Executed Sentinel GEE workflow run {run.id}.",
+                    message=f"Executed asset workflow run {run.id}.",
                 )
             )
         else:

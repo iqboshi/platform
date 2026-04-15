@@ -1,4 +1,4 @@
-import type { LocaleCode } from '@platform/types';
+﻿import type { LocaleCode } from '@platform/types';
 
 export type TranslationKey =
   | 'app.title'
@@ -216,6 +216,10 @@ export type TranslationKey =
   | 'workflows.searchNodes'
   | 'workflows.filterByDataType'
   | 'workflows.filterByTask'
+  | 'workflows.showConvenienceNodes'
+  | 'workflows.showConvenienceNodesHint'
+  | 'workflows.libraryNodesTab'
+  | 'workflows.libraryTemplatesTab'
   | 'workflows.templates'
   | 'workflows.templatePanelCopy'
   | 'workflows.centerView'
@@ -223,6 +227,8 @@ export type TranslationKey =
   | 'workflows.canvasCleared'
   | 'workflows.inspector'
   | 'workflows.inspectorCopy'
+  | 'workflows.semanticBoundary'
+  | 'workflows.semanticConvenience'
   | 'workflows.selectNode'
   | 'workflows.nodeId'
   | 'workflows.nodeType'
@@ -264,12 +270,23 @@ export type TranslationKey =
   | 'workflows.nodeStatusMissingInputs'
   | 'workflows.nodeStatusInvalidParams'
   | 'workflows.nodeStatusSchemaMismatch'
+  | 'workflows.issuesTitle'
+  | 'workflows.issuesLiveCopy'
+  | 'workflows.issuesValidatedCopy'
+  | 'workflows.issuesValidationStale'
+  | 'workflows.noIssues'
+  | 'workflows.noCompatibleDatasetVersions'
+  | 'workflows.contractsTitle'
   | 'workflows.contractInputTitle'
   | 'workflows.contractOutputTitle'
   | 'workflows.contractExamplesTitle'
   | 'workflows.contractDatasetKinds'
   | 'workflows.contractFileFormats'
   | 'workflows.contractColumnRequirements'
+  | 'workflows.contractTaskTypes'
+  | 'workflows.contractAnnotationKinds'
+  | 'workflows.contractSampleKinds'
+  | 'workflows.contractValueTypes'
   | 'workflows.contractSampleColumns'
   | 'workflows.contractProducedColumns'
   | 'workflows.contractNotes'
@@ -279,6 +296,7 @@ export type TranslationKey =
   | 'workflows.category.source'
   | 'workflows.category.preprocess'
   | 'workflows.category.split'
+  | 'workflows.category.control'
   | 'workflows.category.inference'
   | 'workflows.category.postprocess'
   | 'workflow.node.source.dataset.label'
@@ -571,6 +589,11 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.searchNodes': 'Search nodes',
     'workflows.filterByDataType': 'Filter by data type',
     'workflows.filterByTask': 'Filter by task',
+    'workflows.showConvenienceNodes': 'Show convenience aliases',
+    'workflows.showConvenienceNodesHint':
+      'Keep alias nodes hidden by default so the library stays focused on primitive building blocks.',
+    'workflows.libraryNodesTab': 'Nodes',
+    'workflows.libraryTemplatesTab': 'Templates',
     'workflows.templates': 'Templates',
     'workflows.templatePanelCopy':
       'Each template can be inserted blank or with seeded sample inputs that run out of the box.',
@@ -580,6 +603,8 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.inspector': 'Node Inspector',
     'workflows.inspectorCopy':
       'Select a node to edit parameters, review port bindings, and remove it from the graph.',
+    'workflows.semanticBoundary': 'Boundary',
+    'workflows.semanticConvenience': 'Convenience',
     'workflows.selectNode': 'Select a node from the canvas to edit it.',
     'workflows.nodeId': 'Node ID',
     'workflows.nodeType': 'Node Type',
@@ -624,12 +649,26 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.nodeStatusMissingInputs': 'Missing inputs',
     'workflows.nodeStatusInvalidParams': 'Invalid params',
     'workflows.nodeStatusSchemaMismatch': 'Schema mismatch',
+    'workflows.issuesTitle': 'Workflow issues',
+    'workflows.issuesLiveCopy': 'Live semantic issues inferred from the current draft graph.',
+    'workflows.issuesValidatedCopy':
+      'Validation issues returned by the backend for this exact graph version.',
+    'workflows.issuesValidationStale':
+      'The last backend validation is stale; the issues below reflect the live draft state.',
+    'workflows.noIssues': 'No issues in the current draft.',
+    'workflows.noCompatibleDatasetVersions':
+      'No dataset versions satisfy the downstream input contract for this node.',
+    'workflows.contractsTitle': 'Contracts',
     'workflows.contractInputTitle': 'Input contract',
     'workflows.contractOutputTitle': 'Output contract',
     'workflows.contractExamplesTitle': 'Examples',
     'workflows.contractDatasetKinds': 'Dataset kinds',
     'workflows.contractFileFormats': 'File formats',
     'workflows.contractColumnRequirements': 'Required columns',
+    'workflows.contractTaskTypes': 'Task types',
+    'workflows.contractAnnotationKinds': 'Annotation kinds',
+    'workflows.contractSampleKinds': 'Sample kinds',
+    'workflows.contractValueTypes': 'Value types',
     'workflows.contractSampleColumns': 'Example columns',
     'workflows.contractProducedColumns': 'Produced columns',
     'workflows.contractNotes': 'Notes',
@@ -639,6 +678,7 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.category.source': 'Source',
     'workflows.category.preprocess': 'Preprocess',
     'workflows.category.split': 'Split',
+    'workflows.category.control': 'Control',
     'workflows.category.inference': 'Inference',
     'workflows.category.postprocess': 'Postprocess',
     'workflow.node.source.dataset.label': 'Dataset Source',
@@ -918,6 +958,8 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.canvasCleared': '画布已清空。',
     'workflows.inspector': '节点配置',
     'workflows.inspectorCopy': '选中节点后可编辑参数、查看端口绑定，并可删除该节点。',
+    'workflows.semanticBoundary': '边界',
+    'workflows.semanticConvenience': '便利别名',
     'workflows.selectNode': '请先在画布中选中一个节点。',
     'workflows.nodeId': '节点编号',
     'workflows.nodeType': '节点类型',
@@ -982,6 +1024,10 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.searchNodes': '搜索节点',
     'workflows.filterByDataType': '按数据类型筛选',
     'workflows.filterByTask': '按任务筛选',
+    'workflows.showConvenienceNodes': '显示便利别名节点',
+    'workflows.showConvenienceNodesHint': '默认隐藏 convenience 别名节点，优先展示原子积木式节点。',
+    'workflows.libraryNodesTab': '节点',
+    'workflows.libraryTemplatesTab': '模板',
     'workflows.templates': '模板',
     'workflows.templatePanelCopy': '每个模板都可以插入空模板，或直接带入示例输入。',
     'workflows.connectionTypeMismatch': '所选端口的数据类型不兼容，无法连接。',
@@ -1014,18 +1060,30 @@ export const messages: Record<LocaleCode, TranslationMap> = {
     'workflows.nodeStatusMissingInputs': '缺少输入',
     'workflows.nodeStatusInvalidParams': '参数无效',
     'workflows.nodeStatusSchemaMismatch': '数据结构不匹配',
+    'workflows.issuesTitle': '工作流问题',
+    'workflows.issuesLiveCopy': '基于当前草稿实时推断的语义问题。',
+    'workflows.issuesValidatedCopy': '后端针对当前这版图返回的校验问题。',
+    'workflows.issuesValidationStale': '上一次后端校验已经过期，当前显示的是实时问题。',
+    'workflows.noIssues': '当前草稿没有问题。',
+    'workflows.noCompatibleDatasetVersions': '没有数据集版本满足当前下游输入契约。',
+    'workflows.contractsTitle': '契约',
     'workflows.contractInputTitle': '输入要求',
     'workflows.contractOutputTitle': '输出结果',
     'workflows.contractExamplesTitle': '输入输出示例',
     'workflows.contractDatasetKinds': '数据集类型',
     'workflows.contractFileFormats': '文件格式',
     'workflows.contractColumnRequirements': '字段要求',
+    'workflows.contractTaskTypes': '任务类型',
+    'workflows.contractAnnotationKinds': '标注类型',
+    'workflows.contractSampleKinds': '样本类型',
+    'workflows.contractValueTypes': '值类型',
     'workflows.contractSampleColumns': '示例字段',
     'workflows.contractProducedColumns': '输出字段',
     'workflows.contractNotes': '说明',
     'workflows.commonErrorsTitle': '常见错误',
     'workflows.contractHighlights': '模板输入要求',
     'workflows.downloadContractTemplate': '下载模板 CSV',
+    'workflows.category.control': '控制',
     'workflows.runFailed': '工作流运行失败，请到运行历史中查看详情。',
   },
 };
