@@ -359,8 +359,7 @@ def _infer_algorithm_key_from_estimator(estimator: Any) -> str:
     if isinstance(estimator, RandomForestRegressor):
         return ALGORITHM_RANDOM_FOREST_REGRESSION
     raise ValueError(
-        "Unsupported estimator type. "
-        "Expected LinearRegression, SVR, or RandomForestRegressor."
+        "Unsupported estimator type. Expected LinearRegression, SVR, or RandomForestRegressor."
     )
 
 
@@ -533,7 +532,9 @@ def _node_input_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
             base_input_keys = {str(port.get("key", "")).strip() for port in base_inputs}
             dynamic_inputs = [
                 dict(port)
-                for port in _subgraph_interface_ports(subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs")
+                for port in _subgraph_interface_ports(
+                    subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs"
+                )
                 if str(port.get("key", "")).strip() not in FOR_EACH_RESERVED_INPUT_PORT_KEYS
                 and str(port.get("key", "")).strip() not in base_input_keys
             ]
@@ -541,7 +542,10 @@ def _node_input_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
     input_defs = node.get("input_defs", [])
     if isinstance(input_defs, list) and input_defs:
         return [port for port in input_defs if isinstance(port, dict)]
-    return [port.model_dump(mode="json") for port in catalog_definition(str(node.get("type", "")).strip()).inputs]
+    return [
+        port.model_dump(mode="json")
+        for port in catalog_definition(str(node.get("type", "")).strip()).inputs
+    ]
 
 
 def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
@@ -554,7 +558,9 @@ def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
         subgraph = node.get("subgraph")
         if isinstance(subgraph, dict):
             aggregated_outputs: list[dict[str, Any]] = []
-            for port in _subgraph_interface_ports(subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs"):
+            for port in _subgraph_interface_ports(
+                subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs"
+            ):
                 cloned = dict(port)
                 cloned["data_types"] = ["value_list"]
                 aggregated_outputs.append(cloned)
@@ -562,7 +568,10 @@ def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
     output_defs = node.get("output_defs", [])
     if isinstance(output_defs, list) and output_defs:
         return [port for port in output_defs if isinstance(port, dict)]
-    return [port.model_dump(mode="json") for port in catalog_definition(str(node.get("type", "")).strip()).outputs]
+    return [
+        port.model_dump(mode="json")
+        for port in catalog_definition(str(node.get("type", "")).strip()).outputs
+    ]
 
 
 def _subgraph_interface_ports(
@@ -676,9 +685,7 @@ def _resolve_input_value(
     if source_outputs is None:
         raise ValueError(f"Input binding for {key} references unknown node: {source_node_id}")
     if source_handle not in source_outputs:
-        raise ValueError(
-            f"Input binding for {key} references unknown output '{source_handle}'."
-        )
+        raise ValueError(f"Input binding for {key} references unknown output '{source_handle}'.")
     return source_outputs[source_handle]
 
 
@@ -921,8 +928,7 @@ def _predict_with_estimator(
     prediction_column: str = "prediction",
 ) -> TableArtifact:
     predictions = [
-        float(item)
-        for item in estimator.predict(_extract_feature_matrix(table, feature_names))
+        float(item) for item in estimator.predict(_extract_feature_matrix(table, feature_names))
     ]
     columns = list(table.columns)
     if prediction_column not in columns:
@@ -1025,8 +1031,7 @@ def _predict_with_linear_package(
 
     for row in table.rows:
         prediction = intercept + sum(
-            float(row[feature_name]) * coefficients[feature_name]
-            for feature_name in features
+            float(row[feature_name]) * coefficients[feature_name] for feature_name in features
         )
         if clip_min is not None:
             prediction = max(prediction, clip_min)
@@ -1049,10 +1054,7 @@ def _predict_with_joblib_model(
     estimator = _load_joblib().load(model_version.weights_path)
     feature_matrix = _extract_feature_matrix(table, model_spec.feature_names)
 
-    if (
-        model_spec.algorithm_key == ALGORITHM_SVM_REGRESSION
-        and "cacheSize" in runtime_parameters
-    ):
+    if model_spec.algorithm_key == ALGORITHM_SVM_REGRESSION and "cacheSize" in runtime_parameters:
         estimator.cache_size = int(runtime_parameters["cacheSize"])
     if (
         model_spec.algorithm_key == ALGORITHM_RANDOM_FOREST_REGRESSION
@@ -1395,9 +1397,7 @@ def _compute_regression_metrics(
             )
         elif normalized_metric_key == "r2":
             computed_metrics["r2"] = (
-                0.0
-                if truth_variance == 0
-                else 1 - (sum(squared_errors) / truth_variance)
+                0.0 if truth_variance == 0 else 1 - (sum(squared_errors) / truth_variance)
             )
         else:
             raise ValueError(f"Unsupported regression metric: {metric_key}")
@@ -1529,15 +1529,13 @@ def _dataset_version_preview(db, dataset_version_id: str) -> dict[str, Any]:
         }
 
     dataset = db.get(Dataset, dataset_version.dataset_id)
-    metadata = (
-        dict(dataset_version.metadata)
-        if isinstance(dataset_version.metadata, dict)
-        else {}
-    )
+    metadata = dict(dataset_version.metadata) if isinstance(dataset_version.metadata, dict) else {}
     dataset_kind = (
         dataset.kind.value
         if dataset is not None and hasattr(dataset.kind, "value")
-        else str(dataset.kind) if dataset is not None else ""
+        else str(dataset.kind)
+        if dataset is not None
+        else ""
     )
     next_actions = [
         _preview_action(
@@ -1743,7 +1741,9 @@ def _collect_structural_subgraph_inputs(
             continue
         binding = str(bindings.get(port_key, "")).strip()
         if binding:
-            provided_inputs[port_key] = _resolve_input_value(state.resolved_outputs, bindings, port_key)
+            provided_inputs[port_key] = _resolve_input_value(
+                state.resolved_outputs, bindings, port_key
+            )
         elif bool(port.get("required", False)):
             raise ValueError(f"{node_type} requires subgraph input `{port_key}`.")
         else:
@@ -1810,7 +1810,8 @@ def _execute_tabular_subgraph_body(
         [
             item
             for item in raw_nodes
-            if isinstance(item, dict) and str(item.get("type", "")).strip() == SUBGRAPH_OUTPUT_NODE_TYPE
+            if isinstance(item, dict)
+            and str(item.get("type", "")).strip() == SUBGRAPH_OUTPUT_NODE_TYPE
         ],
         key=lambda item: (
             float(item.get("position", {}).get("y", 0.0)),
@@ -1824,7 +1825,9 @@ def _execute_tabular_subgraph_body(
         if not isinstance(input_defs, list) or not input_defs:
             continue
         if not isinstance(output_bindings, dict):
-            raise ValueError(f"Subgraph output node {output_node.get('id', '')} has invalid bindings.")
+            raise ValueError(
+                f"Subgraph output node {output_node.get('id', '')} has invalid bindings."
+            )
         port_key = str(input_defs[0].get("key", "")).strip()
         if not port_key:
             continue
@@ -1901,7 +1904,9 @@ def _execute_tabular_for_each(
     if not isinstance(subgraph, dict):
         raise ValueError(f"Node {node_id} is missing a valid subgraph definition.")
 
-    raw_items = _unwrap_control_value(_resolve_input_value(state.resolved_outputs, bindings, "items"))
+    raw_items = _unwrap_control_value(
+        _resolve_input_value(state.resolved_outputs, bindings, "items")
+    )
     if not isinstance(raw_items, list):
         raise ValueError(f"Node {node_id} requires `items` to resolve to a JSON array.")
 
@@ -2048,7 +2053,9 @@ def _execute_tabular_node(
         )
 
     if node_type == "control.boolean_literal":
-        return {"value": _wrap_control_value(bool(params.get("value", False)), value_type="boolean")}
+        return {
+            "value": _wrap_control_value(bool(params.get("value", False)), value_type="boolean")
+        }
 
     if node_type == "control.list_literal":
         items = parse_json_value(str(params.get("itemsJson", "[]") or "[]"), field_name="itemsJson")
@@ -2062,7 +2069,9 @@ def _execute_tabular_node(
         right = (
             _unwrap_control_value(right_bound)
             if right_bound is not None
-            else parse_json_value(str(params.get("rightValueJson", "true") or "true"), field_name="rightValueJson")
+            else parse_json_value(
+                str(params.get("rightValueJson", "true") or "true"), field_name="rightValueJson"
+            )
         )
         operator = str(params.get("operator", "eq") or "eq").strip()
         if operator == "eq":
@@ -2085,7 +2094,10 @@ def _execute_tabular_node(
             elif isinstance(left, list | tuple | set):
                 result = right in left
             else:
-                raise ValueError("contains operator requires a string, array, set, tuple, or object on the left side.")
+                raise ValueError(
+                    "contains operator requires a string, array, set, tuple, "
+                    "or object on the left side."
+                )
         else:
             raise ValueError(f"Unsupported compare operator: {operator}")
         return {"result": _wrap_control_value(result, value_type="boolean")}
@@ -2132,7 +2144,10 @@ def _execute_tabular_node(
         )
         return {"trainTable": train_table, "testTable": test_table}
 
-    if node_type in TABULAR_NODE_ALGORITHMS or node_type in {"tabular.predict", "tabular.predict_model"}:
+    if node_type in TABULAR_NODE_ALGORITHMS or node_type in {
+        "tabular.predict",
+        "tabular.predict_model",
+    }:
         input_table = _resolve_input_value(state.resolved_outputs, bindings, "table")
         model_version_id = _resolve_model_version_id(
             resolved_outputs=state.resolved_outputs,
@@ -2171,7 +2186,9 @@ def _execute_tabular_node(
         train_table = _resolve_input_value(state.resolved_outputs, bindings, "trainTable")
         evaluation_table = None
         if str(bindings.get("testTable", "")).strip():
-            evaluation_table = _resolve_optional_input_value(state.resolved_outputs, bindings, "testTable")
+            evaluation_table = _resolve_optional_input_value(
+                state.resolved_outputs, bindings, "testTable"
+            )
         model_artifact, report = _train_model_node(
             node_type=node_type,
             params=params,
@@ -2217,11 +2234,7 @@ def _execute_tabular_node(
         }
         save_to_platform = persist_outputs and bool(params.get("saveToPlatform", True))
         if save_to_platform:
-            if (
-                create_private_model_version is None
-                or current_user is None
-                or not workspace_id
-            ):
+            if create_private_model_version is None or current_user is None or not workspace_id:
                 raise RuntimeError("Model persistence is not configured for this execution.")
             model_name = str(params.get("outputModelName", "")).strip() or "Trained Model"
             version = str(params.get("outputModelVersion", "")).strip() or "1.0.0"
@@ -2260,11 +2273,7 @@ def _execute_tabular_node(
         node_outputs: dict[str, Any] = {"artifact": state.artifact_path}
         save_to_platform = persist_outputs and bool(params.get("saveToPlatform", True))
         if save_to_platform:
-            if (
-                create_private_dataset_version is None
-                or current_user is None
-                or not workspace_id
-            ):
+            if create_private_dataset_version is None or current_user is None or not workspace_id:
                 raise RuntimeError("Dataset persistence is not configured for this execution.")
             dataset_name = str(params.get("outputDatasetName", "")).strip() or "Prediction Output"
             version_summary = create_private_dataset_version(
@@ -2296,11 +2305,7 @@ def _execute_tabular_node(
         node_outputs = {"artifact": state.artifact_path}
         save_to_platform = persist_outputs and bool(params.get("saveToPlatform", True))
         if save_to_platform:
-            if (
-                create_private_dataset_version is None
-                or current_user is None
-                or not workspace_id
-            ):
+            if create_private_dataset_version is None or current_user is None or not workspace_id:
                 raise RuntimeError("Dataset persistence is not configured for this execution.")
             dataset_name = str(params.get("outputDatasetName", "")).strip() or "Validation Metrics"
             content_type = (
@@ -2406,8 +2411,7 @@ def test_tabular_node(
 
         if node_id == target_node_id:
             output_preview = {
-                key: _serialize_preview_value(db, value)
-                for key, value in outputs.items()
+                key: _serialize_preview_value(db, value) for key, value in outputs.items()
             }
             break
 
@@ -2430,9 +2434,7 @@ def execute_tabular_graph(
     create_private_model_version: CreatePrivateModelVersionFn | None = None,
 ) -> dict[str, Any]:
     graph_json = (
-        workflow_version.graph_json
-        if isinstance(workflow_version.graph_json, dict)
-        else {}
+        workflow_version.graph_json if isinstance(workflow_version.graph_json, dict) else {}
     )
     raw_nodes = graph_json.get("nodes", [])
     if not isinstance(raw_nodes, list):

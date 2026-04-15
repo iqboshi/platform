@@ -30,9 +30,7 @@ class EmailRuntimeConfig:
 
 def _platform_setting(db: Session) -> PlatformSetting | None:
     return db.scalar(
-        select(PlatformSetting).where(
-            PlatformSetting.key == EMAIL_PLATFORM_SETTING_KEY
-        )
+        select(PlatformSetting).where(PlatformSetting.key == EMAIL_PLATFORM_SETTING_KEY)
     )
 
 

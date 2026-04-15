@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from collections import Counter, defaultdict, deque
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -33,9 +33,9 @@ from platform_backend.workflows.patch_runtime import (
 )
 from platform_backend.workflows.subgraph_runtime import (
     CALL_SUBGRAPH_NODE_TYPE,
-    FOR_EACH_NODE_TYPE,
     FOR_EACH_INDEX_PORT_KEY,
     FOR_EACH_ITEM_PORT_KEY,
+    FOR_EACH_NODE_TYPE,
     FOR_EACH_RESERVED_INPUT_PORT_KEYS,
     STRUCTURAL_SUBGRAPH_NODE_TYPES,
     SUBGRAPH_BOUNDARY_NODE_TYPES,
@@ -121,10 +121,7 @@ def resolve_dataset_semantics_from_db(
         or Path(version.asset_path).name
     ).strip()
     content_type = str(
-        metadata.get("content_type")
-        or metadata.get("contentType")
-        or version.content_type
-        or ""
+        metadata.get("content_type") or metadata.get("contentType") or version.content_type or ""
     ).strip()
     dataset_kind = dataset.kind.value if hasattr(dataset.kind, "value") else str(dataset.kind)
     return WorkflowDatasetSemantics(
@@ -443,9 +440,7 @@ def _contract_semantic_mismatch_reason(
         return f"{label} are not declared by the upstream contract; expected {target_display}"
     if normalized_source.intersection(normalized_target):
         return None
-    return (
-        f"{label} {', '.join(source_values)} do not satisfy {target_display}"
-    )
+    return f"{label} {', '.join(source_values)} do not satisfy {target_display}"
 
 
 def _metadata_columns(metadata: dict[str, object]) -> set[str]:
@@ -505,8 +500,7 @@ def _dataset_contract_mismatch_reasons(
     if contract.dataset_kinds:
         if not semantics.dataset_kind:
             reasons.append(
-                "dataset kind is missing; expected one of "
-                + ", ".join(contract.dataset_kinds)
+                "dataset kind is missing; expected one of " + ", ".join(contract.dataset_kinds)
             )
         elif semantics.dataset_kind not in contract.dataset_kinds:
             reasons.append(
@@ -541,9 +535,7 @@ def _dataset_contract_mismatch_reasons(
                 column for column in contract.column_requirements if column not in available_columns
             ]
             if missing_columns:
-                reasons.append(
-                    "missing required columns: " + ", ".join(sorted(missing_columns))
-                )
+                reasons.append("missing required columns: " + ", ".join(sorted(missing_columns)))
 
     task_type_reason = _semantic_mismatch_reason(
         actual=set(semantics.task_types),
@@ -751,7 +743,10 @@ def _effective_input_contract_for_validation(
                 "summary": (
                     "Labeled sample set matching the configured training task semantics."
                     if port_key == "trainSamples"
-                    else "Optional labeled sample set matching the configured training task semantics."
+                    else (
+                        "Optional labeled sample set matching the configured "
+                        "training task semantics."
+                    )
                 ),
                 "task_types": [task_type],
                 "annotation_kinds": _annotation_kinds_for_task_types([task_type]),
@@ -844,7 +839,10 @@ def _bound_input_columns_for_validation(
     if source_node.type == "source.dataset_version" and dataset_semantics_resolver is not None:
         dataset_version_id = str(source_node.params.get("datasetVersionId", "")).strip()
         if dataset_version_id:
-            if dataset_semantics_cache is not None and dataset_version_id not in dataset_semantics_cache:
+            if (
+                dataset_semantics_cache is not None
+                and dataset_version_id not in dataset_semantics_cache
+            ):
                 dataset_semantics_cache[dataset_version_id] = dataset_semantics_resolver(
                     dataset_version_id
                 )
@@ -929,7 +927,9 @@ def _effective_output_contract_for_validation(
         )
         return base_contract.model_copy(
             update={
-                "summary": "Sample set built from an RGB tile grid and optional aligned annotations.",
+                "summary": (
+                    "Sample set built from an RGB tile grid and optional aligned annotations."
+                ),
                 "sample_kinds": sample_kinds,
                 "annotation_kinds": annotation_kinds,
                 "task_types": task_types,
@@ -1044,14 +1044,17 @@ def _effective_output_contract_for_validation(
             dataset_semantics_cache=dataset_semantics_cache,
             visited=next_visited,
         )
-        prediction_column = str(node.params.get("predictionColumn", "") or "").strip() or "prediction"
+        prediction_column = (
+            str(node.params.get("predictionColumn", "") or "").strip() or "prediction"
+        )
         produced_columns = _ordered_unique_tokens([*upstream_columns, prediction_column])
         if not produced_columns:
             return _clone_contract(base_contract)
         return base_contract.model_copy(
             update={
                 "summary": (
-                    "Prediction table preserving upstream columns and appending the configured prediction column."
+                    "Prediction table preserving upstream columns and "
+                    "appending the configured prediction column."
                 ),
                 "sample_columns": produced_columns,
                 "produced_columns": produced_columns,
@@ -1103,7 +1106,9 @@ def _validate_dataset_semantics_for_edge(
                 continue
 
             if dataset_version_id not in dataset_semantics_cache:
-                dataset_semantics_cache[dataset_version_id] = dataset_semantics_resolver(dataset_version_id)
+                dataset_semantics_cache[dataset_version_id] = dataset_semantics_resolver(
+                    dataset_version_id
+                )
             semantics = dataset_semantics_cache[dataset_version_id]
             if semantics is None:
                 return _issue(
@@ -1112,7 +1117,9 @@ def _validate_dataset_semantics_for_edge(
                     node_id=target_node_id,
                     port_key=target_handle,
                     actual=dataset_version_id,
-                    suggestion="Choose a dataset version that still exists in the current workspace scope.",
+                    suggestion=(
+                        "Choose a dataset version that still exists in the current workspace scope."
+                    ),
                 )
 
             reasons = _dataset_contract_mismatch_reasons(semantics, target_contract)
@@ -1120,13 +1127,17 @@ def _validate_dataset_semantics_for_edge(
                 return _issue(
                     "dataset_semantic_mismatch",
                     f"Edge {edge_id} expects {target_contract.summary} but dataset version "
-                    f"{dataset_version_id} from {source_label} is {_describe_dataset_semantics(semantics)}. "
+                    f"{dataset_version_id} from {source_label} is "
+                    f"{_describe_dataset_semantics(semantics)}. "
                     f"Details: {'; '.join(reasons)}.",
                     node_id=target_node_id,
                     port_key=target_handle,
                     expected=target_contract.summary,
                     actual=_describe_dataset_semantics(semantics),
-                    suggestion="Select a compatible dataset version or connect this input to a compatible upstream node.",
+                    suggestion=(
+                        "Select a compatible dataset version or connect this "
+                        "input to a compatible upstream node."
+                    ),
                 )
             continue
 
@@ -1153,7 +1164,9 @@ def _validate_dataset_semantics_for_edge(
                 port_key=target_handle,
                 expected=target_contract.summary,
                 actual=source_contract.summary,
-                suggestion="Replace the upstream node or insert a compatible transform before this input.",
+                suggestion=(
+                    "Replace the upstream node or insert a compatible transform before this input."
+                ),
             )
 
     return None
@@ -1170,8 +1183,13 @@ def _validate_boundary_node_interface(
             messages.append("workflow.subgraph_input must declare exactly one output port.")
         if node.input_bindings:
             messages.append("workflow.subgraph_input must not declare upstream input bindings.")
-        if any(contract.port_key not in {port.key for port in node.output_defs} for contract in node.output_contracts):
-            messages.append("workflow.subgraph_input output contracts must match its output port key.")
+        if any(
+            contract.port_key not in {port.key for port in node.output_defs}
+            for contract in node.output_contracts
+        ):
+            messages.append(
+                "workflow.subgraph_input output contracts must match its output port key."
+            )
     elif node.type == SUBGRAPH_OUTPUT_NODE_TYPE:
         if len(node.input_defs) != 1:
             messages.append("workflow.subgraph_output must declare exactly one input port.")
@@ -1179,7 +1197,9 @@ def _validate_boundary_node_interface(
             messages.append("workflow.subgraph_output must not declare output ports.")
         input_keys = {port.key for port in node.input_defs}
         if any(contract.port_key not in input_keys for contract in node.input_contracts):
-            messages.append("workflow.subgraph_output input contracts must match its input port key.")
+            messages.append(
+                "workflow.subgraph_output input contracts must match its input port key."
+            )
     return messages
 
 
@@ -1241,7 +1261,8 @@ def _validate_subgraph_interface(
             issues.append(
                 _issue(
                     "for_each_input_key_conflict",
-                    f"Node {node.id} subgraph input `{key}` conflicts with a reserved outer input key.",
+                    f"Node {node.id} subgraph input `{key}` conflicts with a "
+                    "reserved outer input key.",
                     node_id=node.id,
                     port_key=key,
                     suggestion="Rename the nested subgraph input port to a non-conflicting key.",
@@ -1258,7 +1279,8 @@ def _validate_subgraph_interface(
             issues.append(
                 _issue(
                     "for_each_item_port_type_mismatch",
-                    f"Node {node.id} reserved loop input `{FOR_EACH_ITEM_PORT_KEY}` must use the `value` data type.",
+                    f"Node {node.id} reserved loop input "
+                    f"`{FOR_EACH_ITEM_PORT_KEY}` must use the `value` data type.",
                     node_id=node.id,
                     port_key=FOR_EACH_ITEM_PORT_KEY,
                 )
@@ -1270,7 +1292,8 @@ def _validate_subgraph_interface(
                 issues.append(
                     _issue(
                         "for_each_index_port_type_mismatch",
-                        f"Node {node.id} reserved loop input `{FOR_EACH_INDEX_PORT_KEY}` must use the `value` data type.",
+                        f"Node {node.id} reserved loop input "
+                        f"`{FOR_EACH_INDEX_PORT_KEY}` must use the `value` data type.",
                         node_id=node.id,
                         port_key=FOR_EACH_INDEX_PORT_KEY,
                     )
@@ -1280,7 +1303,8 @@ def _validate_subgraph_interface(
                 issues.append(
                     _issue(
                         "for_each_index_contract_mismatch",
-                        f"Node {node.id} reserved loop input `{FOR_EACH_INDEX_PORT_KEY}` should declare number semantics.",
+                        f"Node {node.id} reserved loop input "
+                        f"`{FOR_EACH_INDEX_PORT_KEY}` should declare number semantics.",
                         node_id=node.id,
                         port_key=FOR_EACH_INDEX_PORT_KEY,
                     )
@@ -1295,7 +1319,8 @@ def _validate_subgraph_interface(
         issues.append(
             _issue(
                 "subgraph_input_interface_out_of_sync",
-                f"Node {node.id} input ports are out of sync with its nested subgraph boundary nodes.",
+                f"Node {node.id} input ports are out of sync with its nested "
+                "subgraph boundary nodes.",
                 node_id=node.id,
                 suggestion="Resave the workflow after syncing the subgraph interface.",
             )
@@ -1304,24 +1329,31 @@ def _validate_subgraph_interface(
         issues.append(
             _issue(
                 "subgraph_output_interface_out_of_sync",
-                f"Node {node.id} output ports are out of sync with its nested subgraph boundary nodes.",
+                f"Node {node.id} output ports are out of sync with its nested "
+                "subgraph boundary nodes.",
                 node_id=node.id,
                 suggestion="Resave the workflow after syncing the subgraph interface.",
             )
         )
-    if node.input_contracts and not _contracts_match(node.input_contracts, expected_input_contracts):
+    if node.input_contracts and not _contracts_match(
+        node.input_contracts, expected_input_contracts
+    ):
         issues.append(
             _issue(
                 "subgraph_input_contracts_out_of_sync",
-                f"Node {node.id} input contracts are out of sync with its nested subgraph boundary nodes.",
+                f"Node {node.id} input contracts are out of sync with its nested "
+                "subgraph boundary nodes.",
                 node_id=node.id,
             )
         )
-    if node.output_contracts and not _contracts_match(node.output_contracts, expected_output_contracts):
+    if node.output_contracts and not _contracts_match(
+        node.output_contracts, expected_output_contracts
+    ):
         issues.append(
             _issue(
                 "subgraph_output_contracts_out_of_sync",
-                f"Node {node.id} output contracts are out of sync with its nested subgraph boundary nodes.",
+                f"Node {node.id} output contracts are out of sync with its nested "
+                "subgraph boundary nodes.",
                 node_id=node.id,
             )
         )
@@ -1369,7 +1401,9 @@ def _validate_node_params(node: WorkflowNode) -> None:
         if operator not in {"eq", "ne", "gt", "gte", "lt", "lte", "contains"}:
             raise ValueError("operator must be one of eq, ne, gt, gte, lt, lte, contains.")
         if params.get("rightValueJson") not in {None, ""}:
-            _parse_json_value_param(params.get("rightValueJson", "true"), field_name="rightValueJson")
+            _parse_json_value_param(
+                params.get("rightValueJson", "true"), field_name="rightValueJson"
+            )
         return
 
     if node.type == "geo.define_bbox_roi":
@@ -1539,7 +1573,10 @@ def validate_workflow_graph(
                         node_id=node.id,
                         param_key=param.key,
                         expected=param.label,
-                        suggestion="Fill in the required parameter before validating or running the workflow.",
+                        suggestion=(
+                            "Fill in the required parameter before validating "
+                            "or running the workflow."
+                        ),
                     )
                 )
 
@@ -1586,12 +1623,15 @@ def validate_workflow_graph(
                         node_id=node.id,
                         port_key=port.key,
                         expected=port.label,
-                        suggestion="Connect a compatible upstream output to this required input port.",
+                        suggestion=(
+                            "Connect a compatible upstream output to this required input port."
+                        ),
                     )
                 )
 
         if (
-            node.type not in {
+            node.type
+            not in {
                 CALL_SUBGRAPH_NODE_TYPE,
                 FOR_EACH_NODE_TYPE,
                 SUBGRAPH_INPUT_NODE_TYPE,
@@ -1605,11 +1645,15 @@ def validate_workflow_graph(
                     "output_definition_mismatch",
                     f"Node {node.id} output definitions do not match the catalog definition.",
                     node_id=node.id,
-                    suggestion="Reload the node from the catalog or recreate it to restore the expected output ports.",
+                    suggestion=(
+                        "Reload the node from the catalog or recreate it to "
+                        "restore the expected output ports."
+                    ),
                 )
             )
         if (
-            node.type not in {
+            node.type
+            not in {
                 CALL_SUBGRAPH_NODE_TYPE,
                 FOR_EACH_NODE_TYPE,
                 SUBGRAPH_INPUT_NODE_TYPE,
@@ -1717,7 +1761,10 @@ def validate_workflow_graph(
                     port_key=target_handle,
                     expected=", ".join(target_port.data_types),
                     actual=", ".join(source_port.data_types),
-                    suggestion="Connect a compatible output port or insert a transform node between these steps.",
+                    suggestion=(
+                        "Connect a compatible output port or insert a transform "
+                        "node between these steps."
+                    ),
                 )
             )
             continue
@@ -1772,7 +1819,9 @@ def validate_workflow_graph(
                 "missing_source_runtime",
                 "No source runtime node is defined.",
                 severity="warning",
-                suggestion="Add a dataset, model, ROI, or remote source node before running the workflow.",
+                suggestion=(
+                    "Add a dataset, model, ROI, or remote source node before running the workflow."
+                ),
             )
         )
 

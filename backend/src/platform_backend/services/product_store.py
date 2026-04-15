@@ -25,9 +25,7 @@ def _storage_root() -> Path:
 def _slugify(value: str) -> str:
     return (
         "".join(
-            character
-            if character.isalnum() or character in {"-", "_"}
-            else "-"
+            character if character.isalnum() or character in {"-", "_"} else "-"
             for character in value
         ).strip("-_")
         or "product"
@@ -237,9 +235,7 @@ def create_product_asset(
     row.asset_path = str(target_path.resolve())
     row.size_bytes = target_path.stat().st_size
     row.content_type = (
-        content_type
-        or mimetypes.guess_type(target_path.name)[0]
-        or "application/octet-stream"
+        content_type or mimetypes.guess_type(target_path.name)[0] or "application/octet-stream"
     )
     row.original_file_name = original_file_name
     db.commit()
@@ -300,9 +296,7 @@ def update_product_asset(
         row.asset_path = str(target_path.resolve())
         row.original_file_name = original_file_name
         row.content_type = (
-            content_type
-            or mimetypes.guess_type(target_path.name)[0]
-            or "application/octet-stream"
+            content_type or mimetypes.guess_type(target_path.name)[0] or "application/octet-stream"
         )
         row.size_bytes = size_bytes if size_bytes is not None else target_path.stat().st_size
 

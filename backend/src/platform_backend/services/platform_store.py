@@ -188,9 +188,7 @@ def _sanitize_model_metadata(metadata: dict[str, object] | None) -> dict[str, ob
     api_config = sanitized.get("api_config")
     if isinstance(api_config, dict):
         sanitized["api_config"] = {
-            key: value
-            for key, value in api_config.items()
-            if key not in {"auth_token"}
+            key: value for key, value in api_config.items() if key not in {"auth_token"}
         }
     return sanitized
 
@@ -582,9 +580,7 @@ def create_gee_credential(
     service_account_email = str(payload.get("client_email", "")).strip()
     private_key = str(payload.get("private_key", "")).strip()
     if not service_account_email or not private_key:
-        raise ValueError(
-            "service_account_json must include client_email and private_key fields."
-        )
+        raise ValueError("service_account_json must include client_email and private_key fields.")
 
     credential = GeeCredential(
         workspace_id=request.workspace_id,
@@ -621,9 +617,7 @@ def delete_gee_credential(
     if not _can_access_gee_credential(row, current_user):
         raise PermissionError("You do not have access to this GEE credential.")
     if not _is_admin_user(current_user) and row.owner_user_id != current_user.id:
-        raise PermissionError(
-            "Only the owner or an administrator can delete this GEE credential."
-        )
+        raise PermissionError("Only the owner or an administrator can delete this GEE credential.")
     platform_default_setting = _platform_setting(db, PLATFORM_DEFAULT_GEE_CREDENTIAL_KEY)
     if platform_default_setting and _platform_default_gee_credential_id(db) == row.id:
         db.delete(platform_default_setting)
@@ -859,9 +853,7 @@ def update_dataset(
         dataset.description = description.strip()
 
     latest_metadata = (
-        dict(latest_version.metadata_json)
-        if isinstance(latest_version.metadata_json, dict)
-        else {}
+        dict(latest_version.metadata_json) if isinstance(latest_version.metadata_json, dict) else {}
     )
     metadata_changed = False
 
@@ -1492,12 +1484,7 @@ def create_custom_api_model_version(
     )
 
     target_dir = (
-        _storage_root()
-        / "workspaces"
-        / workspace_id
-        / "models"
-        / _slugify(model_name)
-        / version
+        _storage_root() / "workspaces" / workspace_id / "models" / _slugify(model_name) / version
     )
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / f"{uuid4()}-workflow-custom-api-model.json"
@@ -1915,9 +1902,7 @@ def list_workflow_runs(
     workflow_ids = set(workflow_id_by_version_id.values())
     workflows = {
         row.id: row.name
-        for row in db.scalars(
-            select(Workflow).where(Workflow.id.in_(workflow_ids))
-        ).all()
+        for row in db.scalars(select(Workflow).where(Workflow.id.in_(workflow_ids))).all()
     }
     return [
         _workflow_run_summary(
@@ -2165,9 +2150,7 @@ def create_workflow_run(
         raise LookupError(f"Dataset version not found: {dataset_version_id}")
     fallback_dataset_version = dataset_version or _fallback_dataset_version(db)
     if fallback_dataset_version is None:
-        raise LookupError(
-            "No dataset version is available to associate with this workflow run."
-        )
+        raise LookupError("No dataset version is available to associate with this workflow run.")
 
     model_version = db.get(ModelVersion, model_version_id) if model_version_id else None
     if model_version_id and model_version is None:
@@ -2182,7 +2165,9 @@ def create_workflow_run(
 
     input_asset_version_ids = _collect_input_dataset_version_ids(graph_json)
     if dataset_version is not None and dataset_version.id not in input_asset_version_ids:
-        input_asset_version_ids = _unique_string_values([dataset_version.id, *input_asset_version_ids])
+        input_asset_version_ids = _unique_string_values(
+            [dataset_version.id, *input_asset_version_ids]
+        )
 
     def resolve_credential(
         mode: str,
@@ -2489,9 +2474,7 @@ def list_model_versions(
             rows = []
         else:
             rows = [
-                row
-                for row in rows
-                if _model_owner_user_id(row.metadata_json) == current_user.id
+                row for row in rows if _model_owner_user_id(row.metadata_json) == current_user.id
             ]
     elif scope != "all":
         rows = [row for row in rows if _can_access_model_version(row, current_user)]
@@ -2567,12 +2550,10 @@ def delete_model_version(
         raise LookupError("Model version not found.")
     if not _can_access_model_version(row, current_user):
         raise PermissionError("You do not have access to this model version.")
-    if (
-        not can_manage_owned_asset(
-            _model_owner_user_id(row.metadata_json),
-            current_user_id=current_user.id if current_user is not None else None,
-            is_admin=_is_admin_user(current_user),
-        )
+    if not can_manage_owned_asset(
+        _model_owner_user_id(row.metadata_json),
+        current_user_id=current_user.id if current_user is not None else None,
+        is_admin=_is_admin_user(current_user),
     ):
         raise PermissionError("Only the owner or an administrator can delete this model version.")
 

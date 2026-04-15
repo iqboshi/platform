@@ -105,9 +105,7 @@ def _dataset_format(dataset_kind: str, metadata: dict[str, object]) -> AssetForm
     ):
         return "geotiff"
 
-    if dataset_kind == "table" and (
-        original_file_name.endswith(".csv") or "csv" in content_type
-    ):
+    if dataset_kind == "table" and (original_file_name.endswith(".csv") or "csv" in content_type):
         return "csv"
 
     if original_file_name.endswith(".json") or "json" in content_type:
@@ -342,9 +340,7 @@ def get_asset_flow_overview(
             for target_asset_version_id in execution.output_asset_version_ids:
                 lineage_edges.append(
                     LineageEdge(
-                        id=(
-                            f"{execution.id}:{source_asset_version_id}:{target_asset_version_id}"
-                        ),
+                        id=(f"{execution.id}:{source_asset_version_id}:{target_asset_version_id}"),
                         relationship="execution_output",
                         source_asset_version_id=source_asset_version_id,
                         target_asset_version_id=target_asset_version_id,

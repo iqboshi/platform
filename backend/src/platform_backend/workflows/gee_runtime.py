@@ -367,10 +367,7 @@ def _normalize_gee_runtime_error(exc: Exception) -> str:
         )
 
     if "proxy" in lowered:
-        return (
-            "The configured proxy could not reach the Google Earth Engine services."
-            f"{proxy_hint}"
-        )
+        return f"The configured proxy could not reach the Google Earth Engine services.{proxy_hint}"
 
     return raw_message
 
@@ -396,9 +393,7 @@ def _initialize_earth_engine(ee_module, credential: GeeCredentialConfig) -> dict
         timeout=float(settings.gee_request_timeout_seconds),
     )
     project_id = (
-        credential.project_id
-        or str(credential_payload.get("project_id", "")).strip()
-        or None
+        credential.project_id or str(credential_payload.get("project_id", "")).strip() or None
     )
 
     try:
@@ -470,9 +465,8 @@ def _build_download_plan(params: SentinelDownloadParams) -> SentinelDownloadPlan
         len(params.bands),
     )
 
-    size_ratio = (
-        requested_estimated_bytes
-        / max(settings.gee_single_request_max_bytes * GEE_DOWNLOAD_SAFETY_FILL_RATIO, 1)
+    size_ratio = requested_estimated_bytes / max(
+        settings.gee_single_request_max_bytes * GEE_DOWNLOAD_SAFETY_FILL_RATIO, 1
     )
     width_ratio = requested_pixel_width / GEE_DOWNLOAD_MAX_GRID_DIMENSION
     height_ratio = requested_pixel_height / GEE_DOWNLOAD_MAX_GRID_DIMENSION
@@ -666,9 +660,7 @@ def _download_image(
     clipped = image.select(list(params.bands)).clip(region)
     region_geometry = region.getInfo()
     region_coordinates = (
-        region_geometry.get("coordinates")
-        if isinstance(region_geometry, dict)
-        else None
+        region_geometry.get("coordinates") if isinstance(region_geometry, dict) else None
     )
     attempt_scale = _build_download_plan(params).effective_scale
 
@@ -834,7 +826,9 @@ def test_gee_node(
             raise ValueError(f"Node {target_node_id} is missing a valid subgraph definition.")
         sentinel_node = _first_sentinel_node(subgraph)
         if sentinel_node is None:
-            raise NotImplementedError("GEE subgraphs currently require a nested source.sentinel2_gee_download node.")
+            raise NotImplementedError(
+                "GEE subgraphs currently require a nested source.sentinel2_gee_download node."
+            )
         preview_node = sentinel_node
         preview_ports = _subgraph_output_ports(subgraph) or preview_ports
     if str(preview_node.get("type", "")).strip() != "source.sentinel2_gee_download":

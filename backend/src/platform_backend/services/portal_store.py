@@ -273,10 +273,7 @@ def list_feedback_tickets(
 
     rows = db.scalars(statement.limit(normalized_limit)).all()
     owner_names = _feedback_ticket_owner_names(db, rows)
-    return [
-        _feedback_ticket_summary(row, owner_names.get(row.created_by))
-        for row in rows
-    ]
+    return [_feedback_ticket_summary(row, owner_names.get(row.created_by)) for row in rows]
 
 
 def get_feedback_ticket(

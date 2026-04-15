@@ -2,18 +2,6 @@ from __future__ import annotations
 
 import json
 
-from platform_backend.seed_data import (
-    SEED_IMAGE_COLLECTION_DATASET_VERSION_ID,
-    SEED_LINEAR_MODEL_VERSION_ID,
-    SEED_RANDOM_FOREST_MODEL_VERSION_ID,
-    SEED_RASTER_DATASET_VERSION_ID,
-    SEED_SEGMENTATION_MODEL_VERSION_ID,
-    SEED_SVM_MODEL_VERSION_ID,
-    SEED_TABULAR_GROUND_TRUTH_DATASET_VERSION_ID,
-    SEED_TABULAR_INPUT_DATASET_VERSION_ID,
-    SEED_TABULAR_PREDICTION_DATASET_VERSION_ID,
-    SEED_VECTOR_DATASET_VERSION_ID,
-)
 from platform_backend.schemas.workflow import (
     WorkflowCatalogItem,
     WorkflowEdge,
@@ -30,6 +18,18 @@ from platform_backend.schemas.workflow import (
     WorkflowPortContract,
     WorkflowTemplateDefinition,
     WorkflowTemplateSampleBinding,
+)
+from platform_backend.seed_data import (
+    SEED_IMAGE_COLLECTION_DATASET_VERSION_ID,
+    SEED_LINEAR_MODEL_VERSION_ID,
+    SEED_RANDOM_FOREST_MODEL_VERSION_ID,
+    SEED_RASTER_DATASET_VERSION_ID,
+    SEED_SEGMENTATION_MODEL_VERSION_ID,
+    SEED_SVM_MODEL_VERSION_ID,
+    SEED_TABULAR_GROUND_TRUTH_DATASET_VERSION_ID,
+    SEED_TABULAR_INPUT_DATASET_VERSION_ID,
+    SEED_TABULAR_PREDICTION_DATASET_VERSION_ID,
+    SEED_VECTOR_DATASET_VERSION_ID,
 )
 from platform_backend.workflows.subgraph_runtime import (
     CALL_SUBGRAPH_NODE_TYPE,
@@ -239,9 +239,13 @@ def _generic_contract_for_port(port: WorkflowNodePort) -> WorkflowPortContract:
     if data_type == "model_version":
         return _contract(port.key, "Model version handle referencing a persisted model asset.")
     if data_type == "model_ref":
-        return _contract(port.key, "In-memory trained model reference ready for save or evaluation.")
+        return _contract(
+            port.key, "In-memory trained model reference ready for save or evaluation."
+        )
     if data_type == "table":
-        return _contract(port.key, "In-memory table with named columns ready for downstream processing.")
+        return _contract(
+            port.key, "In-memory table with named columns ready for downstream processing."
+        )
     if data_type == "geo_raster":
         return _contract(port.key, "Loaded geospatial raster preserving CRS, extent, and bands.")
     if data_type == "mask_raster":
@@ -253,7 +257,9 @@ def _generic_contract_for_port(port: WorkflowNodePort) -> WorkflowPortContract:
     if data_type == "mask_collection":
         return _contract(port.key, "Collection of mask images aligned to source imagery.")
     if data_type == "scene_collection":
-        return _contract(port.key, "Remote raster scene collection available for filtering and selection.")
+        return _contract(
+            port.key, "Remote raster scene collection available for filtering and selection."
+        )
     if data_type == "scene":
         return _contract(port.key, "Single selected remote raster scene.")
     if data_type == "tile_set":
@@ -265,13 +271,21 @@ def _generic_contract_for_port(port: WorkflowNodePort) -> WorkflowPortContract:
     if data_type == "prediction_set":
         return _contract(port.key, "Prediction collection aligned to source samples or tiles.")
     if data_type == "sample_set":
-        return _contract(port.key, "Sample set binding imagery tiles with optional labels and metadata.")
+        return _contract(
+            port.key, "Sample set binding imagery tiles with optional labels and metadata."
+        )
     if data_type == "value":
-        return _contract(port.key, "Single structured value for control-flow or configuration routing.")
+        return _contract(
+            port.key, "Single structured value for control-flow or configuration routing."
+        )
     if data_type == "value_list":
-        return _contract(port.key, "Ordered list of structured values for generic iteration or batching.")
+        return _contract(
+            port.key, "Ordered list of structured values for generic iteration or batching."
+        )
     if data_type == "metrics_report":
-        return _contract(port.key, "Metrics report with metric/value rows.", produced_columns=["metric", "value"])
+        return _contract(
+            port.key, "Metrics report with metric/value rows.", produced_columns=["metric", "value"]
+        )
     if data_type == "artifact":
         return _contract(port.key, "Workflow artifact file ready for download or persistence.")
     if data_type == "roi":
@@ -312,9 +326,13 @@ def _generic_example_for_port(port: WorkflowNodePort, *, title_prefix: str) -> W
 
     payload: object
     if data_type == "dataset_version":
-        return _example(title, "text", port_key=port.key, content="dataset_version: sample-dataset / v1")
+        return _example(
+            title, "text", port_key=port.key, content="dataset_version: sample-dataset / v1"
+        )
     if data_type == "model_version":
-        return _example(title, "text", port_key=port.key, content="model_version: sample-model / 1.0.0")
+        return _example(
+            title, "text", port_key=port.key, content="model_version: sample-model / 1.0.0"
+        )
     if data_type == "model_ref":
         payload = {
             "algorithmKey": "linear_regression",
@@ -432,17 +450,13 @@ def _complete_common_errors(item: WorkflowCatalogItem) -> list[str]:
         return item.common_errors
 
     messages = [
-        f"{port.label} must be connected before running."
-        for port in item.inputs
-        if port.required
+        f"{port.label} must be connected before running." for port in item.inputs if port.required
     ]
-    messages.extend(
-        f"{field.label} is required."
-        for field in item.params
-        if field.required
-    )
+    messages.extend(f"{field.label} is required." for field in item.params if field.required)
     if not messages:
-        messages.append(f"{item.label} failed because one or more inputs or parameters are invalid.")
+        messages.append(
+            f"{item.label} failed because one or more inputs or parameters are invalid."
+        )
     return messages
 
 
@@ -454,7 +468,9 @@ def _complete_starter_bindings(
         preset_params: dict[str, object] = {}
         if input_kind == "spatial_roi" and any(field.key == "roiMode" for field in params):
             preset_params["roiMode"] = "saved_roi"
-        if input_kind == "gee_credential" and any(field.key == "credentialMode" for field in params):
+        if input_kind == "gee_credential" and any(
+            field.key == "credentialMode" for field in params
+        ):
             preset_params["credentialMode"] = "personal"
         return preset_params
 
@@ -529,7 +545,9 @@ def _source_nodes() -> list[WorkflowCatalogItem]:
             outputs=[_port("dataset", "Dataset Version", "dataset_version")],
             params=[_param("datasetVersionId", "Dataset Version", "datasetVersion", required=True)],
             starter_bindings=[
-                _starter_binding("dataset_version", "datasetVersionId", auto_create=True, priority=100)
+                _starter_binding(
+                    "dataset_version", "datasetVersionId", auto_create=True, priority=100
+                )
             ],
             output_behaviors=[
                 _output_behavior(
@@ -571,7 +589,9 @@ def _source_nodes() -> list[WorkflowCatalogItem]:
                     placeholder="116.10,39.70,116.65,40.10",
                 ),
                 _param("roiId", "Saved ROI", "spatialRoi"),
-                _param("startDate", "Start Date", "text", default_value="2025-06-01", required=True),
+                _param(
+                    "startDate", "Start Date", "text", default_value="2025-06-01", required=True
+                ),
                 _param("endDate", "End Date", "text", default_value="2025-06-30", required=True),
                 _param(
                     "maxCloudCover",
@@ -617,7 +637,10 @@ def _source_nodes() -> list[WorkflowCatalogItem]:
             output_contracts=[
                 _contract(
                     "dataset",
-                    "Raster dataset version in GeoTIFF format for downstream geospatial processing.",
+                    (
+                        "Raster dataset version in GeoTIFF format for downstream "
+                        "geospatial processing."
+                    ),
                     dataset_kinds=["raster"],
                     file_formats=["geotiff"],
                 )
@@ -652,7 +675,12 @@ def _source_nodes() -> list[WorkflowCatalogItem]:
             category="source",
             description="Select a saved model version and expose it as a workflow input handle.",
             runtime_kind="source",
-            supported_tasks=["tabular_prediction", "tabular_validation", "custom_api_prediction", "sample_dataset"],
+            supported_tasks=[
+                "tabular_prediction",
+                "tabular_validation",
+                "custom_api_prediction",
+                "sample_dataset",
+            ],
             tags=["model", "version", "input"],
             outputs=[_port("model", "Model Version", "model_version")],
             params=[_param("modelVersionId", "Model Version", "modelVersion", required=True)],
@@ -708,7 +736,9 @@ def _geo_nodes() -> list[WorkflowCatalogItem]:
             type="geo.query_raster_collection",
             label="Query Raster Collection",
             category="preprocess",
-            description="Query a provider collection over an ROI and materialize a scene collection.",
+            description=(
+                "Query a provider collection over an ROI and materialize a scene collection."
+            ),
             runtime_kind="transform",
             supported_tasks=["geospatial_collection"],
             tags=["geo", "query", "scene", "collection", "boundary", "provider_gee"],
@@ -731,7 +761,9 @@ def _geo_nodes() -> list[WorkflowCatalogItem]:
                     required=True,
                     options=[("sentinel2_l2a", "Sentinel-2 L2A")],
                 ),
-                _param("startDate", "Start Date", "text", default_value="2025-06-01", required=True),
+                _param(
+                    "startDate", "Start Date", "text", default_value="2025-06-01", required=True
+                ),
                 _param("endDate", "End Date", "text", default_value="2025-06-30", required=True),
                 _param(
                     "bands",
@@ -835,7 +867,14 @@ def _geo_nodes() -> list[WorkflowCatalogItem]:
             tags=["geo", "fetch", "dataset", "raster", "boundary", "provider_gee"],
             inputs=[_port("scene", "Scene", "scene", required=True)],
             outputs=[_port("dataset", "Dataset Version", "dataset_version")],
-            params=[_param("outputDatasetName", "Output Dataset Name", "text", default_value="Fetched Scene")],
+            params=[
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="Fetched Scene",
+                )
+            ],
             output_contracts=[
                 _contract(
                     "dataset",
@@ -1040,10 +1079,30 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             inputs=[_port("raster", "Geo Raster", "geo_raster", required=True)],
             outputs=[_port("tiles", "Tile Set", "tile_set")],
             params=[
-                _param("tileWidth", "Tile Width", "number", default_value=256, min=1, step=1, required=True),
-                _param("tileHeight", "Tile Height", "number", default_value=256, min=1, step=1, required=True),
-                _param("strideX", "Stride X", "number", default_value=256, min=1, step=1, required=True),
-                _param("strideY", "Stride Y", "number", default_value=256, min=1, step=1, required=True),
+                _param(
+                    "tileWidth",
+                    "Tile Width",
+                    "number",
+                    default_value=256,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "tileHeight",
+                    "Tile Height",
+                    "number",
+                    default_value=256,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "strideX", "Stride X", "number", default_value=256, min=1, step=1, required=True
+                ),
+                _param(
+                    "strideY", "Stride Y", "number", default_value=256, min=1, step=1, required=True
+                ),
                 _param(
                     "edgePolicy",
                     "Edge Policy",
@@ -1080,10 +1139,30 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             inputs=[_port("images", "Image Collection", "image_collection", required=True)],
             outputs=[_port("tiles", "Tile Set", "tile_set")],
             params=[
-                _param("tileWidth", "Tile Width", "number", default_value=256, min=1, step=1, required=True),
-                _param("tileHeight", "Tile Height", "number", default_value=256, min=1, step=1, required=True),
-                _param("strideX", "Stride X", "number", default_value=256, min=1, step=1, required=True),
-                _param("strideY", "Stride Y", "number", default_value=256, min=1, step=1, required=True),
+                _param(
+                    "tileWidth",
+                    "Tile Width",
+                    "number",
+                    default_value=256,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "tileHeight",
+                    "Tile Height",
+                    "number",
+                    default_value=256,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "strideX", "Stride X", "number", default_value=256, min=1, step=1, required=True
+                ),
+                _param(
+                    "strideY", "Stride Y", "number", default_value=256, min=1, step=1, required=True
+                ),
                 _param(
                     "edgePolicy",
                     "Edge Policy",
@@ -1122,7 +1201,16 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
                 _port("features", "Feature Collection", "feature_collection", required=True),
             ],
             outputs=[_port("labels", "Label Set", "label_set")],
-            params=[_param("outputMaskFormat", "Output Mask Format", "select", default_value="png", required=True, options=[("png", "PNG")])],
+            params=[
+                _param(
+                    "outputMaskFormat",
+                    "Output Mask Format",
+                    "select",
+                    default_value="png",
+                    required=True,
+                    options=[("png", "PNG")],
+                )
+            ],
             output_contracts=[
                 _contract(
                     "labels",
@@ -1146,7 +1234,16 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
                 _port("raster", "Mask Raster", "mask_raster", required=True),
             ],
             outputs=[_port("labels", "Label Set", "label_set")],
-            params=[_param("outputMaskFormat", "Output Mask Format", "select", default_value="png", required=True, options=[("png", "PNG")])],
+            params=[
+                _param(
+                    "outputMaskFormat",
+                    "Output Mask Format",
+                    "select",
+                    default_value="png",
+                    required=True,
+                    options=[("png", "PNG")],
+                )
+            ],
             output_contracts=[
                 _contract(
                     "labels",
@@ -1170,7 +1267,16 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
                 _port("masks", "Mask Collection", "mask_collection", required=True),
             ],
             outputs=[_port("labels", "Label Set", "label_set")],
-            params=[_param("outputMaskFormat", "Output Mask Format", "select", default_value="png", required=True, options=[("png", "PNG")])],
+            params=[
+                _param(
+                    "outputMaskFormat",
+                    "Output Mask Format",
+                    "select",
+                    default_value="png",
+                    required=True,
+                    options=[("png", "PNG")],
+                )
+            ],
             output_contracts=[
                 _contract(
                     "labels",
@@ -1193,7 +1299,15 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             outputs=[_port("labels", "Label Set", "label_set")],
             params=[
                 _param("skipEmptyLabel", "Skip Empty Label", "boolean", default_value=False),
-                _param("minLabelCoverage", "Min Label Coverage", "number", default_value=0, min=0, max=1, step=0.01),
+                _param(
+                    "minLabelCoverage",
+                    "Min Label Coverage",
+                    "number",
+                    default_value=0,
+                    min=0,
+                    max=1,
+                    step=0.01,
+                ),
             ],
             input_contracts=[
                 _contract(
@@ -1218,7 +1332,10 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             type="annotation.project_features_to_tile_classes",
             label="Project Features To Tile Classes",
             category="preprocess",
-            description="Project feature properties onto a tile grid as one class-label annotation per tile.",
+            description=(
+                "Project feature properties onto a tile grid as one class-label "
+                "annotation per tile."
+            ),
             runtime_kind="transform",
             supported_tasks=["sample_dataset"],
             tags=["annotation", "class", "feature", "tile"],
@@ -1380,7 +1497,14 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
                 _port("testSamples", "Test Samples", "sample_set"),
             ],
             params=[
-                _param("strategy", "Strategy", "select", default_value="random", required=True, options=[("random", "Random")]),
+                _param(
+                    "strategy",
+                    "Strategy",
+                    "select",
+                    default_value="random",
+                    required=True,
+                    options=[("random", "Random")],
+                ),
                 _param("trainRatio", "Train Ratio", "number", default_value=0.8, min=0, step=0.01),
                 _param("valRatio", "Val Ratio", "number", default_value=0.1, min=0, step=0.01),
                 _param("testRatio", "Test Ratio", "number", default_value=0.1, min=0, step=0.01),
@@ -1426,7 +1550,10 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             type="artifact.package_dataset_bundle",
             label="Package Dataset Bundle",
             category="postprocess",
-            description="Package sample files into a dataset bundle zip with optional split groups and manifest.",
+            description=(
+                "Package sample files into a dataset bundle zip with optional "
+                "split groups and manifest."
+            ),
             runtime_kind="export",
             supported_tasks=["sample_dataset"],
             tags=["artifact", "package", "dataset", "zip", "boundary", "persistence"],
@@ -1438,7 +1565,9 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
                 _port("manifest", "Manifest", "artifact"),
             ],
             outputs=[_port("artifact", "Artifact", "artifact")],
-            params=[_param("archiveName", "Archive Name", "text", default_value="dataset-bundle.zip")],
+            params=[
+                _param("archiveName", "Archive Name", "text", default_value="dataset-bundle.zip")
+            ],
         ),
         WorkflowCatalogItem(
             type="export.artifact_to_dataset_version",
@@ -1450,12 +1579,22 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             tags=["export", "artifact", "dataset", "boundary", "persistence"],
             inputs=[_port("artifact", "Artifact", "artifact", required=True)],
             outputs=[_port("dataset", "Dataset Version", "dataset_version")],
-            params=[_param("outputDatasetName", "Output Dataset Name", "text", default_value="Workflow Artifact")],
+            params=[
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="Workflow Artifact",
+                )
+            ],
             output_behaviors=[
                 _output_behavior(
                     "dataset",
                     preview_kinds=["dataset_version"],
-                    usages=[_output_usage("workflow", "dataset_version"), _output_usage("spatial", "asset_version")],
+                    usages=[
+                        _output_usage("workflow", "dataset_version"),
+                        _output_usage("spatial", "asset_version"),
+                    ],
                 )
             ],
         ),
@@ -1469,7 +1608,14 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
             tags=["export", "prediction", "dataset", "boundary", "persistence"],
             inputs=[_port("predictions", "Prediction Set", "prediction_set", required=True)],
             outputs=[_port("dataset", "Dataset Version", "dataset_version")],
-            params=[_param("outputDatasetName", "Output Dataset Name", "text", default_value="Workflow Predictions")],
+            params=[
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="Workflow Predictions",
+                )
+            ],
             input_contracts=[
                 _contract(
                     "predictions",
@@ -1481,7 +1627,10 @@ def _sample_nodes() -> list[WorkflowCatalogItem]:
                 _output_behavior(
                     "dataset",
                     preview_kinds=["dataset_version"],
-                    usages=[_output_usage("workflow", "dataset_version"), _output_usage("spatial", "asset_version")],
+                    usages=[
+                        _output_usage("workflow", "dataset_version"),
+                        _output_usage("spatial", "asset_version"),
+                    ],
                 )
             ],
         ),
@@ -1499,7 +1648,10 @@ def _tabular_predict_alias_node(
         type=node_type,
         label=label,
         category="inference",
-        description="Convenience alias for the generic regression prediction node with algorithm-specific defaults.",
+        description=(
+            "Convenience alias for the generic regression prediction node with "
+            "algorithm-specific defaults."
+        ),
         runtime_kind="inference",
         supported_tasks=["tabular_prediction", "tabular_validation"],
         tags=["table", "prediction", "regression", algorithm_tag, "convenience"],
@@ -1537,7 +1689,10 @@ def _tabular_train_alias_node(
         type=node_type,
         label=label,
         category="inference",
-        description="Convenience alias for the generic regression training node with algorithm-specific parameters.",
+        description=(
+            "Convenience alias for the generic regression training node with "
+            "algorithm-specific parameters."
+        ),
         runtime_kind="inference",
         supported_tasks=["tabular_training"],
         tags=["table", "training", "regression", algorithm_tag, "convenience"],
@@ -1550,7 +1705,13 @@ def _tabular_train_alias_node(
             _port("report", "Training Metrics", "metrics_report"),
         ],
         params=[
-            _param("featureColumns", "Feature Columns", "text", placeholder="feature_a, feature_b", required=True),
+            _param(
+                "featureColumns",
+                "Feature Columns",
+                "text",
+                placeholder="feature_a, feature_b",
+                required=True,
+            ),
             _param("targetColumn", "Target Column", "text", default_value="target", required=True),
             *(extra_params or []),
         ],
@@ -1570,7 +1731,9 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
             inputs=[],
             outputs=[_port("value", "Value", "value")],
             params=[_param("value", "Value", "boolean", default_value=True, required=True)],
-            output_contracts=[_contract("value", "Boolean control value.", value_types=["boolean"])],
+            output_contracts=[
+                _contract("value", "Boolean control value.", value_types=["boolean"])
+            ],
         ),
         WorkflowCatalogItem(
             type="control.list_literal",
@@ -1638,7 +1801,9 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
                     placeholder='42 or "label" or {"threshold": 0.5}',
                 ),
             ],
-            output_contracts=[_contract("result", "Boolean comparison result.", value_types=["boolean"])],
+            output_contracts=[
+                _contract("result", "Boolean comparison result.", value_types=["boolean"])
+            ],
         ),
         WorkflowCatalogItem(
             type="control.not",
@@ -1651,13 +1816,18 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
             inputs=[_port("value", "Value", "value", required=True)],
             outputs=[_port("result", "Result", "value")],
             input_contracts=[_contract("value", "Boolean control value.", value_types=["boolean"])],
-            output_contracts=[_contract("result", "Inverted boolean control value.", value_types=["boolean"])],
+            output_contracts=[
+                _contract("result", "Inverted boolean control value.", value_types=["boolean"])
+            ],
         ),
         WorkflowCatalogItem(
             type="control.guard",
             label="Guard Payload",
             category="control",
-            description="Pass a payload through only when the boolean condition is true; otherwise skip the branch.",
+            description=(
+                "Pass a payload through only when the boolean condition is true; "
+                "otherwise skip the branch."
+            ),
             runtime_kind="transform",
             supported_tasks=["control_flow", "generic_control"],
             tags=["control", "guard", "branch", "primitive"],
@@ -1688,7 +1858,10 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
             type="control.coalesce",
             label="Coalesce Payload",
             category="control",
-            description="Return the first active payload, allowing branches to merge back into one downstream path.",
+            description=(
+                "Return the first active payload, allowing branches to merge "
+                "back into one downstream path."
+            ),
             runtime_kind="transform",
             supported_tasks=["control_flow", "generic_control"],
             tags=["control", "merge", "branch", "primitive"],
@@ -1712,16 +1885,29 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
             type=CALL_SUBGRAPH_NODE_TYPE,
             label="Call Subgraph",
             category="control",
-            description="Execute a nested acyclic subgraph whose external interface is declared by subgraph boundary nodes.",
+            description=(
+                "Execute a nested acyclic subgraph whose external interface is "
+                "declared by subgraph boundary nodes."
+            ),
             runtime_kind="transform",
-            supported_tasks=["control_flow", "generic_control", "tabular_training", "sample_dataset", "custom_api_prediction", "geospatial_collection"],
+            supported_tasks=[
+                "control_flow",
+                "generic_control",
+                "tabular_training",
+                "sample_dataset",
+                "custom_api_prediction",
+                "geospatial_collection",
+            ],
             tags=["control", "subgraph", "structural", "primitive"],
             inputs=[],
             outputs=[],
             params=[],
             common_errors=[
-                "Subgraph boundary ports must be declared with workflow.subgraph_input and workflow.subgraph_output nodes.",
-                "Subgraph input and output port keys must be unique within the nested graph.",
+                (
+                    "Subgraph boundary ports must be declared with "
+                    "workflow.subgraph_input and workflow.subgraph_output nodes."
+                ),
+                ("Subgraph input and output port keys must be unique within the nested graph."),
                 "The nested subgraph must remain acyclic and semantically valid.",
             ],
         ),
@@ -1729,9 +1915,19 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
             type=FOR_EACH_NODE_TYPE,
             label="For Each",
             category="control",
-            description="Execute a nested acyclic loop body once for each item in an ordered list and aggregate each body output into a value_list.",
+            description=(
+                "Execute a nested acyclic loop body once for each item in an "
+                "ordered list and aggregate each body output into a value_list."
+            ),
             runtime_kind="transform",
-            supported_tasks=["control_flow", "generic_control", "tabular_training", "sample_dataset", "custom_api_prediction", "geospatial_collection"],
+            supported_tasks=[
+                "control_flow",
+                "generic_control",
+                "tabular_training",
+                "sample_dataset",
+                "custom_api_prediction",
+                "geospatial_collection",
+            ],
             tags=["control", "loop", "subgraph", "structural", "primitive"],
             inputs=[_port("items", "Items", "value_list", required=True)],
             outputs=[],
@@ -1744,8 +1940,15 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
                 )
             ],
             common_errors=[
-                "Loop body ports must be declared with workflow.subgraph_input and workflow.subgraph_output nodes.",
-                "Reserved workflow.subgraph_input keys `item` and `index` are injected on each iteration and must not be bound from the outer graph.",
+                (
+                    "Loop body ports must be declared with "
+                    "workflow.subgraph_input and workflow.subgraph_output nodes."
+                ),
+                (
+                    "Reserved workflow.subgraph_input keys `item` and `index` "
+                    "are injected on each iteration and must not be bound from "
+                    "the outer graph."
+                ),
                 "Each declared loop body output is aggregated into a value_list on the outer node.",
             ],
         ),
@@ -1753,32 +1956,67 @@ def _control_nodes() -> list[WorkflowCatalogItem]:
             type=SUBGRAPH_INPUT_NODE_TYPE,
             label="Subgraph Input",
             category="control",
-            description="Declare one external input port for a nested subgraph and expose it inside the subgraph body.",
+            description=(
+                "Declare one external input port for a nested subgraph and "
+                "expose it inside the subgraph body."
+            ),
             runtime_kind="source",
-            supported_tasks=["control_flow", "generic_control", "tabular_training", "sample_dataset", "custom_api_prediction", "geospatial_collection"],
+            supported_tasks=[
+                "control_flow",
+                "generic_control",
+                "tabular_training",
+                "sample_dataset",
+                "custom_api_prediction",
+                "geospatial_collection",
+            ],
             tags=["control", "subgraph", "boundary", "structural", "primitive"],
             inputs=[],
             outputs=[],
             params=[],
             common_errors=[
-                "Subgraph input nodes are valid only inside a structural subgraph body such as workflow.call_subgraph or control.for_each.",
-                "Each subgraph input node must declare exactly one output port through its dynamic interface.",
+                (
+                    "Subgraph input nodes are valid only inside a structural "
+                    "subgraph body such as workflow.call_subgraph or "
+                    "control.for_each."
+                ),
+                (
+                    "Each subgraph input node must declare exactly one output "
+                    "port through its dynamic interface."
+                ),
             ],
         ),
         WorkflowCatalogItem(
             type=SUBGRAPH_OUTPUT_NODE_TYPE,
             label="Subgraph Output",
             category="control",
-            description="Declare one external output port for a nested subgraph and bind it to an internal upstream value.",
+            description=(
+                "Declare one external output port for a nested subgraph and "
+                "bind it to an internal upstream value."
+            ),
             runtime_kind="export",
-            supported_tasks=["control_flow", "generic_control", "tabular_training", "sample_dataset", "custom_api_prediction", "geospatial_collection"],
+            supported_tasks=[
+                "control_flow",
+                "generic_control",
+                "tabular_training",
+                "sample_dataset",
+                "custom_api_prediction",
+                "geospatial_collection",
+            ],
             tags=["control", "subgraph", "boundary", "structural", "primitive"],
             inputs=[],
             outputs=[],
             params=[],
             common_errors=[
-                "Subgraph output nodes are valid only inside a structural subgraph body such as workflow.call_subgraph or control.for_each.",
-                "Each subgraph output node must declare exactly one input port through its dynamic interface and bind it to an internal source.",
+                (
+                    "Subgraph output nodes are valid only inside a structural "
+                    "subgraph body such as workflow.call_subgraph or "
+                    "control.for_each."
+                ),
+                (
+                    "Each subgraph output node must declare exactly one input "
+                    "port through its dynamic interface and bind it to an "
+                    "internal source."
+                ),
             ],
         ),
     ]
@@ -1792,11 +2030,25 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             category="preprocess",
             description="Decode a CSV dataset version into an in-memory table.",
             runtime_kind="transform",
-            supported_tasks=["tabular_training", "tabular_prediction", "tabular_validation", "custom_api_prediction"],
+            supported_tasks=[
+                "tabular_training",
+                "tabular_prediction",
+                "tabular_validation",
+                "custom_api_prediction",
+            ],
             tags=["table", "csv", "load"],
             inputs=[_port("dataset", "Dataset Version", "dataset_version", required=True)],
             outputs=[_port("table", "Table", "table")],
-            params=[_param("delimiter", "Delimiter", "select", default_value=",", required=True, options=[(",", "Comma"), (";", "Semicolon"), ("\t", "Tab")])],
+            params=[
+                _param(
+                    "delimiter",
+                    "Delimiter",
+                    "select",
+                    default_value=",",
+                    required=True,
+                    options=[(",", "Comma"), (";", "Semicolon"), ("\t", "Tab")],
+                )
+            ],
             input_contracts=[
                 _contract(
                     "dataset",
@@ -1809,7 +2061,10 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             output_contracts=[
                 _contract(
                     "table",
-                    "In-memory table with named columns ready for split, train, and validation steps.",
+                    (
+                        "In-memory table with named columns ready for split, "
+                        "train, and validation steps."
+                    ),
                     sample_columns=["feature_a", "feature_b", "target"],
                     produced_columns=["feature_a", "feature_b", "target"],
                 )
@@ -1852,9 +2107,21 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             supported_tasks=["tabular_training"],
             tags=["table", "split", "train", "test"],
             inputs=[_port("table", "Input Table", "table", required=True)],
-            outputs=[_port("trainTable", "Train Table", "table"), _port("testTable", "Test Table", "table")],
+            outputs=[
+                _port("trainTable", "Train Table", "table"),
+                _port("testTable", "Test Table", "table"),
+            ],
             params=[
-                _param("testSize", "Test Size", "number", default_value=0.2, min=0.05, max=0.95, step=0.05, required=True),
+                _param(
+                    "testSize",
+                    "Test Size",
+                    "number",
+                    default_value=0.2,
+                    min=0.05,
+                    max=0.95,
+                    step=0.05,
+                    required=True,
+                ),
                 _param("shuffle", "Shuffle", "boolean", default_value=True),
                 _param("randomState", "Random State", "number", default_value=42, step=1),
             ],
@@ -1867,13 +2134,44 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             runtime_kind="inference",
             supported_tasks=["tabular_training"],
             tags=["table", "training", "regression", "model"],
-            inputs=[_port("trainTable", "Train Table", "table", required=True), _port("testTable", "Test Table", "table")],
-            outputs=[_port("model", "Trained Model", "model_ref"), _port("report", "Training Metrics", "metrics_report")],
+            inputs=[
+                _port("trainTable", "Train Table", "table", required=True),
+                _port("testTable", "Test Table", "table"),
+            ],
+            outputs=[
+                _port("model", "Trained Model", "model_ref"),
+                _port("report", "Training Metrics", "metrics_report"),
+            ],
             params=[
-                _param("algorithm", "Algorithm", "select", default_value="linear_regression", required=True, options=[("linear_regression", "Linear Regression"), ("svm_regression", "SVM Regression"), ("random_forest_regression", "Random Forest Regression")]),
-                _param("featureColumns", "Feature Columns", "text", placeholder="feature_a, feature_b", required=True),
-                _param("targetColumn", "Target Column", "text", default_value="target", required=True),
-                _param("hyperparametersJson", "Hyperparameters JSON", "text", default_value="{}", placeholder='{"n_estimators": 100}'),
+                _param(
+                    "algorithm",
+                    "Algorithm",
+                    "select",
+                    default_value="linear_regression",
+                    required=True,
+                    options=[
+                        ("linear_regression", "Linear Regression"),
+                        ("svm_regression", "SVM Regression"),
+                        ("random_forest_regression", "Random Forest Regression"),
+                    ],
+                ),
+                _param(
+                    "featureColumns",
+                    "Feature Columns",
+                    "text",
+                    placeholder="feature_a, feature_b",
+                    required=True,
+                ),
+                _param(
+                    "targetColumn", "Target Column", "text", default_value="target", required=True
+                ),
+                _param(
+                    "hyperparametersJson",
+                    "Hyperparameters JSON",
+                    "text",
+                    default_value="{}",
+                    placeholder='{"n_estimators": 100}',
+                ),
             ],
         ),
         _tabular_train_alias_node(
@@ -1916,8 +2214,12 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             extra_params=[
                 _param("nEstimators", "N Estimators", "number", default_value=100, min=1, step=1),
                 _param("maxDepth", "Max Depth", "number", min=1, step=1),
-                _param("minSamplesSplit", "Min Samples Split", "number", default_value=2, min=2, step=1),
-                _param("minSamplesLeaf", "Min Samples Leaf", "number", default_value=1, min=1, step=1),
+                _param(
+                    "minSamplesSplit", "Min Samples Split", "number", default_value=2, min=2, step=1
+                ),
+                _param(
+                    "minSamplesLeaf", "Min Samples Leaf", "number", default_value=1, min=1, step=1
+                ),
                 _param("nJobs", "N Jobs", "number", default_value=1, min=1, step=1),
             ],
         ),
@@ -1929,17 +2231,30 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             runtime_kind="inference",
             supported_tasks=["tabular_prediction", "tabular_validation"],
             tags=["table", "prediction", "regression", "model"],
-            inputs=[_port("model", "Model Version", "model_version"), _port("table", "Input Table", "table", required=True)],
+            inputs=[
+                _port("model", "Model Version", "model_version"),
+                _port("table", "Input Table", "table", required=True),
+            ],
             outputs=[_port("table", "Prediction Table", "table")],
             params=[
                 _param("modelVersionId", "Model Version", "modelVersion"),
                 _param("predictionColumn", "Prediction Column", "text", default_value="prediction"),
-                _param("runtimeParametersJson", "Runtime Parameters JSON", "text", default_value="{}", placeholder='{"roundDigits": 4}'),
+                _param(
+                    "runtimeParametersJson",
+                    "Runtime Parameters JSON",
+                    "text",
+                    default_value="{}",
+                    placeholder='{"roundDigits": 4}',
+                ),
             ],
             output_contracts=[
                 _contract(
                     "table",
-                    "Prediction or enriched table. prediction_values appends the configured prediction column; table_rows merges returned row objects into the input rows.",
+                    (
+                        "Prediction or enriched table. prediction_values appends "
+                        "the configured prediction column; table_rows merges "
+                        "returned row objects into the input rows."
+                    ),
                     produced_columns=["feature_a", "feature_b", "prediction"],
                 )
             ],
@@ -1965,16 +2280,27 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             type="custom.api_predict",
             label="Custom API Predict",
             category="inference",
-            description="Send a table to an external HTTP API model and merge the prediction result back.",
+            description=(
+                "Send a table to an external HTTP API model and merge the prediction result back."
+            ),
             runtime_kind="inference",
             supported_tasks=["custom_api_prediction"],
             tags=["table", "prediction", "custom", "api", "boundary", "provider_http_api"],
-            inputs=[_port("model", "Custom Model", "model_version"), _port("table", "Input Table", "table", required=True)],
+            inputs=[
+                _port("model", "Custom Model", "model_version"),
+                _port("table", "Input Table", "table", required=True),
+            ],
             outputs=[_port("table", "Prediction Table", "table")],
             params=[
                 _param("modelVersionId", "Custom Model", "modelVersion"),
                 _param("predictionColumn", "Prediction Column", "text", default_value="prediction"),
-                _param("callParametersJson", "Call Parameters JSON", "text", default_value="{}", placeholder='{"threshold": 0.5}'),
+                _param(
+                    "callParametersJson",
+                    "Call Parameters JSON",
+                    "text",
+                    default_value="{}",
+                    placeholder='{"threshold": 0.5}',
+                ),
             ],
             output_contracts=[
                 _contract(
@@ -1988,7 +2314,10 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             type="custom.api_train_samples",
             label="Custom API Train Samples",
             category="inference",
-            description="Send training samples to an external HTTP API and persist the returned model as a reusable custom API model version.",
+            description=(
+                "Send training samples to an external HTTP API and persist the "
+                "returned model as a reusable custom API model version."
+            ),
             runtime_kind="inference",
             supported_tasks=["sample_dataset", "custom_api_prediction"],
             tags=["samples", "training", "custom", "api", "boundary", "provider_http_api"],
@@ -2013,7 +2342,9 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
                         ("object_detection", "Object Detection"),
                     ],
                 ),
-                _param("outputModelName", "Output Model Name", "text", default_value="Custom API Model"),
+                _param(
+                    "outputModelName", "Output Model Name", "text", default_value="Custom API Model"
+                ),
                 _param("outputModelVersion", "Output Model Version", "text", default_value="1.0.0"),
                 _param("predictionEndpointUrl", "Prediction Endpoint URL", "text", required=True),
                 _param("trainingEndpointUrl", "Training Endpoint URL", "text"),
@@ -2027,7 +2358,9 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
                 ),
                 _param("authToken", "Auth Token", "text"),
                 _param("authHeaderName", "Auth Header Name", "text"),
-                _param("timeoutSeconds", "Timeout Seconds", "number", default_value=45, min=1, step=1),
+                _param(
+                    "timeoutSeconds", "Timeout Seconds", "number", default_value=45, min=1, step=1
+                ),
                 _param(
                     "responseMode",
                     "Response Mode",
@@ -2040,8 +2373,19 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
                         ("prediction_vectors", "Prediction Vectors"),
                     ],
                 ),
-                _param("defaultPredictionColumn", "Default Prediction Column", "text", default_value="prediction"),
-                _param("callParametersJson", "Call Parameters JSON", "text", default_value="{}", placeholder='{"threshold": 0.5}'),
+                _param(
+                    "defaultPredictionColumn",
+                    "Default Prediction Column",
+                    "text",
+                    default_value="prediction",
+                ),
+                _param(
+                    "callParametersJson",
+                    "Call Parameters JSON",
+                    "text",
+                    default_value="{}",
+                    placeholder='{"threshold": 0.5}',
+                ),
             ],
             input_contracts=[
                 _contract(
@@ -2051,7 +2395,10 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
                 ),
                 _contract(
                     "validationSamples",
-                    "Optional labeled validation sample set aligned to the same task semantics as the training samples.",
+                    (
+                        "Optional labeled validation sample set aligned to the "
+                        "same task semantics as the training samples."
+                    ),
                     sample_kinds=["image_tile", "geospatial_tile"],
                 ),
             ],
@@ -2067,15 +2414,26 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             type="custom.api_predict_samples",
             label="Custom API Predict Samples",
             category="inference",
-            description="Send a sample set to an external HTTP API model and return a prediction set.",
+            description=(
+                "Send a sample set to an external HTTP API model and return a prediction set."
+            ),
             runtime_kind="inference",
             supported_tasks=["sample_dataset", "custom_api_prediction"],
             tags=["samples", "prediction", "custom", "api", "boundary", "provider_http_api"],
-            inputs=[_port("model", "Custom Model", "model_version"), _port("samples", "Sample Set", "sample_set", required=True)],
+            inputs=[
+                _port("model", "Custom Model", "model_version"),
+                _port("samples", "Sample Set", "sample_set", required=True),
+            ],
             outputs=[_port("predictions", "Prediction Set", "prediction_set")],
             params=[
                 _param("modelVersionId", "Custom Model", "modelVersion"),
-                _param("callParametersJson", "Call Parameters JSON", "text", default_value="{}", placeholder='{"threshold": 0.5}'),
+                _param(
+                    "callParametersJson",
+                    "Call Parameters JSON",
+                    "text",
+                    default_value="{}",
+                    placeholder='{"threshold": 0.5}',
+                ),
             ],
             input_contracts=[
                 _contract(
@@ -2097,16 +2455,45 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             type="metrics.validate_regression",
             label="Regression Validation",
             category="postprocess",
-            description="Compare prediction and ground-truth tables and compute regression metrics.",
+            description=(
+                "Compare prediction and ground-truth tables and compute regression metrics."
+            ),
             runtime_kind="transform",
             supported_tasks=["tabular_validation"],
             tags=["validation", "metrics", "regression"],
-            inputs=[_port("predictionTable", "Prediction Table", "table", required=True), _port("groundTruthTable", "Ground Truth Table", "table", required=True)],
+            inputs=[
+                _port("predictionTable", "Prediction Table", "table", required=True),
+                _port("groundTruthTable", "Ground Truth Table", "table", required=True),
+            ],
             outputs=[_port("report", "Metrics Report", "metrics_report")],
             params=[
-                _param("predictionColumn", "Prediction Column", "text", default_value="prediction", required=True),
-                _param("groundTruthColumn", "Ground Truth Column", "text", default_value="target", required=True),
-                _param("metrics", "Metrics", "multiselect", default_value=["r2", "rmse", "mae"], options=[("r2", "R2"), ("rmse", "RMSE"), ("mae", "MAE"), ("mse", "MSE"), ("mape", "MAPE")]),
+                _param(
+                    "predictionColumn",
+                    "Prediction Column",
+                    "text",
+                    default_value="prediction",
+                    required=True,
+                ),
+                _param(
+                    "groundTruthColumn",
+                    "Ground Truth Column",
+                    "text",
+                    default_value="target",
+                    required=True,
+                ),
+                _param(
+                    "metrics",
+                    "Metrics",
+                    "multiselect",
+                    default_value=["r2", "rmse", "mae"],
+                    options=[
+                        ("r2", "R2"),
+                        ("rmse", "RMSE"),
+                        ("mae", "MAE"),
+                        ("mse", "MSE"),
+                        ("mape", "MAPE"),
+                    ],
+                ),
             ],
             input_contracts=[
                 _contract(
@@ -2156,19 +2543,32 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             supported_tasks=["tabular_training"],
             tags=["model", "save", "asset", "boundary", "persistence"],
             inputs=[_port("model", "Trained Model", "model_ref", required=True)],
-            outputs=[_port("model", "Model Version", "model_version"), _port("artifact", "Artifact", "artifact")],
+            outputs=[
+                _port("model", "Model Version", "model_version"),
+                _port("artifact", "Artifact", "artifact"),
+            ],
             params=[
                 _param("saveToPlatform", "Save To Platform", "boolean", default_value=True),
-                _param("outputModelName", "Output Model Name", "text", default_value="Trained Model"),
+                _param(
+                    "outputModelName", "Output Model Name", "text", default_value="Trained Model"
+                ),
                 _param("outputModelVersion", "Output Model Version", "text", default_value="1.0.0"),
             ],
-            output_behaviors=[_output_behavior("model", preview_kinds=["model_version"], usages=[_output_usage("workflow", "model_version")])],
+            output_behaviors=[
+                _output_behavior(
+                    "model",
+                    preview_kinds=["model_version"],
+                    usages=[_output_usage("workflow", "model_version")],
+                )
+            ],
         ),
         WorkflowCatalogItem(
             type="export.table",
             label="Export Table",
             category="postprocess",
-            description="Write the current table to CSV and optionally persist it back to the platform.",
+            description=(
+                "Write the current table to CSV and optionally persist it back to the platform."
+            ),
             runtime_kind="export",
             supported_tasks=["tabular_prediction", "tabular_validation"],
             tags=["export", "table", "csv", "boundary", "persistence"],
@@ -2176,14 +2576,22 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             outputs=[_port("artifact", "Artifact", "artifact")],
             params=[
                 _param("saveToPlatform", "Save To Platform", "boolean", default_value=True),
-                _param("outputDatasetName", "Output Dataset Name", "text", default_value="Prediction Output"),
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="Prediction Output",
+                ),
             ],
         ),
         WorkflowCatalogItem(
             type="export.metrics",
             label="Export Metrics",
             category="postprocess",
-            description="Write a metrics report to JSON or CSV and optionally persist it back to the platform.",
+            description=(
+                "Write a metrics report to JSON or CSV and optionally persist "
+                "it back to the platform."
+            ),
             runtime_kind="export",
             supported_tasks=["tabular_validation"],
             tags=["export", "metrics", "report", "boundary", "persistence"],
@@ -2191,8 +2599,20 @@ def _tabular_nodes() -> list[WorkflowCatalogItem]:
             outputs=[_port("artifact", "Artifact", "artifact")],
             params=[
                 _param("saveToPlatform", "Save To Platform", "boolean", default_value=True),
-                _param("outputDatasetName", "Output Dataset Name", "text", default_value="Validation Metrics"),
-                _param("format", "Format", "select", default_value="json", required=True, options=[("json", "JSON"), ("csv", "CSV")]),
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="Validation Metrics",
+                ),
+                _param(
+                    "format",
+                    "Format",
+                    "select",
+                    default_value="json",
+                    required=True,
+                    options=[("json", "JSON"), ("csv", "CSV")],
+                ),
             ],
         ),
     ]
@@ -2288,13 +2708,27 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="geo.query_fetch_scene",
         label="Query And Fetch Scene",
-        description="Define an ROI, query a raster collection, select a scene, and fetch it as a dataset.",
+        description=(
+            "Define an ROI, query a raster collection, select a scene, and fetch it as a dataset."
+        ),
         tags=["geo", "scene", "fetch"],
         supported_tasks=["geospatial_collection"],
         graph=WorkflowGraph(
             nodes=[
-                _node("roi", "geo.define_bbox_roi", 80, 160, params={"bbox": "116.10,39.70,116.65,40.10"}),
-                _node("query", "geo.query_raster_collection", 320, 160, input_bindings={"roi": "roi:roi"}),
+                _node(
+                    "roi",
+                    "geo.define_bbox_roi",
+                    80,
+                    160,
+                    params={"bbox": "116.10,39.70,116.65,40.10"},
+                ),
+                _node(
+                    "query",
+                    "geo.query_raster_collection",
+                    320,
+                    160,
+                    input_bindings={"roi": "roi:roi"},
+                ),
                 _node(
                     "filter",
                     "geo.filter_scene_collection",
@@ -2303,53 +2737,244 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                     input_bindings={"collection": "query:collection"},
                     params={"filtersJson": '[{"field":"cloud_cover","op":"<=","value":20}]'},
                 ),
-                _node("sort", "geo.sort_scene_collection", 860, 160, input_bindings={"collection": "filter:collection"}, params={"field": "cloud_cover", "order": "asc"}),
-                _node("select", "geo.select_scene", 1120, 160, input_bindings={"collection": "sort:collection"}, params={"selectionMode": "first", "index": 0}),
-                _node("fetch", "geo.fetch_scene_as_dataset", 1380, 160, input_bindings={"scene": "select:scene"}, params={"outputDatasetName": "Queried Scene"}),
+                _node(
+                    "sort",
+                    "geo.sort_scene_collection",
+                    860,
+                    160,
+                    input_bindings={"collection": "filter:collection"},
+                    params={"field": "cloud_cover", "order": "asc"},
+                ),
+                _node(
+                    "select",
+                    "geo.select_scene",
+                    1120,
+                    160,
+                    input_bindings={"collection": "sort:collection"},
+                    params={"selectionMode": "first", "index": 0},
+                ),
+                _node(
+                    "fetch",
+                    "geo.fetch_scene_as_dataset",
+                    1380,
+                    160,
+                    input_bindings={"scene": "select:scene"},
+                    params={"outputDatasetName": "Queried Scene"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="roi", target="query", source_handle="roi", target_handle="roi"),
-                WorkflowEdge(id="e2", source="query", target="filter", source_handle="collection", target_handle="collection"),
-                WorkflowEdge(id="e3", source="filter", target="sort", source_handle="collection", target_handle="collection"),
-                WorkflowEdge(id="e4", source="sort", target="select", source_handle="collection", target_handle="collection"),
-                WorkflowEdge(id="e5", source="select", target="fetch", source_handle="scene", target_handle="scene"),
+                WorkflowEdge(
+                    id="e1", source="roi", target="query", source_handle="roi", target_handle="roi"
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="query",
+                    target="filter",
+                    source_handle="collection",
+                    target_handle="collection",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="filter",
+                    target="sort",
+                    source_handle="collection",
+                    target_handle="collection",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="sort",
+                    target="select",
+                    source_handle="collection",
+                    target_handle="collection",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="select",
+                    target="fetch",
+                    source_handle="scene",
+                    target_handle="scene",
+                ),
             ],
         ),
     ),
     WorkflowTemplateDefinition(
         id="sample.geo_raster_with_vector_labels",
         label="Geo Raster Samples With Vector Labels",
-        description="Load a geo raster and vector labels, patchify them, split samples, and package a dataset bundle.",
+        description=(
+            "Load a geo raster and vector labels, patchify them, split "
+            "samples, and package a dataset bundle."
+        ),
         tags=["sample", "raster", "vector", "dataset"],
         supported_tasks=["sample_dataset"],
         graph=WorkflowGraph(
             nodes=[
                 _node("image-source", "source.dataset_version", 80, 100),
                 _node("label-source", "source.dataset_version", 80, 320),
-                _node("load-raster", "raster.load_georaster", 300, 100, input_bindings={"dataset": "image-source:dataset"}),
-                _node("patchify", "rgb.patchify_raster", 540, 100, input_bindings={"raster": "load-raster:raster"}),
-                _node("load-features", "vector.load_features", 300, 320, input_bindings={"dataset": "label-source:dataset"}),
-                _node("rasterize-labels", "label.rasterize_features_to_tiles", 800, 220, input_bindings={"tiles": "patchify:tiles", "features": "load-features:features"}),
-                _node("filter-labels", "label.filter_by_coverage", 1060, 220, input_bindings={"labels": "rasterize-labels:labels"}, params={"skipEmptyLabel": False, "minLabelCoverage": 0}),
-                _node("build-samples", "dataset.build_samples", 1320, 180, input_bindings={"tiles": "patchify:tiles", "labels": "filter-labels:labels"}),
-                _node("split-samples", "dataset.split_samples", 1580, 180, input_bindings={"samples": "build-samples:samples"}),
-                _node("package", "artifact.package_dataset_bundle", 1840, 180, input_bindings={"trainSamples": "split-samples:trainSamples", "valSamples": "split-samples:valSamples", "testSamples": "split-samples:testSamples"}),
-                _node("save-artifact", "export.artifact_to_dataset_version", 2100, 180, input_bindings={"artifact": "package:artifact"}, params={"outputDatasetName": "Geo Raster Sample Dataset"}),
+                _node(
+                    "load-raster",
+                    "raster.load_georaster",
+                    300,
+                    100,
+                    input_bindings={"dataset": "image-source:dataset"},
+                ),
+                _node(
+                    "patchify",
+                    "rgb.patchify_raster",
+                    540,
+                    100,
+                    input_bindings={"raster": "load-raster:raster"},
+                ),
+                _node(
+                    "load-features",
+                    "vector.load_features",
+                    300,
+                    320,
+                    input_bindings={"dataset": "label-source:dataset"},
+                ),
+                _node(
+                    "rasterize-labels",
+                    "label.rasterize_features_to_tiles",
+                    800,
+                    220,
+                    input_bindings={
+                        "tiles": "patchify:tiles",
+                        "features": "load-features:features",
+                    },
+                ),
+                _node(
+                    "filter-labels",
+                    "label.filter_by_coverage",
+                    1060,
+                    220,
+                    input_bindings={"labels": "rasterize-labels:labels"},
+                    params={"skipEmptyLabel": False, "minLabelCoverage": 0},
+                ),
+                _node(
+                    "build-samples",
+                    "dataset.build_samples",
+                    1320,
+                    180,
+                    input_bindings={"tiles": "patchify:tiles", "labels": "filter-labels:labels"},
+                ),
+                _node(
+                    "split-samples",
+                    "dataset.split_samples",
+                    1580,
+                    180,
+                    input_bindings={"samples": "build-samples:samples"},
+                ),
+                _node(
+                    "package",
+                    "artifact.package_dataset_bundle",
+                    1840,
+                    180,
+                    input_bindings={
+                        "trainSamples": "split-samples:trainSamples",
+                        "valSamples": "split-samples:valSamples",
+                        "testSamples": "split-samples:testSamples",
+                    },
+                ),
+                _node(
+                    "save-artifact",
+                    "export.artifact_to_dataset_version",
+                    2100,
+                    180,
+                    input_bindings={"artifact": "package:artifact"},
+                    params={"outputDatasetName": "Geo Raster Sample Dataset"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="image-source", target="load-raster", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-raster", target="patchify", source_handle="raster", target_handle="raster"),
-                WorkflowEdge(id="e3", source="label-source", target="load-features", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="patchify", target="rasterize-labels", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e5", source="load-features", target="rasterize-labels", source_handle="features", target_handle="features"),
-                WorkflowEdge(id="e6", source="rasterize-labels", target="filter-labels", source_handle="labels", target_handle="labels"),
-                WorkflowEdge(id="e7", source="patchify", target="build-samples", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e8", source="filter-labels", target="build-samples", source_handle="labels", target_handle="labels"),
-                WorkflowEdge(id="e9", source="build-samples", target="split-samples", source_handle="samples", target_handle="samples"),
-                WorkflowEdge(id="e10", source="split-samples", target="package", source_handle="trainSamples", target_handle="trainSamples"),
-                WorkflowEdge(id="e11", source="split-samples", target="package", source_handle="valSamples", target_handle="valSamples"),
-                WorkflowEdge(id="e12", source="split-samples", target="package", source_handle="testSamples", target_handle="testSamples"),
-                WorkflowEdge(id="e13", source="package", target="save-artifact", source_handle="artifact", target_handle="artifact"),
+                WorkflowEdge(
+                    id="e1",
+                    source="image-source",
+                    target="load-raster",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-raster",
+                    target="patchify",
+                    source_handle="raster",
+                    target_handle="raster",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="label-source",
+                    target="load-features",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="patchify",
+                    target="rasterize-labels",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="load-features",
+                    target="rasterize-labels",
+                    source_handle="features",
+                    target_handle="features",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="rasterize-labels",
+                    target="filter-labels",
+                    source_handle="labels",
+                    target_handle="labels",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="patchify",
+                    target="build-samples",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="filter-labels",
+                    target="build-samples",
+                    source_handle="labels",
+                    target_handle="labels",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="build-samples",
+                    target="split-samples",
+                    source_handle="samples",
+                    target_handle="samples",
+                ),
+                WorkflowEdge(
+                    id="e10",
+                    source="split-samples",
+                    target="package",
+                    source_handle="trainSamples",
+                    target_handle="trainSamples",
+                ),
+                WorkflowEdge(
+                    id="e11",
+                    source="split-samples",
+                    target="package",
+                    source_handle="valSamples",
+                    target_handle="valSamples",
+                ),
+                WorkflowEdge(
+                    id="e12",
+                    source="split-samples",
+                    target="package",
+                    source_handle="testSamples",
+                    target_handle="testSamples",
+                ),
+                WorkflowEdge(
+                    id="e13",
+                    source="package",
+                    target="save-artifact",
+                    source_handle="artifact",
+                    target_handle="artifact",
+                ),
             ],
         ),
         sample_bindings=[
@@ -2360,112 +2985,449 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="sample.image_collection_tiles",
         label="Image Collection Patch Dataset",
-        description="Load normal RGB images, cut them into tiles, and package them as a dataset bundle.",
+        description=(
+            "Load normal RGB images, cut them into tiles, and package them as a dataset bundle."
+        ),
         tags=["sample", "image", "patch", "dataset"],
         supported_tasks=["sample_dataset"],
         graph=WorkflowGraph(
             nodes=[
                 _node("image-source", "source.dataset_version", 80, 160),
-                _node("load-images", "image.load_image_collection", 300, 160, input_bindings={"dataset": "image-source:dataset"}),
-                _node("patchify", "rgb.patchify_image_collection", 560, 160, input_bindings={"images": "load-images:images"}),
-                _node("build-samples", "dataset.build_samples", 820, 160, input_bindings={"tiles": "patchify:tiles"}),
-                _node("package", "artifact.package_dataset_bundle", 1080, 160, input_bindings={"samples": "build-samples:samples"}),
-                _node("save-artifact", "export.artifact_to_dataset_version", 1340, 160, input_bindings={"artifact": "package:artifact"}, params={"outputDatasetName": "Image Tile Dataset"}),
+                _node(
+                    "load-images",
+                    "image.load_image_collection",
+                    300,
+                    160,
+                    input_bindings={"dataset": "image-source:dataset"},
+                ),
+                _node(
+                    "patchify",
+                    "rgb.patchify_image_collection",
+                    560,
+                    160,
+                    input_bindings={"images": "load-images:images"},
+                ),
+                _node(
+                    "build-samples",
+                    "dataset.build_samples",
+                    820,
+                    160,
+                    input_bindings={"tiles": "patchify:tiles"},
+                ),
+                _node(
+                    "package",
+                    "artifact.package_dataset_bundle",
+                    1080,
+                    160,
+                    input_bindings={"samples": "build-samples:samples"},
+                ),
+                _node(
+                    "save-artifact",
+                    "export.artifact_to_dataset_version",
+                    1340,
+                    160,
+                    input_bindings={"artifact": "package:artifact"},
+                    params={"outputDatasetName": "Image Tile Dataset"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="image-source", target="load-images", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-images", target="patchify", source_handle="images", target_handle="images"),
-                WorkflowEdge(id="e3", source="patchify", target="build-samples", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e4", source="build-samples", target="package", source_handle="samples", target_handle="samples"),
-                WorkflowEdge(id="e5", source="package", target="save-artifact", source_handle="artifact", target_handle="artifact"),
+                WorkflowEdge(
+                    id="e1",
+                    source="image-source",
+                    target="load-images",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-images",
+                    target="patchify",
+                    source_handle="images",
+                    target_handle="images",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="patchify",
+                    target="build-samples",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="build-samples",
+                    target="package",
+                    source_handle="samples",
+                    target_handle="samples",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="package",
+                    target="save-artifact",
+                    source_handle="artifact",
+                    target_handle="artifact",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("image-source", datasetVersionId=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "image-source", datasetVersionId=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID
+            ),
         ],
     ),
     WorkflowTemplateDefinition(
         id="sample.image_classification_from_features",
         label="Image Classification Samples From Features",
-        description="Load RGB images, patchify them, project feature class labels to tiles, and package a classification sample dataset.",
+        description=(
+            "Load RGB images, patchify them, project feature class labels to "
+            "tiles, and package a classification sample dataset."
+        ),
         tags=["sample", "image", "classification", "dataset"],
         supported_tasks=["sample_dataset"],
         graph=WorkflowGraph(
             nodes=[
                 _node("image-source", "source.dataset_version", 80, 120),
                 _node("label-source", "source.dataset_version", 80, 340),
-                _node("load-images", "image.load_image_collection", 320, 120, input_bindings={"dataset": "image-source:dataset"}),
-                _node("patchify", "rgb.patchify_image_collection", 580, 120, input_bindings={"images": "load-images:images"}),
-                _node("load-features", "vector.load_features", 320, 340, input_bindings={"dataset": "label-source:dataset"}),
-                _node("annotate", "annotation.project_features_to_tile_classes", 860, 240, input_bindings={"tiles": "patchify:tiles", "features": "load-features:features"}, params={"classProperty": "class"}),
-                _node("build-samples", "dataset.build_samples", 1140, 180, input_bindings={"tiles": "patchify:tiles", "labels": "annotate:annotations"}),
-                _node("split-samples", "dataset.split_samples", 1400, 180, input_bindings={"samples": "build-samples:samples"}),
-                _node("package", "artifact.package_dataset_bundle", 1660, 180, input_bindings={"trainSamples": "split-samples:trainSamples", "valSamples": "split-samples:valSamples", "testSamples": "split-samples:testSamples"}),
-                _node("save-artifact", "export.artifact_to_dataset_version", 1920, 180, input_bindings={"artifact": "package:artifact"}, params={"outputDatasetName": "Image Classification Sample Dataset"}),
+                _node(
+                    "load-images",
+                    "image.load_image_collection",
+                    320,
+                    120,
+                    input_bindings={"dataset": "image-source:dataset"},
+                ),
+                _node(
+                    "patchify",
+                    "rgb.patchify_image_collection",
+                    580,
+                    120,
+                    input_bindings={"images": "load-images:images"},
+                ),
+                _node(
+                    "load-features",
+                    "vector.load_features",
+                    320,
+                    340,
+                    input_bindings={"dataset": "label-source:dataset"},
+                ),
+                _node(
+                    "annotate",
+                    "annotation.project_features_to_tile_classes",
+                    860,
+                    240,
+                    input_bindings={
+                        "tiles": "patchify:tiles",
+                        "features": "load-features:features",
+                    },
+                    params={"classProperty": "class"},
+                ),
+                _node(
+                    "build-samples",
+                    "dataset.build_samples",
+                    1140,
+                    180,
+                    input_bindings={"tiles": "patchify:tiles", "labels": "annotate:annotations"},
+                ),
+                _node(
+                    "split-samples",
+                    "dataset.split_samples",
+                    1400,
+                    180,
+                    input_bindings={"samples": "build-samples:samples"},
+                ),
+                _node(
+                    "package",
+                    "artifact.package_dataset_bundle",
+                    1660,
+                    180,
+                    input_bindings={
+                        "trainSamples": "split-samples:trainSamples",
+                        "valSamples": "split-samples:valSamples",
+                        "testSamples": "split-samples:testSamples",
+                    },
+                ),
+                _node(
+                    "save-artifact",
+                    "export.artifact_to_dataset_version",
+                    1920,
+                    180,
+                    input_bindings={"artifact": "package:artifact"},
+                    params={"outputDatasetName": "Image Classification Sample Dataset"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="image-source", target="load-images", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-images", target="patchify", source_handle="images", target_handle="images"),
-                WorkflowEdge(id="e3", source="label-source", target="load-features", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="patchify", target="annotate", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e5", source="load-features", target="annotate", source_handle="features", target_handle="features"),
-                WorkflowEdge(id="e6", source="patchify", target="build-samples", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e7", source="annotate", target="build-samples", source_handle="annotations", target_handle="labels"),
-                WorkflowEdge(id="e8", source="build-samples", target="split-samples", source_handle="samples", target_handle="samples"),
-                WorkflowEdge(id="e9", source="split-samples", target="package", source_handle="trainSamples", target_handle="trainSamples"),
-                WorkflowEdge(id="e10", source="split-samples", target="package", source_handle="valSamples", target_handle="valSamples"),
-                WorkflowEdge(id="e11", source="split-samples", target="package", source_handle="testSamples", target_handle="testSamples"),
-                WorkflowEdge(id="e12", source="package", target="save-artifact", source_handle="artifact", target_handle="artifact"),
+                WorkflowEdge(
+                    id="e1",
+                    source="image-source",
+                    target="load-images",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-images",
+                    target="patchify",
+                    source_handle="images",
+                    target_handle="images",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="label-source",
+                    target="load-features",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="patchify",
+                    target="annotate",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="load-features",
+                    target="annotate",
+                    source_handle="features",
+                    target_handle="features",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="patchify",
+                    target="build-samples",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="annotate",
+                    target="build-samples",
+                    source_handle="annotations",
+                    target_handle="labels",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="build-samples",
+                    target="split-samples",
+                    source_handle="samples",
+                    target_handle="samples",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="split-samples",
+                    target="package",
+                    source_handle="trainSamples",
+                    target_handle="trainSamples",
+                ),
+                WorkflowEdge(
+                    id="e10",
+                    source="split-samples",
+                    target="package",
+                    source_handle="valSamples",
+                    target_handle="valSamples",
+                ),
+                WorkflowEdge(
+                    id="e11",
+                    source="split-samples",
+                    target="package",
+                    source_handle="testSamples",
+                    target_handle="testSamples",
+                ),
+                WorkflowEdge(
+                    id="e12",
+                    source="package",
+                    target="save-artifact",
+                    source_handle="artifact",
+                    target_handle="artifact",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("image-source", datasetVersionId=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "image-source", datasetVersionId=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID
+            ),
             _sample_binding("label-source", datasetVersionId=SEED_VECTOR_DATASET_VERSION_ID),
         ],
     ),
     WorkflowTemplateDefinition(
         id="sample.instance_polygons_from_features",
         label="Instance Polygon Samples From Features",
-        description="Load RGB images, patchify them, project feature polygons to tiles, and package an instance-segmentation sample dataset.",
+        description=(
+            "Load RGB images, patchify them, project feature polygons to "
+            "tiles, and package an instance-segmentation sample dataset."
+        ),
         tags=["sample", "image", "instance", "dataset"],
         supported_tasks=["sample_dataset"],
         graph=WorkflowGraph(
             nodes=[
                 _node("image-source", "source.dataset_version", 80, 120),
                 _node("label-source", "source.dataset_version", 80, 340),
-                _node("load-images", "image.load_image_collection", 320, 120, input_bindings={"dataset": "image-source:dataset"}),
-                _node("patchify", "rgb.patchify_image_collection", 580, 120, input_bindings={"images": "load-images:images"}),
-                _node("load-features", "vector.load_features", 320, 340, input_bindings={"dataset": "label-source:dataset"}),
-                _node("annotate", "annotation.project_features_to_tile_polygons", 860, 240, input_bindings={"tiles": "patchify:tiles", "features": "load-features:features"}, params={"classProperty": "class"}),
-                _node("build-samples", "dataset.build_samples", 1140, 180, input_bindings={"tiles": "patchify:tiles", "labels": "annotate:annotations"}),
-                _node("split-samples", "dataset.split_samples", 1400, 180, input_bindings={"samples": "build-samples:samples"}),
-                _node("package", "artifact.package_dataset_bundle", 1660, 180, input_bindings={"trainSamples": "split-samples:trainSamples", "valSamples": "split-samples:valSamples", "testSamples": "split-samples:testSamples"}),
-                _node("save-artifact", "export.artifact_to_dataset_version", 1920, 180, input_bindings={"artifact": "package:artifact"}, params={"outputDatasetName": "Instance Polygon Sample Dataset"}),
+                _node(
+                    "load-images",
+                    "image.load_image_collection",
+                    320,
+                    120,
+                    input_bindings={"dataset": "image-source:dataset"},
+                ),
+                _node(
+                    "patchify",
+                    "rgb.patchify_image_collection",
+                    580,
+                    120,
+                    input_bindings={"images": "load-images:images"},
+                ),
+                _node(
+                    "load-features",
+                    "vector.load_features",
+                    320,
+                    340,
+                    input_bindings={"dataset": "label-source:dataset"},
+                ),
+                _node(
+                    "annotate",
+                    "annotation.project_features_to_tile_polygons",
+                    860,
+                    240,
+                    input_bindings={
+                        "tiles": "patchify:tiles",
+                        "features": "load-features:features",
+                    },
+                    params={"classProperty": "class"},
+                ),
+                _node(
+                    "build-samples",
+                    "dataset.build_samples",
+                    1140,
+                    180,
+                    input_bindings={"tiles": "patchify:tiles", "labels": "annotate:annotations"},
+                ),
+                _node(
+                    "split-samples",
+                    "dataset.split_samples",
+                    1400,
+                    180,
+                    input_bindings={"samples": "build-samples:samples"},
+                ),
+                _node(
+                    "package",
+                    "artifact.package_dataset_bundle",
+                    1660,
+                    180,
+                    input_bindings={
+                        "trainSamples": "split-samples:trainSamples",
+                        "valSamples": "split-samples:valSamples",
+                        "testSamples": "split-samples:testSamples",
+                    },
+                ),
+                _node(
+                    "save-artifact",
+                    "export.artifact_to_dataset_version",
+                    1920,
+                    180,
+                    input_bindings={"artifact": "package:artifact"},
+                    params={"outputDatasetName": "Instance Polygon Sample Dataset"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="image-source", target="load-images", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-images", target="patchify", source_handle="images", target_handle="images"),
-                WorkflowEdge(id="e3", source="label-source", target="load-features", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="patchify", target="annotate", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e5", source="load-features", target="annotate", source_handle="features", target_handle="features"),
-                WorkflowEdge(id="e6", source="patchify", target="build-samples", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e7", source="annotate", target="build-samples", source_handle="annotations", target_handle="labels"),
-                WorkflowEdge(id="e8", source="build-samples", target="split-samples", source_handle="samples", target_handle="samples"),
-                WorkflowEdge(id="e9", source="split-samples", target="package", source_handle="trainSamples", target_handle="trainSamples"),
-                WorkflowEdge(id="e10", source="split-samples", target="package", source_handle="valSamples", target_handle="valSamples"),
-                WorkflowEdge(id="e11", source="split-samples", target="package", source_handle="testSamples", target_handle="testSamples"),
-                WorkflowEdge(id="e12", source="package", target="save-artifact", source_handle="artifact", target_handle="artifact"),
+                WorkflowEdge(
+                    id="e1",
+                    source="image-source",
+                    target="load-images",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-images",
+                    target="patchify",
+                    source_handle="images",
+                    target_handle="images",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="label-source",
+                    target="load-features",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="patchify",
+                    target="annotate",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="load-features",
+                    target="annotate",
+                    source_handle="features",
+                    target_handle="features",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="patchify",
+                    target="build-samples",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="annotate",
+                    target="build-samples",
+                    source_handle="annotations",
+                    target_handle="labels",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="build-samples",
+                    target="split-samples",
+                    source_handle="samples",
+                    target_handle="samples",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="split-samples",
+                    target="package",
+                    source_handle="trainSamples",
+                    target_handle="trainSamples",
+                ),
+                WorkflowEdge(
+                    id="e10",
+                    source="split-samples",
+                    target="package",
+                    source_handle="valSamples",
+                    target_handle="valSamples",
+                ),
+                WorkflowEdge(
+                    id="e11",
+                    source="split-samples",
+                    target="package",
+                    source_handle="testSamples",
+                    target_handle="testSamples",
+                ),
+                WorkflowEdge(
+                    id="e12",
+                    source="package",
+                    target="save-artifact",
+                    source_handle="artifact",
+                    target_handle="artifact",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("image-source", datasetVersionId=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "image-source", datasetVersionId=SEED_IMAGE_COLLECTION_DATASET_VERSION_ID
+            ),
             _sample_binding("label-source", datasetVersionId=SEED_VECTOR_DATASET_VERSION_ID),
         ],
     ),
     WorkflowTemplateDefinition(
         id="custom_api.semantic_segmentation_train_predict",
         label="Custom API Semantic Segmentation Train And Predict",
-        description="Build segmentation samples, train a reusable custom API model, then run prediction on a separate raster dataset and export the predictions.",
+        description=(
+            "Build segmentation samples, train a reusable custom API model, "
+            "then run prediction on a separate raster dataset and export the "
+            "predictions."
+        ),
         tags=["custom_api", "training", "prediction", "segmentation"],
         supported_tasks=["sample_dataset", "custom_api_prediction"],
         graph=WorkflowGraph(
@@ -2473,38 +3435,247 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                 _node("train-image-source", "source.dataset_version", 80, 100),
                 _node("label-source", "source.dataset_version", 80, 320),
                 _node("infer-image-source", "source.dataset_version", 80, 620),
-                _node("load-train-raster", "raster.load_georaster", 320, 100, input_bindings={"dataset": "train-image-source:dataset"}),
-                _node("patchify-train", "rgb.patchify_raster", 580, 100, input_bindings={"raster": "load-train-raster:raster"}),
-                _node("load-features", "vector.load_features", 320, 320, input_bindings={"dataset": "label-source:dataset"}),
-                _node("rasterize-labels", "label.rasterize_features_to_tiles", 860, 220, input_bindings={"tiles": "patchify-train:tiles", "features": "load-features:features"}),
-                _node("filter-labels", "label.filter_by_coverage", 1120, 220, input_bindings={"labels": "rasterize-labels:labels"}, params={"skipEmptyLabel": False, "minLabelCoverage": 0}),
-                _node("build-train-samples", "dataset.build_samples", 1380, 180, input_bindings={"tiles": "patchify-train:tiles", "labels": "filter-labels:labels"}),
-                _node("split-samples", "dataset.split_samples", 1640, 180, input_bindings={"samples": "build-train-samples:samples"}),
-                _node("train-model", "custom.api_train_samples", 1920, 180, input_bindings={"trainSamples": "split-samples:trainSamples", "validationSamples": "split-samples:valSamples"}, params={"taskType": "semantic_segmentation", "outputModelName": "Custom API Segmentation Model", "outputModelVersion": "1.0.0", "predictionEndpointUrl": "https://example.com/predict", "trainingEndpointUrl": "https://example.com/train", "authType": "header", "authToken": "secret-token", "authHeaderName": "X-API-Key", "timeoutSeconds": 45, "responseMode": "prediction_masks", "defaultPredictionColumn": "prediction", "callParametersJson": "{\"threshold\": 0.5}"}),
-                _node("load-infer-raster", "raster.load_georaster", 320, 620, input_bindings={"dataset": "infer-image-source:dataset"}),
-                _node("patchify-infer", "rgb.patchify_raster", 580, 620, input_bindings={"raster": "load-infer-raster:raster"}),
-                _node("build-infer-samples", "dataset.build_samples", 860, 620, input_bindings={"tiles": "patchify-infer:tiles"}),
-                _node("predict", "custom.api_predict_samples", 2180, 400, input_bindings={"model": "train-model:model", "samples": "build-infer-samples:samples"}, params={"callParametersJson": "{\"threshold\": 0.5}"}),
-                _node("export-predictions", "export.prediction_set_to_dataset_version", 2440, 400, input_bindings={"predictions": "predict:predictions"}, params={"outputDatasetName": "Segmentation Prediction Output"}),
+                _node(
+                    "load-train-raster",
+                    "raster.load_georaster",
+                    320,
+                    100,
+                    input_bindings={"dataset": "train-image-source:dataset"},
+                ),
+                _node(
+                    "patchify-train",
+                    "rgb.patchify_raster",
+                    580,
+                    100,
+                    input_bindings={"raster": "load-train-raster:raster"},
+                ),
+                _node(
+                    "load-features",
+                    "vector.load_features",
+                    320,
+                    320,
+                    input_bindings={"dataset": "label-source:dataset"},
+                ),
+                _node(
+                    "rasterize-labels",
+                    "label.rasterize_features_to_tiles",
+                    860,
+                    220,
+                    input_bindings={
+                        "tiles": "patchify-train:tiles",
+                        "features": "load-features:features",
+                    },
+                ),
+                _node(
+                    "filter-labels",
+                    "label.filter_by_coverage",
+                    1120,
+                    220,
+                    input_bindings={"labels": "rasterize-labels:labels"},
+                    params={"skipEmptyLabel": False, "minLabelCoverage": 0},
+                ),
+                _node(
+                    "build-train-samples",
+                    "dataset.build_samples",
+                    1380,
+                    180,
+                    input_bindings={
+                        "tiles": "patchify-train:tiles",
+                        "labels": "filter-labels:labels",
+                    },
+                ),
+                _node(
+                    "split-samples",
+                    "dataset.split_samples",
+                    1640,
+                    180,
+                    input_bindings={"samples": "build-train-samples:samples"},
+                ),
+                _node(
+                    "train-model",
+                    "custom.api_train_samples",
+                    1920,
+                    180,
+                    input_bindings={
+                        "trainSamples": "split-samples:trainSamples",
+                        "validationSamples": "split-samples:valSamples",
+                    },
+                    params={
+                        "taskType": "semantic_segmentation",
+                        "outputModelName": "Custom API Segmentation Model",
+                        "outputModelVersion": "1.0.0",
+                        "predictionEndpointUrl": "https://example.com/predict",
+                        "trainingEndpointUrl": "https://example.com/train",
+                        "authType": "header",
+                        "authToken": "secret-token",
+                        "authHeaderName": "X-API-Key",
+                        "timeoutSeconds": 45,
+                        "responseMode": "prediction_masks",
+                        "defaultPredictionColumn": "prediction",
+                        "callParametersJson": '{"threshold": 0.5}',
+                    },
+                ),
+                _node(
+                    "load-infer-raster",
+                    "raster.load_georaster",
+                    320,
+                    620,
+                    input_bindings={"dataset": "infer-image-source:dataset"},
+                ),
+                _node(
+                    "patchify-infer",
+                    "rgb.patchify_raster",
+                    580,
+                    620,
+                    input_bindings={"raster": "load-infer-raster:raster"},
+                ),
+                _node(
+                    "build-infer-samples",
+                    "dataset.build_samples",
+                    860,
+                    620,
+                    input_bindings={"tiles": "patchify-infer:tiles"},
+                ),
+                _node(
+                    "predict",
+                    "custom.api_predict_samples",
+                    2180,
+                    400,
+                    input_bindings={
+                        "model": "train-model:model",
+                        "samples": "build-infer-samples:samples",
+                    },
+                    params={"callParametersJson": '{"threshold": 0.5}'},
+                ),
+                _node(
+                    "export-predictions",
+                    "export.prediction_set_to_dataset_version",
+                    2440,
+                    400,
+                    input_bindings={"predictions": "predict:predictions"},
+                    params={"outputDatasetName": "Segmentation Prediction Output"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="train-image-source", target="load-train-raster", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-train-raster", target="patchify-train", source_handle="raster", target_handle="raster"),
-                WorkflowEdge(id="e3", source="label-source", target="load-features", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="patchify-train", target="rasterize-labels", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e5", source="load-features", target="rasterize-labels", source_handle="features", target_handle="features"),
-                WorkflowEdge(id="e6", source="rasterize-labels", target="filter-labels", source_handle="labels", target_handle="labels"),
-                WorkflowEdge(id="e7", source="patchify-train", target="build-train-samples", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e8", source="filter-labels", target="build-train-samples", source_handle="labels", target_handle="labels"),
-                WorkflowEdge(id="e9", source="build-train-samples", target="split-samples", source_handle="samples", target_handle="samples"),
-                WorkflowEdge(id="e10", source="split-samples", target="train-model", source_handle="trainSamples", target_handle="trainSamples"),
-                WorkflowEdge(id="e11", source="split-samples", target="train-model", source_handle="valSamples", target_handle="validationSamples"),
-                WorkflowEdge(id="e12", source="infer-image-source", target="load-infer-raster", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e13", source="load-infer-raster", target="patchify-infer", source_handle="raster", target_handle="raster"),
-                WorkflowEdge(id="e14", source="patchify-infer", target="build-infer-samples", source_handle="tiles", target_handle="tiles"),
-                WorkflowEdge(id="e15", source="train-model", target="predict", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e16", source="build-infer-samples", target="predict", source_handle="samples", target_handle="samples"),
-                WorkflowEdge(id="e17", source="predict", target="export-predictions", source_handle="predictions", target_handle="predictions"),
+                WorkflowEdge(
+                    id="e1",
+                    source="train-image-source",
+                    target="load-train-raster",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-train-raster",
+                    target="patchify-train",
+                    source_handle="raster",
+                    target_handle="raster",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="label-source",
+                    target="load-features",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="patchify-train",
+                    target="rasterize-labels",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="load-features",
+                    target="rasterize-labels",
+                    source_handle="features",
+                    target_handle="features",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="rasterize-labels",
+                    target="filter-labels",
+                    source_handle="labels",
+                    target_handle="labels",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="patchify-train",
+                    target="build-train-samples",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="filter-labels",
+                    target="build-train-samples",
+                    source_handle="labels",
+                    target_handle="labels",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="build-train-samples",
+                    target="split-samples",
+                    source_handle="samples",
+                    target_handle="samples",
+                ),
+                WorkflowEdge(
+                    id="e10",
+                    source="split-samples",
+                    target="train-model",
+                    source_handle="trainSamples",
+                    target_handle="trainSamples",
+                ),
+                WorkflowEdge(
+                    id="e11",
+                    source="split-samples",
+                    target="train-model",
+                    source_handle="valSamples",
+                    target_handle="validationSamples",
+                ),
+                WorkflowEdge(
+                    id="e12",
+                    source="infer-image-source",
+                    target="load-infer-raster",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e13",
+                    source="load-infer-raster",
+                    target="patchify-infer",
+                    source_handle="raster",
+                    target_handle="raster",
+                ),
+                WorkflowEdge(
+                    id="e14",
+                    source="patchify-infer",
+                    target="build-infer-samples",
+                    source_handle="tiles",
+                    target_handle="tiles",
+                ),
+                WorkflowEdge(
+                    id="e15",
+                    source="train-model",
+                    target="predict",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e16",
+                    source="build-infer-samples",
+                    target="predict",
+                    source_handle="samples",
+                    target_handle="samples",
+                ),
+                WorkflowEdge(
+                    id="e17",
+                    source="predict",
+                    target="export-predictions",
+                    source_handle="predictions",
+                    target_handle="predictions",
+                ),
             ],
         ),
         sample_bindings=[
@@ -2516,7 +3687,11 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="control.conditional_table_source",
         label="Conditional Table Source",
-        description="Use compare, not, guard, and coalesce primitives to choose one of two table datasets before loading and exporting the selected table.",
+        description=(
+            "Use compare, not, guard, and coalesce primitives to choose one of "
+            "two table datasets before loading and exporting the selected "
+            "table."
+        ),
         tags=["control", "branch", "tabular"],
         supported_tasks=["control_flow", "generic_control", "tabular_prediction"],
         graph=WorkflowGraph(
@@ -2530,7 +3705,13 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                     input_bindings={"left": "flag:value"},
                     params={"operator": "eq", "rightValueJson": "true"},
                 ),
-                _node("is-fallback", "control.not", 560, 280, input_bindings={"value": "is-primary:result"}),
+                _node(
+                    "is-fallback",
+                    "control.not",
+                    560,
+                    280,
+                    input_bindings={"value": "is-primary:result"},
+                ),
                 _node("primary-source", "source.dataset_version", 80, 20),
                 _node("fallback-source", "source.dataset_version", 80, 380),
                 _node(
@@ -2580,27 +3761,95 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                 ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="flag", target="is-primary", source_handle="value", target_handle="left"),
-                WorkflowEdge(id="e2", source="is-primary", target="is-fallback", source_handle="result", target_handle="value"),
-                WorkflowEdge(id="e3", source="primary-source", target="primary-guard", source_handle="dataset", target_handle="payload"),
-                WorkflowEdge(id="e4", source="is-primary", target="primary-guard", source_handle="result", target_handle="enabled"),
-                WorkflowEdge(id="e5", source="fallback-source", target="fallback-guard", source_handle="dataset", target_handle="payload"),
-                WorkflowEdge(id="e6", source="is-fallback", target="fallback-guard", source_handle="result", target_handle="enabled"),
-                WorkflowEdge(id="e7", source="primary-guard", target="selected-source", source_handle="payload", target_handle="primary"),
-                WorkflowEdge(id="e8", source="fallback-guard", target="selected-source", source_handle="payload", target_handle="fallback"),
-                WorkflowEdge(id="e9", source="selected-source", target="load-table", source_handle="output", target_handle="dataset"),
-                WorkflowEdge(id="e10", source="load-table", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="flag",
+                    target="is-primary",
+                    source_handle="value",
+                    target_handle="left",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="is-primary",
+                    target="is-fallback",
+                    source_handle="result",
+                    target_handle="value",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="primary-source",
+                    target="primary-guard",
+                    source_handle="dataset",
+                    target_handle="payload",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="is-primary",
+                    target="primary-guard",
+                    source_handle="result",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="fallback-source",
+                    target="fallback-guard",
+                    source_handle="dataset",
+                    target_handle="payload",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="is-fallback",
+                    target="fallback-guard",
+                    source_handle="result",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="primary-guard",
+                    target="selected-source",
+                    source_handle="payload",
+                    target_handle="primary",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="fallback-guard",
+                    target="selected-source",
+                    source_handle="payload",
+                    target_handle="fallback",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="selected-source",
+                    target="load-table",
+                    source_handle="output",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e10",
+                    source="load-table",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("primary-source", datasetVersionId=SEED_TABULAR_INPUT_DATASET_VERSION_ID),
-            _sample_binding("fallback-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "primary-source", datasetVersionId=SEED_TABULAR_INPUT_DATASET_VERSION_ID
+            ),
+            _sample_binding(
+                "fallback-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            ),
         ],
     ),
     WorkflowTemplateDefinition(
         id="control.subgraph_table_gate",
         label="Subgraph Table Gate",
-        description="Wrap a guarded dataset branch inside workflow.call_subgraph, then load and export the selected table through the derived subgraph interface.",
+        description=(
+            "Wrap a guarded dataset branch inside workflow.call_subgraph, then "
+            "load and export the selected table through the derived subgraph "
+            "interface."
+        ),
         tags=["control", "subgraph", "tabular"],
         supported_tasks=["control_flow", "generic_control", "tabular_prediction"],
         graph=WorkflowGraph(
@@ -2639,7 +3888,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 260},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                output_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "dataset",
@@ -2665,11 +3916,16 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 620, "y": 180},
                                 params={},
                                 input_bindings={"dataset": "guard:payload"},
-                                input_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                input_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 input_contracts=[
                                     _contract(
                                         "dataset",
-                                        "Dataset version handle emitted by the guarded subgraph branch.",
+                                        (
+                                            "Dataset version handle emitted by "
+                                            "the guarded subgraph branch."
+                                        ),
                                         dataset_kinds=["table"],
                                         file_formats=["csv"],
                                     )
@@ -2677,9 +3933,27 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                             ),
                         ],
                         edges=[
-                            WorkflowEdge(id="se1", source="sub-enabled", target="guard", source_handle="enabled", target_handle="enabled"),
-                            WorkflowEdge(id="se2", source="sub-dataset", target="guard", source_handle="dataset", target_handle="payload"),
-                            WorkflowEdge(id="se3", source="guard", target="sub-output", source_handle="payload", target_handle="dataset"),
+                            WorkflowEdge(
+                                id="se1",
+                                source="sub-enabled",
+                                target="guard",
+                                source_handle="enabled",
+                                target_handle="enabled",
+                            ),
+                            WorkflowEdge(
+                                id="se2",
+                                source="sub-dataset",
+                                target="guard",
+                                source_handle="dataset",
+                                target_handle="payload",
+                            ),
+                            WorkflowEdge(
+                                id="se3",
+                                source="guard",
+                                target="sub-output",
+                                source_handle="payload",
+                                target_handle="dataset",
+                            ),
                         ],
                     ),
                 ),
@@ -2700,10 +3974,34 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                 ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="enabled", target="branch", source_handle="value", target_handle="enabled"),
-                WorkflowEdge(id="e2", source="table-source", target="branch", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e3", source="branch", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="load-table", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="enabled",
+                    target="branch",
+                    source_handle="value",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="table-source",
+                    target="branch",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="branch",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="load-table",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
@@ -2713,7 +4011,10 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="control.for_each_collect_values",
         label="For Each Collect Values",
-        description="Iterate over a JSON value list with control.for_each and inspect the aggregated item and index outputs from the loop body.",
+        description=(
+            "Iterate over a JSON value list with control.for_each and inspect "
+            "the aggregated item and index outputs from the loop body."
+        ),
         tags=["control", "loop", "value_list"],
         supported_tasks=["control_flow", "generic_control"],
         graph=WorkflowGraph(
@@ -2739,7 +4040,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 80},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port(FOR_EACH_ITEM_PORT_KEY, "Item", "value", required=True)],
+                                output_defs=[
+                                    _port(FOR_EACH_ITEM_PORT_KEY, "Item", "value", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         FOR_EACH_ITEM_PORT_KEY,
@@ -2753,7 +4056,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 240},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port(FOR_EACH_INDEX_PORT_KEY, "Index", "value", required=True)],
+                                output_defs=[
+                                    _port(FOR_EACH_INDEX_PORT_KEY, "Index", "value", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         FOR_EACH_INDEX_PORT_KEY,
@@ -2826,13 +4131,18 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="control.if_else_table_subgraphs",
         label="If Else Table Subgraphs",
-        description="Use two workflow.call_subgraph branches to model a strict if/else table selection before loading and exporting the chosen table.",
+        description=(
+            "Use two workflow.call_subgraph branches to model a strict if/else "
+            "table selection before loading and exporting the chosen table."
+        ),
         tags=["control", "branch", "subgraph", "tabular"],
         supported_tasks=["control_flow", "generic_control", "tabular_prediction"],
         graph=WorkflowGraph(
             nodes=[
                 _node("flag", "control.boolean_literal", 80, 220, params={"value": True}),
-                _node("is-fallback", "control.not", 320, 360, input_bindings={"value": "flag:value"}),
+                _node(
+                    "is-fallback", "control.not", 320, 360, input_bindings={"value": "flag:value"}
+                ),
                 _node("primary-source", "source.dataset_version", 80, 80),
                 _node("fallback-source", "source.dataset_version", 80, 520),
                 WorkflowNode(
@@ -2867,7 +4177,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 240},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                output_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "dataset",
@@ -2893,7 +4205,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 620, "y": 160},
                                 params={},
                                 input_bindings={"dataset": "guard:payload"},
-                                input_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                input_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 input_contracts=[
                                     _contract(
                                         "dataset",
@@ -2961,7 +4275,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 240},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                output_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "dataset",
@@ -2987,7 +4303,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 620, "y": 160},
                                 params={},
                                 input_bindings={"dataset": "guard:payload"},
-                                input_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                input_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 input_contracts=[
                                     _contract(
                                         "dataset",
@@ -3050,32 +4368,100 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                 ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="flag", target="is-fallback", source_handle="value", target_handle="value"),
-                WorkflowEdge(id="e2", source="flag", target="then-branch", source_handle="value", target_handle="enabled"),
-                WorkflowEdge(id="e3", source="primary-source", target="then-branch", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="is-fallback", target="else-branch", source_handle="result", target_handle="enabled"),
-                WorkflowEdge(id="e5", source="fallback-source", target="else-branch", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e6", source="then-branch", target="selected-dataset", source_handle="dataset", target_handle="primary"),
-                WorkflowEdge(id="e7", source="else-branch", target="selected-dataset", source_handle="dataset", target_handle="fallback"),
-                WorkflowEdge(id="e8", source="selected-dataset", target="load-table", source_handle="output", target_handle="dataset"),
-                WorkflowEdge(id="e9", source="load-table", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="flag",
+                    target="is-fallback",
+                    source_handle="value",
+                    target_handle="value",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="flag",
+                    target="then-branch",
+                    source_handle="value",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="primary-source",
+                    target="then-branch",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="is-fallback",
+                    target="else-branch",
+                    source_handle="result",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="fallback-source",
+                    target="else-branch",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="then-branch",
+                    target="selected-dataset",
+                    source_handle="dataset",
+                    target_handle="primary",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="else-branch",
+                    target="selected-dataset",
+                    source_handle="dataset",
+                    target_handle="fallback",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="selected-dataset",
+                    target="load-table",
+                    source_handle="output",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="load-table",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("primary-source", datasetVersionId=SEED_TABULAR_INPUT_DATASET_VERSION_ID),
-            _sample_binding("fallback-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "primary-source", datasetVersionId=SEED_TABULAR_INPUT_DATASET_VERSION_ID
+            ),
+            _sample_binding(
+                "fallback-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            ),
         ],
     ),
     WorkflowTemplateDefinition(
         id="control.if_else_sample_prediction_subgraphs",
         label="If Else Sample Prediction Subgraphs",
-        description="Choose between two raster-to-prediction subgraphs, then merge the selected exported prediction dataset handle.",
+        description=(
+            "Choose between two raster-to-prediction subgraphs, then merge the "
+            "selected exported prediction dataset handle."
+        ),
         tags=["control", "branch", "subgraph", "samples", "prediction"],
-        supported_tasks=["control_flow", "generic_control", "custom_api_prediction", "sample_dataset"],
+        supported_tasks=[
+            "control_flow",
+            "generic_control",
+            "custom_api_prediction",
+            "sample_dataset",
+        ],
         graph=WorkflowGraph(
             nodes=[
                 _node("flag", "control.boolean_literal", 80, 320, params={"value": True}),
-                _node("is-fallback", "control.not", 320, 460, input_bindings={"value": "flag:value"}),
+                _node(
+                    "is-fallback", "control.not", 320, 460, input_bindings={"value": "flag:value"}
+                ),
                 _node("primary-source", "source.dataset_version", 80, 80),
                 _node("fallback-source", "source.dataset_version", 80, 620),
                 _node("model-source", "source.model_version", 80, 820),
@@ -3112,7 +4498,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 260},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                output_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "dataset",
@@ -3128,7 +4516,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 440},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("model", "Model", "model_version", required=True)],
+                                output_defs=[
+                                    _port("model", "Model", "model_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "model",
@@ -3200,7 +4590,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 1840, "y": 160},
                                 params={},
                                 input_bindings={"dataset": "export-predictions:dataset"},
-                                input_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                input_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 input_contracts=[
                                     _contract(
                                         "dataset",
@@ -3309,7 +4701,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 260},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                output_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "dataset",
@@ -3325,7 +4719,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 40, "y": 440},
                                 params={},
                                 input_bindings={},
-                                output_defs=[_port("model", "Model", "model_version", required=True)],
+                                output_defs=[
+                                    _port("model", "Model", "model_version", required=True)
+                                ],
                                 output_contracts=[
                                     _contract(
                                         "model",
@@ -3397,7 +4793,9 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                                 position={"x": 1840, "y": 160},
                                 params={},
                                 input_bindings={"dataset": "export-predictions:dataset"},
-                                input_defs=[_port("dataset", "Dataset", "dataset_version", required=True)],
+                                input_defs=[
+                                    _port("dataset", "Dataset", "dataset_version", required=True)
+                                ],
                                 input_contracts=[
                                     _contract(
                                         "dataset",
@@ -3485,15 +4883,69 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                 ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="flag", target="is-fallback", source_handle="value", target_handle="value"),
-                WorkflowEdge(id="e2", source="flag", target="then-branch", source_handle="value", target_handle="enabled"),
-                WorkflowEdge(id="e3", source="primary-source", target="then-branch", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e4", source="model-source", target="then-branch", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e5", source="is-fallback", target="else-branch", source_handle="result", target_handle="enabled"),
-                WorkflowEdge(id="e6", source="fallback-source", target="else-branch", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e7", source="model-source", target="else-branch", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e8", source="then-branch", target="selected-dataset", source_handle="dataset", target_handle="primary"),
-                WorkflowEdge(id="e9", source="else-branch", target="selected-dataset", source_handle="dataset", target_handle="fallback"),
+                WorkflowEdge(
+                    id="e1",
+                    source="flag",
+                    target="is-fallback",
+                    source_handle="value",
+                    target_handle="value",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="flag",
+                    target="then-branch",
+                    source_handle="value",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="primary-source",
+                    target="then-branch",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="model-source",
+                    target="then-branch",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="is-fallback",
+                    target="else-branch",
+                    source_handle="result",
+                    target_handle="enabled",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="fallback-source",
+                    target="else-branch",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="model-source",
+                    target="else-branch",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="then-branch",
+                    target="selected-dataset",
+                    source_handle="dataset",
+                    target_handle="primary",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="else-branch",
+                    target="selected-dataset",
+                    source_handle="dataset",
+                    target_handle="fallback",
+                ),
             ],
         ),
         sample_bindings=[
@@ -3505,20 +4957,38 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="tabular.linear_regression_training",
         label="Linear Regression Training",
-        description="Load a CSV table, split it, train a linear regression model, and save the trained model.",
+        description=(
+            "Load a CSV table, split it, train a linear regression model, and "
+            "save the trained model."
+        ),
         tags=["tabular", "training", "linear_regression"],
         supported_tasks=["tabular_training"],
         graph=WorkflowGraph(
             nodes=[
                 _node("table-source", "source.dataset_version", 80, 180),
-                _node("load-table", "table.load_csv", 300, 180, input_bindings={"dataset": "table-source:dataset"}),
-                _node("split-table", "table.train_test_split", 540, 180, input_bindings={"table": "load-table:table"}),
+                _node(
+                    "load-table",
+                    "table.load_csv",
+                    300,
+                    180,
+                    input_bindings={"dataset": "table-source:dataset"},
+                ),
+                _node(
+                    "split-table",
+                    "table.train_test_split",
+                    540,
+                    180,
+                    input_bindings={"table": "load-table:table"},
+                ),
                 _node(
                     "train-model",
                     "tabular.train_regression_model",
                     800,
                     180,
-                    input_bindings={"trainTable": "split-table:trainTable", "testTable": "split-table:testTable"},
+                    input_bindings={
+                        "trainTable": "split-table:trainTable",
+                        "testTable": "split-table:testTable",
+                    },
                     params={
                         "algorithm": "linear_regression",
                         "featureColumns": "feature_a, feature_b",
@@ -3526,14 +4996,50 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                         "hyperparametersJson": '{"fitIntercept": true, "positive": false}',
                     },
                 ),
-                _node("save-model", "model.save_trained_model", 1080, 180, input_bindings={"model": "train-model:model"}),
+                _node(
+                    "save-model",
+                    "model.save_trained_model",
+                    1080,
+                    180,
+                    input_bindings={"model": "train-model:model"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="table-source", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-table", target="split-table", source_handle="table", target_handle="table"),
-                WorkflowEdge(id="e3", source="split-table", target="train-model", source_handle="trainTable", target_handle="trainTable"),
-                WorkflowEdge(id="e4", source="split-table", target="train-model", source_handle="testTable", target_handle="testTable"),
-                WorkflowEdge(id="e5", source="train-model", target="save-model", source_handle="model", target_handle="model"),
+                WorkflowEdge(
+                    id="e1",
+                    source="table-source",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-table",
+                    target="split-table",
+                    source_handle="table",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="split-table",
+                    target="train-model",
+                    source_handle="trainTable",
+                    target_handle="trainTable",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="split-table",
+                    target="train-model",
+                    source_handle="testTable",
+                    target_handle="testTable",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="train-model",
+                    target="save-model",
+                    source_handle="model",
+                    target_handle="model",
+                ),
             ],
         ),
         sample_bindings=[
@@ -3543,14 +5049,22 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
     WorkflowTemplateDefinition(
         id="tabular.prediction",
         label="Linear Regression Prediction",
-        description="Load a CSV table, run a linear regression model, and export prediction output.",
+        description=(
+            "Load a CSV table, run a linear regression model, and export prediction output."
+        ),
         tags=["tabular", "prediction", "linear_regression"],
         supported_tasks=["tabular_prediction"],
         graph=WorkflowGraph(
             nodes=[
                 _node("table-source", "source.dataset_version", 80, 180),
                 _node("model-source", "source.model_version", 80, 360),
-                _node("load-table", "table.load_csv", 300, 180, input_bindings={"dataset": "table-source:dataset"}),
+                _node(
+                    "load-table",
+                    "table.load_csv",
+                    300,
+                    180,
+                    input_bindings={"dataset": "table-source:dataset"},
+                ),
                 _node(
                     "predict",
                     "tabular.predict_model",
@@ -3562,17 +5076,50 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                         "runtimeParametersJson": '{"roundDigits": 4}',
                     },
                 ),
-                _node("export-table", "export.table", 840, 180, input_bindings={"input": "predict:table"}, params={"outputDatasetName": "Prediction Output"}),
+                _node(
+                    "export-table",
+                    "export.table",
+                    840,
+                    180,
+                    input_bindings={"input": "predict:table"},
+                    params={"outputDatasetName": "Prediction Output"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="table-source", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="model-source", target="predict", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e3", source="load-table", target="predict", source_handle="table", target_handle="table"),
-                WorkflowEdge(id="e4", source="predict", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="table-source",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="model-source",
+                    target="predict",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="load-table",
+                    target="predict",
+                    source_handle="table",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="predict",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            ),
             _sample_binding("model-source", modelVersionId=SEED_LINEAR_MODEL_VERSION_ID),
         ],
     ),
@@ -3586,7 +5133,13 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
             nodes=[
                 _node("table-source", "source.dataset_version", 80, 180),
                 _node("model-source", "source.model_version", 80, 360),
-                _node("load-table", "table.load_csv", 300, 180, input_bindings={"dataset": "table-source:dataset"}),
+                _node(
+                    "load-table",
+                    "table.load_csv",
+                    300,
+                    180,
+                    input_bindings={"dataset": "table-source:dataset"},
+                ),
                 _node(
                     "predict",
                     "tabular.predict_model",
@@ -3598,31 +5151,72 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                         "runtimeParametersJson": '{"roundDigits": 4, "cacheSize": 200}',
                     },
                 ),
-                _node("export-table", "export.table", 840, 180, input_bindings={"input": "predict:table"}, params={"outputDatasetName": "Prediction Output"}),
+                _node(
+                    "export-table",
+                    "export.table",
+                    840,
+                    180,
+                    input_bindings={"input": "predict:table"},
+                    params={"outputDatasetName": "Prediction Output"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="table-source", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="model-source", target="predict", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e3", source="load-table", target="predict", source_handle="table", target_handle="table"),
-                WorkflowEdge(id="e4", source="predict", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="table-source",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="model-source",
+                    target="predict",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="load-table",
+                    target="predict",
+                    source_handle="table",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="predict",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            ),
             _sample_binding("model-source", modelVersionId=SEED_SVM_MODEL_VERSION_ID),
         ],
     ),
     WorkflowTemplateDefinition(
         id="tabular.random_forest_prediction",
         label="Random Forest Prediction",
-        description="Load a CSV table, run a random forest regression model, and export prediction output.",
+        description=(
+            "Load a CSV table, run a random forest regression model, and export prediction output."
+        ),
         tags=["tabular", "prediction", "random_forest_regression"],
         supported_tasks=["tabular_prediction"],
         graph=WorkflowGraph(
             nodes=[
                 _node("table-source", "source.dataset_version", 80, 180),
                 _node("model-source", "source.model_version", 80, 360),
-                _node("load-table", "table.load_csv", 300, 180, input_bindings={"dataset": "table-source:dataset"}),
+                _node(
+                    "load-table",
+                    "table.load_csv",
+                    300,
+                    180,
+                    input_bindings={"dataset": "table-source:dataset"},
+                ),
                 _node(
                     "predict",
                     "tabular.predict_model",
@@ -3634,53 +5228,149 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                         "runtimeParametersJson": '{"roundDigits": 4, "nJobs": 1}',
                     },
                 ),
-                _node("export-table", "export.table", 840, 180, input_bindings={"input": "predict:table"}, params={"outputDatasetName": "Prediction Output"}),
+                _node(
+                    "export-table",
+                    "export.table",
+                    840,
+                    180,
+                    input_bindings={"input": "predict:table"},
+                    params={"outputDatasetName": "Prediction Output"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="table-source", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="model-source", target="predict", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e3", source="load-table", target="predict", source_handle="table", target_handle="table"),
-                WorkflowEdge(id="e4", source="predict", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="table-source",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="model-source",
+                    target="predict",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="load-table",
+                    target="predict",
+                    source_handle="table",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="predict",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID),
+            _sample_binding(
+                "table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            ),
             _sample_binding("model-source", modelVersionId=SEED_RANDOM_FOREST_MODEL_VERSION_ID),
         ],
     ),
     WorkflowTemplateDefinition(
         id="tabular.validation",
         label="Regression Validation",
-        description="Load prediction and ground-truth CSV tables, compute regression metrics, and export the report.",
+        description=(
+            "Load prediction and ground-truth CSV tables, compute regression "
+            "metrics, and export the report."
+        ),
         tags=["tabular", "validation", "metrics"],
         supported_tasks=["tabular_validation"],
         graph=WorkflowGraph(
             nodes=[
                 _node("prediction-source", "source.dataset_version", 80, 120),
                 _node("ground-truth-source", "source.dataset_version", 80, 320),
-                _node("load-prediction", "table.load_csv", 320, 120, input_bindings={"dataset": "prediction-source:dataset"}),
-                _node("load-ground-truth", "table.load_csv", 320, 320, input_bindings={"dataset": "ground-truth-source:dataset"}),
+                _node(
+                    "load-prediction",
+                    "table.load_csv",
+                    320,
+                    120,
+                    input_bindings={"dataset": "prediction-source:dataset"},
+                ),
+                _node(
+                    "load-ground-truth",
+                    "table.load_csv",
+                    320,
+                    320,
+                    input_bindings={"dataset": "ground-truth-source:dataset"},
+                ),
                 _node(
                     "validate",
                     "metrics.validate_regression",
                     620,
                     220,
-                    input_bindings={"predictionTable": "load-prediction:table", "groundTruthTable": "load-ground-truth:table"},
-                    params={"predictionColumn": "prediction", "groundTruthColumn": "target", "metrics": ["r2", "rmse", "mae"]},
+                    input_bindings={
+                        "predictionTable": "load-prediction:table",
+                        "groundTruthTable": "load-ground-truth:table",
+                    },
+                    params={
+                        "predictionColumn": "prediction",
+                        "groundTruthColumn": "target",
+                        "metrics": ["r2", "rmse", "mae"],
+                    },
                 ),
-                _node("export-metrics", "export.metrics", 920, 220, input_bindings={"input": "validate:report"}, params={"outputDatasetName": "Validation Metrics", "format": "json"}),
+                _node(
+                    "export-metrics",
+                    "export.metrics",
+                    920,
+                    220,
+                    input_bindings={"input": "validate:report"},
+                    params={"outputDatasetName": "Validation Metrics", "format": "json"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="prediction-source", target="load-prediction", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="ground-truth-source", target="load-ground-truth", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e3", source="load-prediction", target="validate", source_handle="table", target_handle="predictionTable"),
-                WorkflowEdge(id="e4", source="load-ground-truth", target="validate", source_handle="table", target_handle="groundTruthTable"),
-                WorkflowEdge(id="e5", source="validate", target="export-metrics", source_handle="report", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="prediction-source",
+                    target="load-prediction",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="ground-truth-source",
+                    target="load-ground-truth",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="load-prediction",
+                    target="validate",
+                    source_handle="table",
+                    target_handle="predictionTable",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="load-ground-truth",
+                    target="validate",
+                    source_handle="table",
+                    target_handle="groundTruthTable",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="validate",
+                    target="export-metrics",
+                    source_handle="report",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("prediction-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID),
-            _sample_binding("ground-truth-source", datasetVersionId=SEED_TABULAR_GROUND_TRUTH_DATASET_VERSION_ID),
+            _sample_binding(
+                "prediction-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            ),
+            _sample_binding(
+                "ground-truth-source", datasetVersionId=SEED_TABULAR_GROUND_TRUTH_DATASET_VERSION_ID
+            ),
         ],
     ),
     WorkflowTemplateDefinition(
@@ -3692,7 +5382,13 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
         graph=WorkflowGraph(
             nodes=[
                 _node("table-source", "source.dataset_version", 80, 180),
-                _node("load-table", "table.load_csv", 300, 180, input_bindings={"dataset": "table-source:dataset"}),
+                _node(
+                    "load-table",
+                    "table.load_csv",
+                    300,
+                    180,
+                    input_bindings={"dataset": "table-source:dataset"},
+                ),
                 _node(
                     "predict",
                     "custom.api_predict",
@@ -3701,44 +5397,176 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
                     input_bindings={"table": "load-table:table"},
                     params={"predictionColumn": "prediction", "callParametersJson": "{}"},
                 ),
-                _node("export-table", "export.table", 840, 180, input_bindings={"input": "predict:table"}, params={"outputDatasetName": "Prediction Output"}),
+                _node(
+                    "export-table",
+                    "export.table",
+                    840,
+                    180,
+                    input_bindings={"input": "predict:table"},
+                    params={"outputDatasetName": "Prediction Output"},
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="table-source", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-table", target="predict", source_handle="table", target_handle="table"),
-                WorkflowEdge(id="e3", source="predict", target="export-table", source_handle="table", target_handle="input"),
+                WorkflowEdge(
+                    id="e1",
+                    source="table-source",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-table",
+                    target="predict",
+                    source_handle="table",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="predict",
+                    target="export-table",
+                    source_handle="table",
+                    target_handle="input",
+                ),
             ],
         ),
         sample_bindings=[
-            _sample_binding("table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID)
+            _sample_binding(
+                "table-source", datasetVersionId=SEED_TABULAR_PREDICTION_DATASET_VERSION_ID
+            )
         ],
     ),
     WorkflowTemplateDefinition(
         id="tabular.train_validate_regression",
         label="Tabular Train And Validate",
-        description="Load a CSV table, split it, train a regression model, validate, and export outputs.",
+        description=(
+            "Load a CSV table, split it, train a regression model, validate, and export outputs."
+        ),
         tags=["tabular", "training", "validation"],
         supported_tasks=["tabular_training", "tabular_validation"],
         graph=WorkflowGraph(
             nodes=[
                 _node("table-source", "source.dataset_version", 80, 180),
-                _node("load-table", "table.load_csv", 300, 180, input_bindings={"dataset": "table-source:dataset"}),
-                _node("split-table", "table.train_test_split", 540, 180, input_bindings={"table": "load-table:table"}),
-                _node("train-model", "tabular.train_regression_model", 800, 140, input_bindings={"trainTable": "split-table:trainTable", "testTable": "split-table:testTable"}, params={"algorithm": "linear_regression", "featureColumns": "feature_a, feature_b", "targetColumn": "target", "hyperparametersJson": "{}"}),
-                _node("save-model", "model.save_trained_model", 1080, 80, input_bindings={"model": "train-model:model"}),
-                _node("predict", "tabular.predict_model", 1080, 240, input_bindings={"model": "save-model:model", "table": "split-table:testTable"}, params={"predictionColumn": "prediction", "runtimeParametersJson": "{}"}),
-                _node("validate", "metrics.validate_regression", 1360, 240, input_bindings={"predictionTable": "predict:table", "groundTruthTable": "split-table:testTable"}),
+                _node(
+                    "load-table",
+                    "table.load_csv",
+                    300,
+                    180,
+                    input_bindings={"dataset": "table-source:dataset"},
+                ),
+                _node(
+                    "split-table",
+                    "table.train_test_split",
+                    540,
+                    180,
+                    input_bindings={"table": "load-table:table"},
+                ),
+                _node(
+                    "train-model",
+                    "tabular.train_regression_model",
+                    800,
+                    140,
+                    input_bindings={
+                        "trainTable": "split-table:trainTable",
+                        "testTable": "split-table:testTable",
+                    },
+                    params={
+                        "algorithm": "linear_regression",
+                        "featureColumns": "feature_a, feature_b",
+                        "targetColumn": "target",
+                        "hyperparametersJson": "{}",
+                    },
+                ),
+                _node(
+                    "save-model",
+                    "model.save_trained_model",
+                    1080,
+                    80,
+                    input_bindings={"model": "train-model:model"},
+                ),
+                _node(
+                    "predict",
+                    "tabular.predict_model",
+                    1080,
+                    240,
+                    input_bindings={"model": "save-model:model", "table": "split-table:testTable"},
+                    params={"predictionColumn": "prediction", "runtimeParametersJson": "{}"},
+                ),
+                _node(
+                    "validate",
+                    "metrics.validate_regression",
+                    1360,
+                    240,
+                    input_bindings={
+                        "predictionTable": "predict:table",
+                        "groundTruthTable": "split-table:testTable",
+                    },
+                ),
             ],
             edges=[
-                WorkflowEdge(id="e1", source="table-source", target="load-table", source_handle="dataset", target_handle="dataset"),
-                WorkflowEdge(id="e2", source="load-table", target="split-table", source_handle="table", target_handle="table"),
-                WorkflowEdge(id="e3", source="split-table", target="train-model", source_handle="trainTable", target_handle="trainTable"),
-                WorkflowEdge(id="e4", source="split-table", target="train-model", source_handle="testTable", target_handle="testTable"),
-                WorkflowEdge(id="e5", source="train-model", target="save-model", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e6", source="save-model", target="predict", source_handle="model", target_handle="model"),
-                WorkflowEdge(id="e7", source="split-table", target="predict", source_handle="testTable", target_handle="table"),
-                WorkflowEdge(id="e8", source="predict", target="validate", source_handle="table", target_handle="predictionTable"),
-                WorkflowEdge(id="e9", source="split-table", target="validate", source_handle="testTable", target_handle="groundTruthTable"),
+                WorkflowEdge(
+                    id="e1",
+                    source="table-source",
+                    target="load-table",
+                    source_handle="dataset",
+                    target_handle="dataset",
+                ),
+                WorkflowEdge(
+                    id="e2",
+                    source="load-table",
+                    target="split-table",
+                    source_handle="table",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e3",
+                    source="split-table",
+                    target="train-model",
+                    source_handle="trainTable",
+                    target_handle="trainTable",
+                ),
+                WorkflowEdge(
+                    id="e4",
+                    source="split-table",
+                    target="train-model",
+                    source_handle="testTable",
+                    target_handle="testTable",
+                ),
+                WorkflowEdge(
+                    id="e5",
+                    source="train-model",
+                    target="save-model",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e6",
+                    source="save-model",
+                    target="predict",
+                    source_handle="model",
+                    target_handle="model",
+                ),
+                WorkflowEdge(
+                    id="e7",
+                    source="split-table",
+                    target="predict",
+                    source_handle="testTable",
+                    target_handle="table",
+                ),
+                WorkflowEdge(
+                    id="e8",
+                    source="predict",
+                    target="validate",
+                    source_handle="table",
+                    target_handle="predictionTable",
+                ),
+                WorkflowEdge(
+                    id="e9",
+                    source="split-table",
+                    target="validate",
+                    source_handle="testTable",
+                    target_handle="groundTruthTable",
+                ),
             ],
         ),
         sample_bindings=[

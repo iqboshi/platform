@@ -10,7 +10,7 @@ import {
 } from './workflow-i18n';
 
 function containsNonAscii(value: string): boolean {
-  return /[^\x00-\x7F]/.test(value);
+  return Array.from(value).some((character) => (character.codePointAt(0) ?? 0) > 127);
 }
 
 describe('workflow-i18n', () => {

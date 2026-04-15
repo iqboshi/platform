@@ -717,13 +717,16 @@ def test_workflow_templates_endpoint_includes_control_flow_examples(
         item for item in payload if item["id"] == "control.if_else_table_subgraphs"
     )
     if_else_sample_template = next(
-        item for item in payload
-        if item["id"] == "control.if_else_sample_prediction_subgraphs"
+        item for item in payload if item["id"] == "control.if_else_sample_prediction_subgraphs"
     )
 
     assert any(node["type"] == "control.guard" for node in conditional_template["graph"]["nodes"])
-    assert any(node["type"] == "control.coalesce" for node in conditional_template["graph"]["nodes"])
-    branch_node = next(node for node in subgraph_template["graph"]["nodes"] if node["id"] == "branch")
+    assert any(
+        node["type"] == "control.coalesce" for node in conditional_template["graph"]["nodes"]
+    )
+    branch_node = next(
+        node for node in subgraph_template["graph"]["nodes"] if node["id"] == "branch"
+    )
     assert branch_node["type"] == "workflow.call_subgraph"
     assert branch_node["subgraph"]["nodes"]
     assert any(
@@ -1072,7 +1075,11 @@ def test_workflow_node_test_returns_sample_prediction_preview(client: TestClient
                 "params": {"datasetVersionId": raster_version["id"]},
                 "input_bindings": {},
                 "output_defs": [
-                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
                 ],
             },
             {
@@ -1098,9 +1105,7 @@ def test_workflow_node_test_returns_sample_prediction_preview(client: TestClient
                     "outputImageFormat": "png",
                 },
                 "input_bindings": {"raster": "load-raster:raster"},
-                "output_defs": [
-                    {"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}
-                ],
+                "output_defs": [{"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}],
             },
             {
                 "id": "build-samples",
@@ -1132,16 +1137,50 @@ def test_workflow_node_test_returns_sample_prediction_preview(client: TestClient
                     "model": "model-source:model",
                 },
                 "output_defs": [
-                    {"key": "predictions", "label": "Prediction Set", "data_types": ["prediction_set"]}
+                    {
+                        "key": "predictions",
+                        "label": "Prediction Set",
+                        "data_types": ["prediction_set"],
+                    }
                 ],
             },
         ],
         "edges": [
-            {"id": "e1", "source": "source", "target": "load-raster", "source_handle": "dataset", "target_handle": "dataset"},
-            {"id": "e2", "source": "load-raster", "target": "patchify", "source_handle": "raster", "target_handle": "raster"},
-            {"id": "e3", "source": "patchify", "target": "build-samples", "source_handle": "tiles", "target_handle": "tiles"},
-            {"id": "e4", "source": "build-samples", "target": "predict", "source_handle": "samples", "target_handle": "samples"},
-            {"id": "e5", "source": "model-source", "target": "predict", "source_handle": "model", "target_handle": "model"},
+            {
+                "id": "e1",
+                "source": "source",
+                "target": "load-raster",
+                "source_handle": "dataset",
+                "target_handle": "dataset",
+            },
+            {
+                "id": "e2",
+                "source": "load-raster",
+                "target": "patchify",
+                "source_handle": "raster",
+                "target_handle": "raster",
+            },
+            {
+                "id": "e3",
+                "source": "patchify",
+                "target": "build-samples",
+                "source_handle": "tiles",
+                "target_handle": "tiles",
+            },
+            {
+                "id": "e4",
+                "source": "build-samples",
+                "target": "predict",
+                "source_handle": "samples",
+                "target_handle": "samples",
+            },
+            {
+                "id": "e5",
+                "source": "model-source",
+                "target": "predict",
+                "source_handle": "model",
+                "target_handle": "model",
+            },
         ],
     }
 
@@ -1203,7 +1242,11 @@ def test_workflow_node_test_returns_custom_api_training_preview(client: TestClie
                 "params": {"datasetVersionId": raster_version["id"]},
                 "input_bindings": {},
                 "output_defs": [
-                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
                 ],
             },
             {
@@ -1213,7 +1256,11 @@ def test_workflow_node_test_returns_custom_api_training_preview(client: TestClie
                 "params": {"datasetVersionId": vector_version["id"]},
                 "input_bindings": {},
                 "output_defs": [
-                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
                 ],
             },
             {
@@ -1239,9 +1286,7 @@ def test_workflow_node_test_returns_custom_api_training_preview(client: TestClie
                     "outputImageFormat": "png",
                 },
                 "input_bindings": {"raster": "load-raster:raster"},
-                "output_defs": [
-                    {"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}
-                ],
+                "output_defs": [{"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}],
             },
             {
                 "id": "load-features",
@@ -1250,7 +1295,11 @@ def test_workflow_node_test_returns_custom_api_training_preview(client: TestClie
                 "params": {},
                 "input_bindings": {"dataset": "label-source:dataset"},
                 "output_defs": [
-                    {"key": "features", "label": "Feature Collection", "data_types": ["feature_collection"]}
+                    {
+                        "key": "features",
+                        "label": "Feature Collection",
+                        "data_types": ["feature_collection"],
+                    }
                 ],
             },
             {
@@ -1313,7 +1362,7 @@ def test_workflow_node_test_returns_custom_api_training_preview(client: TestClie
                     "timeoutSeconds": 45,
                     "responseMode": "prediction_masks",
                     "defaultPredictionColumn": "prediction",
-                    "callParametersJson": "{\"threshold\": 0.5}",
+                    "callParametersJson": '{"threshold": 0.5}',
                 },
                 "input_bindings": {
                     "trainSamples": "split-samples:trainSamples",
@@ -1326,16 +1375,76 @@ def test_workflow_node_test_returns_custom_api_training_preview(client: TestClie
             },
         ],
         "edges": [
-            {"id": "e1", "source": "image-source", "target": "load-raster", "source_handle": "dataset", "target_handle": "dataset"},
-            {"id": "e2", "source": "load-raster", "target": "patchify", "source_handle": "raster", "target_handle": "raster"},
-            {"id": "e3", "source": "label-source", "target": "load-features", "source_handle": "dataset", "target_handle": "dataset"},
-            {"id": "e4", "source": "patchify", "target": "labels", "source_handle": "tiles", "target_handle": "tiles"},
-            {"id": "e5", "source": "load-features", "target": "labels", "source_handle": "features", "target_handle": "features"},
-            {"id": "e6", "source": "patchify", "target": "build-samples", "source_handle": "tiles", "target_handle": "tiles"},
-            {"id": "e7", "source": "labels", "target": "build-samples", "source_handle": "labels", "target_handle": "labels"},
-            {"id": "e8", "source": "build-samples", "target": "split-samples", "source_handle": "samples", "target_handle": "samples"},
-            {"id": "e9", "source": "split-samples", "target": "train", "source_handle": "trainSamples", "target_handle": "trainSamples"},
-            {"id": "e10", "source": "split-samples", "target": "train", "source_handle": "valSamples", "target_handle": "validationSamples"},
+            {
+                "id": "e1",
+                "source": "image-source",
+                "target": "load-raster",
+                "source_handle": "dataset",
+                "target_handle": "dataset",
+            },
+            {
+                "id": "e2",
+                "source": "load-raster",
+                "target": "patchify",
+                "source_handle": "raster",
+                "target_handle": "raster",
+            },
+            {
+                "id": "e3",
+                "source": "label-source",
+                "target": "load-features",
+                "source_handle": "dataset",
+                "target_handle": "dataset",
+            },
+            {
+                "id": "e4",
+                "source": "patchify",
+                "target": "labels",
+                "source_handle": "tiles",
+                "target_handle": "tiles",
+            },
+            {
+                "id": "e5",
+                "source": "load-features",
+                "target": "labels",
+                "source_handle": "features",
+                "target_handle": "features",
+            },
+            {
+                "id": "e6",
+                "source": "patchify",
+                "target": "build-samples",
+                "source_handle": "tiles",
+                "target_handle": "tiles",
+            },
+            {
+                "id": "e7",
+                "source": "labels",
+                "target": "build-samples",
+                "source_handle": "labels",
+                "target_handle": "labels",
+            },
+            {
+                "id": "e8",
+                "source": "build-samples",
+                "target": "split-samples",
+                "source_handle": "samples",
+                "target_handle": "samples",
+            },
+            {
+                "id": "e9",
+                "source": "split-samples",
+                "target": "train",
+                "source_handle": "trainSamples",
+                "target_handle": "trainSamples",
+            },
+            {
+                "id": "e10",
+                "source": "split-samples",
+                "target": "train",
+                "source_handle": "valSamples",
+                "target_handle": "validationSamples",
+            },
         ],
     }
 
@@ -1371,7 +1480,13 @@ def test_workflow_node_test_returns_control_compare_preview(client: TestClient) 
             },
         ],
         "edges": [
-            {"id": "e1", "source": "flag", "target": "compare", "source_handle": "value", "target_handle": "left"}
+            {
+                "id": "e1",
+                "source": "flag",
+                "target": "compare",
+                "source_handle": "value",
+                "target_handle": "left",
+            }
         ],
     }
 
@@ -1408,7 +1523,13 @@ def test_workflow_node_test_returns_control_coalesce_preview(client: TestClient)
                 "position": {"x": 0, "y": 0},
                 "params": {"datasetVersionId": primary_version["id"]},
                 "input_bindings": {},
-                "output_defs": [{"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}],
+                "output_defs": [
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
+                ],
             },
             {
                 "id": "fallback-source",
@@ -1416,7 +1537,13 @@ def test_workflow_node_test_returns_control_coalesce_preview(client: TestClient)
                 "position": {"x": 0, "y": 220},
                 "params": {"datasetVersionId": fallback_version["id"]},
                 "input_bindings": {},
-                "output_defs": [{"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}],
+                "output_defs": [
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
+                ],
             },
             {
                 "id": "primary-enabled",
@@ -1443,7 +1570,9 @@ def test_workflow_node_test_returns_control_coalesce_preview(client: TestClient)
                     "enabled": "primary-enabled:value",
                     "payload": "primary-source:dataset",
                 },
-                "output_defs": [{"key": "payload", "label": "Payload", "data_types": ["dataset_version"]}],
+                "output_defs": [
+                    {"key": "payload", "label": "Payload", "data_types": ["dataset_version"]}
+                ],
             },
             {
                 "id": "fallback-guard",
@@ -1454,7 +1583,9 @@ def test_workflow_node_test_returns_control_coalesce_preview(client: TestClient)
                     "enabled": "fallback-enabled:value",
                     "payload": "fallback-source:dataset",
                 },
-                "output_defs": [{"key": "payload", "label": "Payload", "data_types": ["dataset_version"]}],
+                "output_defs": [
+                    {"key": "payload", "label": "Payload", "data_types": ["dataset_version"]}
+                ],
             },
             {
                 "id": "merge",
@@ -1465,16 +1596,54 @@ def test_workflow_node_test_returns_control_coalesce_preview(client: TestClient)
                     "primary": "primary-guard:payload",
                     "fallback": "fallback-guard:payload",
                 },
-                "output_defs": [{"key": "output", "label": "Output", "data_types": ["dataset_version"]}],
+                "output_defs": [
+                    {"key": "output", "label": "Output", "data_types": ["dataset_version"]}
+                ],
             },
         ],
         "edges": [
-            {"id": "e1", "source": "primary-enabled", "target": "primary-guard", "source_handle": "value", "target_handle": "enabled"},
-            {"id": "e2", "source": "primary-source", "target": "primary-guard", "source_handle": "dataset", "target_handle": "payload"},
-            {"id": "e3", "source": "fallback-enabled", "target": "fallback-guard", "source_handle": "value", "target_handle": "enabled"},
-            {"id": "e4", "source": "fallback-source", "target": "fallback-guard", "source_handle": "dataset", "target_handle": "payload"},
-            {"id": "e5", "source": "primary-guard", "target": "merge", "source_handle": "payload", "target_handle": "primary"},
-            {"id": "e6", "source": "fallback-guard", "target": "merge", "source_handle": "payload", "target_handle": "fallback"},
+            {
+                "id": "e1",
+                "source": "primary-enabled",
+                "target": "primary-guard",
+                "source_handle": "value",
+                "target_handle": "enabled",
+            },
+            {
+                "id": "e2",
+                "source": "primary-source",
+                "target": "primary-guard",
+                "source_handle": "dataset",
+                "target_handle": "payload",
+            },
+            {
+                "id": "e3",
+                "source": "fallback-enabled",
+                "target": "fallback-guard",
+                "source_handle": "value",
+                "target_handle": "enabled",
+            },
+            {
+                "id": "e4",
+                "source": "fallback-source",
+                "target": "fallback-guard",
+                "source_handle": "dataset",
+                "target_handle": "payload",
+            },
+            {
+                "id": "e5",
+                "source": "primary-guard",
+                "target": "merge",
+                "source_handle": "payload",
+                "target_handle": "primary",
+            },
+            {
+                "id": "e6",
+                "source": "fallback-guard",
+                "target": "merge",
+                "source_handle": "payload",
+                "target_handle": "fallback",
+            },
         ],
     }
 
@@ -1514,8 +1683,21 @@ def test_workflow_node_test_returns_call_subgraph_preview(client: TestClient) ->
                             "params": {},
                             "input_bindings": {},
                             "input_defs": [],
-                            "output_defs": [{"key": "flag", "label": "Flag", "data_types": ["value"], "required": True}],
-                            "output_contracts": [{"port_key": "flag", "summary": "Boolean flag.", "value_types": ["boolean"]}],
+                            "output_defs": [
+                                {
+                                    "key": "flag",
+                                    "label": "Flag",
+                                    "data_types": ["value"],
+                                    "required": True,
+                                }
+                            ],
+                            "output_contracts": [
+                                {
+                                    "port_key": "flag",
+                                    "summary": "Boolean flag.",
+                                    "value_types": ["boolean"],
+                                }
+                            ],
                         },
                         {
                             "id": "invert",
@@ -1523,7 +1705,9 @@ def test_workflow_node_test_returns_call_subgraph_preview(client: TestClient) ->
                             "position": {"x": 200, "y": 0},
                             "params": {},
                             "input_bindings": {"value": "sub-in:flag"},
-                            "output_defs": [{"key": "result", "label": "Result", "data_types": ["value"]}],
+                            "output_defs": [
+                                {"key": "result", "label": "Result", "data_types": ["value"]}
+                            ],
                         },
                         {
                             "id": "sub-out",
@@ -1531,8 +1715,21 @@ def test_workflow_node_test_returns_call_subgraph_preview(client: TestClient) ->
                             "position": {"x": 400, "y": 0},
                             "params": {},
                             "input_bindings": {"result": "invert:result"},
-                            "input_defs": [{"key": "result", "label": "Result", "data_types": ["value"], "required": True}],
-                            "input_contracts": [{"port_key": "result", "summary": "Boolean result.", "value_types": ["boolean"]}],
+                            "input_defs": [
+                                {
+                                    "key": "result",
+                                    "label": "Result",
+                                    "data_types": ["value"],
+                                    "required": True,
+                                }
+                            ],
+                            "input_contracts": [
+                                {
+                                    "port_key": "result",
+                                    "summary": "Boolean result.",
+                                    "value_types": ["boolean"],
+                                }
+                            ],
                             "output_defs": [],
                         },
                     ],
@@ -1556,7 +1753,13 @@ def test_workflow_node_test_returns_call_subgraph_preview(client: TestClient) ->
             },
         ],
         "edges": [
-            {"id": "e1", "source": "flag", "target": "branch", "source_handle": "value", "target_handle": "flag"}
+            {
+                "id": "e1",
+                "source": "flag",
+                "target": "branch",
+                "source_handle": "value",
+                "target_handle": "flag",
+            }
         ],
     }
 
@@ -2238,6 +2441,7 @@ def test_sentinel_download_retries_with_larger_scale_after_size_limit(
     assert details["scale"] == image.scales[1]
     assert details["scale_adjusted"] is True
 
+
 def test_models_endpoint_allows_members_with_model_view_permission(
     client: TestClient,
     admin_token: str,
@@ -2521,8 +2725,7 @@ def test_prediction_workflow_run_creates_private_table_output(
     assert execution["input_asset_version_ids"] == [dataset_version["id"]]
     assert result_dataset_version_id in execution["output_asset_version_ids"]
     assert any(
-        item["id"] == workflow_version["id"]
-        and item["asset"]["asset_type"] == "workflow"
+        item["id"] == workflow_version["id"] and item["asset"]["asset_type"] == "workflow"
         for item in asset_flow_payload["asset_versions"]
     )
     assert any(
@@ -2589,7 +2792,11 @@ def test_sample_custom_api_prediction_workflow_creates_private_artifact_output(
                 "params": {"datasetVersionId": raster_version["id"]},
                 "input_bindings": {},
                 "output_defs": [
-                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
                 ],
             },
             {
@@ -2615,9 +2822,7 @@ def test_sample_custom_api_prediction_workflow_creates_private_artifact_output(
                     "outputImageFormat": "png",
                 },
                 "input_bindings": {"raster": "load-raster:raster"},
-                "output_defs": [
-                    {"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}
-                ],
+                "output_defs": [{"key": "tiles", "label": "Tile Set", "data_types": ["tile_set"]}],
             },
             {
                 "id": "build-samples",
@@ -2649,7 +2854,11 @@ def test_sample_custom_api_prediction_workflow_creates_private_artifact_output(
                     "model": "model-source:model",
                 },
                 "output_defs": [
-                    {"key": "predictions", "label": "Prediction Set", "data_types": ["prediction_set"]}
+                    {
+                        "key": "predictions",
+                        "label": "Prediction Set",
+                        "data_types": ["prediction_set"],
+                    }
                 ],
             },
             {
@@ -2659,17 +2868,57 @@ def test_sample_custom_api_prediction_workflow_creates_private_artifact_output(
                 "params": {"outputDatasetName": "Segmentation Prediction Output"},
                 "input_bindings": {"predictions": "predict:predictions"},
                 "output_defs": [
-                    {"key": "dataset", "label": "Dataset Version", "data_types": ["dataset_version"]}
+                    {
+                        "key": "dataset",
+                        "label": "Dataset Version",
+                        "data_types": ["dataset_version"],
+                    }
                 ],
             },
         ],
         "edges": [
-            {"id": "e1", "source": "source", "target": "load-raster", "source_handle": "dataset", "target_handle": "dataset"},
-            {"id": "e2", "source": "load-raster", "target": "patchify", "source_handle": "raster", "target_handle": "raster"},
-            {"id": "e3", "source": "patchify", "target": "build-samples", "source_handle": "tiles", "target_handle": "tiles"},
-            {"id": "e4", "source": "build-samples", "target": "predict", "source_handle": "samples", "target_handle": "samples"},
-            {"id": "e5", "source": "model-source", "target": "predict", "source_handle": "model", "target_handle": "model"},
-            {"id": "e6", "source": "predict", "target": "export-predictions", "source_handle": "predictions", "target_handle": "predictions"},
+            {
+                "id": "e1",
+                "source": "source",
+                "target": "load-raster",
+                "source_handle": "dataset",
+                "target_handle": "dataset",
+            },
+            {
+                "id": "e2",
+                "source": "load-raster",
+                "target": "patchify",
+                "source_handle": "raster",
+                "target_handle": "raster",
+            },
+            {
+                "id": "e3",
+                "source": "patchify",
+                "target": "build-samples",
+                "source_handle": "tiles",
+                "target_handle": "tiles",
+            },
+            {
+                "id": "e4",
+                "source": "build-samples",
+                "target": "predict",
+                "source_handle": "samples",
+                "target_handle": "samples",
+            },
+            {
+                "id": "e5",
+                "source": "model-source",
+                "target": "predict",
+                "source_handle": "model",
+                "target_handle": "model",
+            },
+            {
+                "id": "e6",
+                "source": "predict",
+                "target": "export-predictions",
+                "source_handle": "predictions",
+                "target_handle": "predictions",
+            },
         ],
     }
 
@@ -2805,7 +3054,9 @@ def test_custom_api_training_and_prediction_workflow_creates_private_model_and_p
     )
     assert matching_engineer_model is not None
     assert any(item["id"] == matching_engineer_model["id"] for item in model_versions_admin.json())
-    assert not any(item["id"] == matching_engineer_model["id"] for item in model_versions_member.json())
+    assert not any(
+        item["id"] == matching_engineer_model["id"] for item in model_versions_member.json()
+    )
 
     prediction_download = client.get(
         f"/api/v1/dataset-versions/{result_dataset_version_id}/download",
@@ -2994,9 +3245,7 @@ def test_sentinel_workflow_run_resolves_saved_roi_bbox(
     assert map_candidates.status_code == 200
     payload = map_candidates.json()
     matched = next(
-        item
-        for item in payload
-        if item["asset_version"]["id"] == run["result_dataset_version_id"]
+        item for item in payload if item["asset_version"]["id"] == run["result_dataset_version_id"]
     )
     assert matched["consumer"] == "map_overlay"
     assert matched["candidate_type"] == "asset_version"
@@ -3095,9 +3344,7 @@ def test_private_dataset_can_be_published_by_admin(client: TestClient) -> None:
         item for item in engineer_datasets.json() if item["name"] == "engineer-private-dataset"
     )
     assert engineer_dataset["visibility"] == "private"
-    assert not any(
-        item["id"] == engineer_dataset["id"] for item in member_visible_before.json()
-    )
+    assert not any(item["id"] == engineer_dataset["id"] for item in member_visible_before.json())
 
     publish = client.patch(
         f"/api/v1/datasets/{engineer_dataset['id']}",
@@ -3118,9 +3365,7 @@ def test_private_dataset_can_be_published_by_admin(client: TestClient) -> None:
     assert member_visible_after.status_code == 200
     assert public_versions.status_code == 200
     assert any(item["id"] == engineer_dataset["id"] for item in member_visible_after.json())
-    assert any(
-        item["dataset_id"] == engineer_dataset["id"] for item in public_versions.json()
-    )
+    assert any(item["dataset_id"] == engineer_dataset["id"] for item in public_versions.json())
 
 
 def test_workflow_versions_are_user_scoped_and_downloadable(client: TestClient) -> None:
@@ -3614,15 +3859,7 @@ def test_trained_model_assets_can_power_prediction_workflows(client: TestClient)
         engineer_token,
         workspace_id,
         "training-data",
-        (
-            "feature_a,feature_b,target\n"
-            "1,2,1.4\n"
-            "2,3,2.2\n"
-            "3,4,3.1\n"
-            "4,5,4.1\n"
-            "5,6,5.0\n"
-            "6,7,5.9\n"
-        ),
+        ("feature_a,feature_b,target\n1,2,1.4\n2,3,2.2\n3,4,3.1\n4,5,4.1\n5,6,5.0\n6,7,5.9\n"),
     )
 
     training_graph = _template_graph(

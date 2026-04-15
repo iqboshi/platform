@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 import struct
 import zipfile
@@ -323,7 +322,9 @@ def _node_input_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
             base_input_keys = {str(port.get("key", "")).strip() for port in base_inputs}
             dynamic_inputs = [
                 dict(port)
-                for port in _subgraph_interface_ports(subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs")
+                for port in _subgraph_interface_ports(
+                    subgraph, SUBGRAPH_INPUT_NODE_TYPE, "output_defs"
+                )
                 if str(port.get("key", "")).strip() not in FOR_EACH_RESERVED_INPUT_PORT_KEYS
                 and str(port.get("key", "")).strip() not in base_input_keys
             ]
@@ -331,7 +332,10 @@ def _node_input_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
     input_defs = node.get("input_defs", [])
     if isinstance(input_defs, list) and input_defs:
         return [port for port in input_defs if isinstance(port, dict)]
-    return [port.model_dump(mode="json") for port in catalog_definition(str(node.get("type", "")).strip()).inputs]
+    return [
+        port.model_dump(mode="json")
+        for port in catalog_definition(str(node.get("type", "")).strip()).inputs
+    ]
 
 
 def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
@@ -344,7 +348,9 @@ def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
         subgraph = node.get("subgraph")
         if isinstance(subgraph, dict):
             aggregated_outputs: list[dict[str, Any]] = []
-            for port in _subgraph_interface_ports(subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs"):
+            for port in _subgraph_interface_ports(
+                subgraph, SUBGRAPH_OUTPUT_NODE_TYPE, "input_defs"
+            ):
                 cloned = dict(port)
                 cloned["data_types"] = ["value_list"]
                 aggregated_outputs.append(cloned)
@@ -352,7 +358,10 @@ def _node_output_defs(node: dict[str, Any]) -> list[dict[str, Any]]:
     output_defs = node.get("output_defs", [])
     if isinstance(output_defs, list) and output_defs:
         return [port for port in output_defs if isinstance(port, dict)]
-    return [port.model_dump(mode="json") for port in catalog_definition(str(node.get("type", "")).strip()).outputs]
+    return [
+        port.model_dump(mode="json")
+        for port in catalog_definition(str(node.get("type", "")).strip()).outputs
+    ]
 
 
 def _subgraph_interface_ports(
@@ -490,9 +499,7 @@ def parse_query_raster_collection_params(
         raise ValueError("credentialMode must be platform_default or personal.")
     personal_credential_id = str(params.get("personalCredentialId", "")).strip() or None
     if credential_mode == "personal" and personal_credential_id is None:
-        raise ValueError(
-            "personalCredentialId is required when credentialMode is personal."
-        )
+        raise ValueError("personalCredentialId is required when credentialMode is personal.")
 
     return QueryCollectionParams(
         provider=provider,
@@ -710,9 +717,7 @@ def _resolve_input_value(
     if source_outputs is None:
         raise ValueError(f"Input binding for {key} references unknown node: {source_node_id}")
     if source_handle not in source_outputs:
-        raise ValueError(
-            f"Input binding for {key} references unknown output '{source_handle}'."
-        )
+        raise ValueError(f"Input binding for {key} references unknown output '{source_handle}'.")
     return source_outputs[source_handle]
 
 
@@ -1067,7 +1072,9 @@ def _persist_custom_api_model_version(
             default_parameters=default_parameters,
             training_artifact_path=training_artifact_path,
         )
-        model_version_id = str(getattr(summary, "id", "") or "").strip() or fallback_model_version_id
+        model_version_id = (
+            str(getattr(summary, "id", "") or "").strip() or fallback_model_version_id
+        )
         if model_version_id:
             state.saved_model_version_ids.append(model_version_id)
             state.result_model_version_id = model_version_id
@@ -1078,8 +1085,10 @@ def _persist_custom_api_model_version(
             version=str(getattr(summary, "version", "") or version).strip() or version,
             framework=str(getattr(summary, "framework", "") or "http-api").strip() or "http-api",
             task_type=str(getattr(summary, "task_type", "") or task_type).strip() or task_type,
-            source_type=str(getattr(summary, "source_type", "") or "custom_api").strip() or "custom_api",
-            execution_mode=str(getattr(summary, "execution_mode", "") or "external_api").strip() or "external_api",
+            source_type=str(getattr(summary, "source_type", "") or "custom_api").strip()
+            or "custom_api",
+            execution_mode=str(getattr(summary, "execution_mode", "") or "external_api").strip()
+            or "external_api",
         )
 
     return ModelVersionArtifact(
@@ -1137,7 +1146,9 @@ def _preview_bindings(
 ) -> dict[str, Any]:
     preview: dict[str, Any] = {}
     for key in bindings:
-        preview[key] = _serialize_preview_value(_resolve_input_value(resolved_outputs, bindings, key))
+        preview[key] = _serialize_preview_value(
+            _resolve_input_value(resolved_outputs, bindings, key)
+        )
     return preview
 
 
@@ -1178,7 +1189,9 @@ def _collect_structural_subgraph_inputs(
             continue
         binding = str(bindings.get(port_key, "")).strip()
         if binding:
-            provided_inputs[port_key] = _resolve_input_value(state.resolved_outputs, bindings, port_key)
+            provided_inputs[port_key] = _resolve_input_value(
+                state.resolved_outputs, bindings, port_key
+            )
         elif bool(port.get("required", False)):
             raise ValueError(f"{node_type} requires subgraph input `{port_key}`.")
         else:
@@ -1234,7 +1247,8 @@ def _execute_asset_subgraph_body(
         [
             item
             for item in raw_nodes
-            if isinstance(item, dict) and str(item.get("type", "")).strip() == SUBGRAPH_OUTPUT_NODE_TYPE
+            if isinstance(item, dict)
+            and str(item.get("type", "")).strip() == SUBGRAPH_OUTPUT_NODE_TYPE
         ],
         key=lambda item: (
             float(item.get("position", {}).get("y", 0.0)),
@@ -1248,7 +1262,9 @@ def _execute_asset_subgraph_body(
         if not isinstance(input_defs, list) or not input_defs:
             continue
         if not isinstance(output_bindings, dict):
-            raise ValueError(f"Subgraph output node {output_node.get('id', '')} has invalid bindings.")
+            raise ValueError(
+                f"Subgraph output node {output_node.get('id', '')} has invalid bindings."
+            )
         port_key = str(input_defs[0].get("key", "")).strip()
         if not port_key:
             continue
@@ -1301,7 +1317,9 @@ def _execute_asset_for_each(
     if not isinstance(subgraph, dict):
         raise ValueError(f"Node {node_id} is missing a valid subgraph definition.")
 
-    raw_items = _unwrap_control_value(_resolve_input_value(state.resolved_outputs, bindings, "items"))
+    raw_items = _unwrap_control_value(
+        _resolve_input_value(state.resolved_outputs, bindings, "items")
+    )
     if not isinstance(raw_items, list):
         raise ValueError(f"Node {node_id} requires `items` to resolve to a JSON array.")
 
@@ -1411,7 +1429,9 @@ def _execute_asset_node(
         return _execute_asset_for_each(node=node, state=state, bindings=bindings)
 
     if node_type == "control.boolean_literal":
-        return {"value": _wrap_control_value(bool(params.get("value", False)), value_type="boolean")}
+        return {
+            "value": _wrap_control_value(bool(params.get("value", False)), value_type="boolean")
+        }
 
     if node_type == "control.list_literal":
         items = _parse_json_value(params.get("itemsJson", "[]"), field_name="itemsJson")
@@ -1425,7 +1445,9 @@ def _execute_asset_node(
         right = (
             _unwrap_control_value(right_bound)
             if right_bound is not None
-            else _parse_json_value(params.get("rightValueJson", "true"), field_name="rightValueJson")
+            else _parse_json_value(
+                params.get("rightValueJson", "true"), field_name="rightValueJson"
+            )
         )
         operator = str(params.get("operator", "eq") or "eq").strip()
         if operator == "eq":
@@ -1448,7 +1470,10 @@ def _execute_asset_node(
             elif isinstance(left, list | tuple | set):
                 result = right in left
             else:
-                raise ValueError("contains operator requires a string, array, set, tuple, or object on the left side.")
+                raise ValueError(
+                    "contains operator requires a string, array, set, tuple, "
+                    "or object on the left side."
+                )
         else:
             raise ValueError(f"Unsupported compare operator: {operator}")
         return {"result": _wrap_control_value(result, value_type="boolean")}
@@ -1580,9 +1605,7 @@ def _execute_asset_node(
             "tiles": {
                 "kind": "tile_set",
                 "sampleKinds": (
-                    ["geospatial_tile"]
-                    if node_type == "rgb.patchify_raster"
-                    else ["image_tile"]
+                    ["geospatial_tile"] if node_type == "rgb.patchify_raster" else ["image_tile"]
                 ),
                 "sampleCount": 64,
             }
@@ -1606,8 +1629,7 @@ def _execute_asset_node(
                 "kind": "label_set",
                 "taskTypes": ["semantic_segmentation"],
                 "annotationKinds": ["mask"],
-                "sampleKinds": _sample_kinds_from_value(tiles)
-                or ["image_tile", "geospatial_tile"],
+                "sampleKinds": _sample_kinds_from_value(tiles) or ["image_tile", "geospatial_tile"],
                 "sampleCount": _sample_count_from_value(tiles),
             }
         }
@@ -1636,8 +1658,7 @@ def _execute_asset_node(
                 "kind": "annotation_set",
                 "taskTypes": [task_type],
                 "annotationKinds": [annotation_kind],
-                "sampleKinds": _sample_kinds_from_value(tiles)
-                or ["image_tile", "geospatial_tile"],
+                "sampleKinds": _sample_kinds_from_value(tiles) or ["image_tile", "geospatial_tile"],
                 "sampleCount": _sample_count_from_value(tiles),
             }
         }
@@ -1659,8 +1680,7 @@ def _execute_asset_node(
             )
         sample_output: dict[str, Any] = {
             "kind": "sample_set",
-            "sampleKinds": _sample_kinds_from_value(tiles)
-            or ["image_tile", "geospatial_tile"],
+            "sampleKinds": _sample_kinds_from_value(tiles) or ["image_tile", "geospatial_tile"],
             "sampleCount": _sample_count_from_value(tiles),
         }
         if annotation_kinds:
@@ -1730,8 +1750,13 @@ def _execute_asset_node(
             if str(bindings.get(key, "")).strip()
         }
         if not any(value is not None for value in sample_payloads.values()):
-            raise ValueError("artifact.package_dataset_bundle requires at least one sample_set input.")
-        archive_name = str(params.get("archiveName", "dataset-bundle.zip") or "dataset-bundle.zip").strip() or "dataset-bundle.zip"
+            raise ValueError(
+                "artifact.package_dataset_bundle requires at least one sample_set input."
+            )
+        archive_name = (
+            str(params.get("archiveName", "dataset-bundle.zip") or "dataset-bundle.zip").strip()
+            or "dataset-bundle.zip"
+        )
         bundle_manifest = {
             "kind": "dataset_bundle",
             "samples": {
@@ -1741,7 +1766,9 @@ def _execute_asset_node(
             },
             "hasManifest": bool(str(bindings.get("manifest", "")).strip()),
             "taskTypes": _task_types_from_value(next(iter(sample_payloads.values()), {})),
-            "annotationKinds": _annotation_kinds_from_value(next(iter(sample_payloads.values()), {})),
+            "annotationKinds": _annotation_kinds_from_value(
+                next(iter(sample_payloads.values()), {})
+            ),
         }
         artifact_path = _write_zip_artifact(
             state,
@@ -1783,12 +1810,8 @@ def _execute_asset_node(
         task_type = str(params.get("taskType", "")).strip()
         if not task_type:
             raise ValueError("custom.api_train_samples requires taskType.")
-        output_model_name = (
-            str(params.get("outputModelName", "")).strip() or "Custom API Model"
-        )
-        output_model_version = (
-            str(params.get("outputModelVersion", "")).strip() or "1.0.0"
-        )
+        output_model_name = str(params.get("outputModelName", "")).strip() or "Custom API Model"
+        output_model_version = str(params.get("outputModelVersion", "")).strip() or "1.0.0"
         prediction_endpoint_url = str(params.get("predictionEndpointUrl", "")).strip()
         if not prediction_endpoint_url:
             raise ValueError("custom.api_train_samples requires predictionEndpointUrl.")
@@ -1871,8 +1894,7 @@ def _execute_asset_node(
             "modelName": model.model_name,
             "taskType": model.task_type,
             "taskTypes": [model.task_type] if model.task_type else _task_types_from_value(samples),
-            "sampleKinds": _sample_kinds_from_value(samples)
-            or ["image_tile", "geospatial_tile"],
+            "sampleKinds": _sample_kinds_from_value(samples) or ["image_tile", "geospatial_tile"],
             "callParameters": json.loads(str(params.get("callParametersJson", "{}") or "{}")),
         }
         annotation_kinds = _annotation_kinds_for_task_types(
@@ -1893,7 +1915,9 @@ def _execute_asset_node(
                 state,
                 node_id=node_id,
                 file_name="predictions.json",
-                payload=predictions if isinstance(predictions, dict) else {"kind": "prediction_set"},
+                payload=predictions
+                if isinstance(predictions, dict)
+                else {"kind": "prediction_set"},
             )
         )
         metadata: dict[str, object] = {"workflow_output_kind": "prediction_set"}

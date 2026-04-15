@@ -98,7 +98,6 @@ import {
   type WorkflowNodeAnalysis,
 } from '@/features/workflows/workflow-contracts';
 import {
-  localizeWorkflowContract,
   localizeWorkflowIssue,
   localizeWorkflowText,
 } from '@/features/workflows/workflow-i18n';
@@ -107,10 +106,8 @@ import {
   SUBGRAPH_INPUT_NODE_TYPE,
   SUBGRAPH_OUTPUT_NODE_TYPE,
   createDefaultDynamicNodeShape,
-  getEffectiveInputContracts,
   getEffectiveNodeInputDefs,
   getEffectiveNodeOutputDefs,
-  getEffectiveOutputContracts,
   isStructuralSubgraphNodeType,
   isSubgraphBoundaryNode,
   syncCallSubgraphNodeInterfaces,

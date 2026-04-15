@@ -78,8 +78,7 @@ def _structural_input_interface(
         return []
 
     definition_input_keys = {
-        port.key
-        for port in (definition.inputs if definition is not None else [])
+        port.key for port in (definition.inputs if definition is not None else [])
     }
     return [
         item
@@ -137,11 +136,15 @@ def effective_node_inputs(
     if node.type in STRUCTURAL_SUBGRAPH_NODE_TYPES and node.subgraph is not None:
         structural_inputs = _structural_input_interface(node, definition)
         if node.type == FOR_EACH_NODE_TYPE:
-            static_inputs = [clone_port(port) for port in (definition.inputs if definition is not None else [])]
+            static_inputs = [
+                clone_port(port) for port in (definition.inputs if definition is not None else [])
+            ]
             return static_inputs + [clone_port(item.port) for item in structural_inputs]
         return [clone_port(item.port) for item in structural_inputs]
     if node.input_defs:
-        return _merge_port_overrides(node.input_defs, definition.inputs if definition is not None else [])
+        return _merge_port_overrides(
+            node.input_defs, definition.inputs if definition is not None else []
+        )
     if definition is None:
         return []
     return [clone_port(port) for port in definition.inputs]
@@ -154,7 +157,9 @@ def effective_node_outputs(
     if node.type in STRUCTURAL_SUBGRAPH_NODE_TYPES and node.subgraph is not None:
         return [clone_port(item.port) for item in _structural_output_interface(node)]
     if node.output_defs:
-        return _merge_port_overrides(node.output_defs, definition.outputs if definition is not None else [])
+        return _merge_port_overrides(
+            node.output_defs, definition.outputs if definition is not None else []
+        )
     if definition is None:
         return []
     return [clone_port(port) for port in definition.outputs]
@@ -172,7 +177,10 @@ def effective_input_contracts(
         ]
         if node.type == FOR_EACH_NODE_TYPE:
             return [
-                *[clone_contract(contract) for contract in (definition.input_contracts if definition is not None else [])],
+                *[
+                    clone_contract(contract)
+                    for contract in (definition.input_contracts if definition is not None else [])
+                ],
                 *structural_contracts,
             ]
         return structural_contracts
@@ -216,7 +224,9 @@ def _derive_subgraph_boundary_ports(
     interface_ports: list[WorkflowInterfacePort] = []
     for node in _ordered_subgraph_boundary_nodes(subgraph, node_type=node_type):
         ports = node.output_defs if node_type == SUBGRAPH_INPUT_NODE_TYPE else node.input_defs
-        contracts = node.output_contracts if node_type == SUBGRAPH_INPUT_NODE_TYPE else node.input_contracts
+        contracts = (
+            node.output_contracts if node_type == SUBGRAPH_INPUT_NODE_TYPE else node.input_contracts
+        )
         contracts_by_key = {contract.port_key: contract for contract in contracts}
         for port in ports:
             interface_ports.append(

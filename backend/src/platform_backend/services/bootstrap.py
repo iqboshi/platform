@@ -167,8 +167,7 @@ def _ensure_dataset_seed(
             status=DatasetStatus.READY,
             asset_path=str(target_path.resolve()),
             preview_url=(
-                f"{get_settings().api_v1_prefix}/dataset-versions/"
-                f"{dataset_version_id}/download"
+                f"{get_settings().api_v1_prefix}/dataset-versions/{dataset_version_id}/download"
             ),
             original_file_name=file_name,
             content_type=content_type,
@@ -506,13 +505,7 @@ def _ensure_seed_assets(session, workspace: Workspace, owner_user: User) -> None
         description="Seeded CSV input for prediction workflow templates.",
         file_name="sample-tabular-input.csv",
         content_type="text/csv",
-        content=(
-            "feature_a,feature_b,target\n"
-            "1,2,2.1\n"
-            "2,3,3.4\n"
-            "3,4,4.7\n"
-            "4,5,6.0\n"
-        ),
+        content=("feature_a,feature_b,target\n1,2,2.1\n2,3,3.4\n3,4,4.7\n4,5,6.0\n"),
     )
     _ensure_dataset_seed(
         session=session,
@@ -524,13 +517,7 @@ def _ensure_seed_assets(session, workspace: Workspace, owner_user: User) -> None
         description="Seeded prediction CSV for validation workflow templates.",
         file_name="sample-prediction-output.csv",
         content_type="text/csv",
-        content=(
-            "feature_a,prediction\n"
-            "1,2.0\n"
-            "2,3.5\n"
-            "3,4.9\n"
-            "4,5.8\n"
-        ),
+        content=("feature_a,prediction\n1,2.0\n2,3.5\n3,4.9\n4,5.8\n"),
     )
     _ensure_dataset_seed(
         session=session,
@@ -542,13 +529,7 @@ def _ensure_seed_assets(session, workspace: Workspace, owner_user: User) -> None
         description="Seeded ground-truth CSV for validation workflow templates.",
         file_name="sample-ground-truth.csv",
         content_type="text/csv",
-        content=(
-            "feature_a,target\n"
-            "1,2.1\n"
-            "2,3.4\n"
-            "3,4.8\n"
-            "4,5.9\n"
-        ),
+        content=("feature_a,target\n1,2.1\n2,3.4\n3,4.8\n4,5.9\n"),
     )
 
     _ensure_model_seed(
@@ -768,7 +749,7 @@ def _default_workflow_graph() -> dict[str, object]:
                 "params": {
                     "modelVersionId": SEED_LINEAR_MODEL_VERSION_ID,
                     "predictionColumn": "prediction",
-                    "runtimeParametersJson": "{\"roundDigits\": 4}",
+                    "runtimeParametersJson": '{"roundDigits": 4}',
                 },
                 "input_bindings": {"table": "load-table:table"},
                 "output_defs": output_defs("tabular.predict_model"),

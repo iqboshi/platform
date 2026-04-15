@@ -1,3 +1,10 @@
+from platform_backend.schemas.workflow import (
+    WorkflowEdge,
+    WorkflowGraph,
+    WorkflowNode,
+    WorkflowNodePort,
+    WorkflowPortContract,
+)
 from platform_backend.seed_data import (
     SEED_IMAGE_COLLECTION_DATASET_VERSION_ID,
     SEED_RASTER_DATASET_VERSION_ID,
@@ -5,13 +12,6 @@ from platform_backend.seed_data import (
     SEED_TABULAR_INPUT_DATASET_VERSION_ID,
     SEED_TABULAR_PREDICTION_DATASET_VERSION_ID,
     SEED_VECTOR_DATASET_VERSION_ID,
-)
-from platform_backend.schemas.workflow import (
-    WorkflowEdge,
-    WorkflowGraph,
-    WorkflowNode,
-    WorkflowNodePort,
-    WorkflowPortContract,
 )
 from platform_backend.workflows import gee_runtime, patch_runtime, tabular_runtime
 from platform_backend.workflows.catalog import BUILTIN_NODE_CATALOG, BUILTIN_WORKFLOW_TEMPLATES
@@ -646,7 +646,9 @@ def test_dataset_contract_mismatch_is_rejected() -> None:
         ),
     )
     assert result.valid is False
-    assert any("expects Tabular dataset version stored as a CSV file" in error for error in result.errors)
+    assert any(
+        "expects Tabular dataset version stored as a CSV file" in error for error in result.errors
+    )
 
 
 def test_output_contract_mismatch_is_rejected() -> None:
@@ -691,7 +693,9 @@ def test_output_contract_mismatch_is_rejected() -> None:
 
     result = validate_workflow_graph(graph)
     assert result.valid is False
-    assert any("produces Raster dataset version in GeoTIFF format" in error for error in result.errors)
+    assert any(
+        "produces Raster dataset version in GeoTIFF format" in error for error in result.errors
+    )
 
 
 def test_control_guard_preserves_dataset_contract_semantics() -> None:
@@ -734,9 +738,27 @@ def test_control_guard_preserves_dataset_contract_semantics() -> None:
             ),
         ],
         edges=[
-            WorkflowEdge(id="e1", source="enabled", target="guard", source_handle="value", target_handle="enabled"),
-            WorkflowEdge(id="e2", source="source", target="guard", source_handle="dataset", target_handle="payload"),
-            WorkflowEdge(id="e3", source="guard", target="load-raster", source_handle="payload", target_handle="dataset"),
+            WorkflowEdge(
+                id="e1",
+                source="enabled",
+                target="guard",
+                source_handle="value",
+                target_handle="enabled",
+            ),
+            WorkflowEdge(
+                id="e2",
+                source="source",
+                target="guard",
+                source_handle="dataset",
+                target_handle="payload",
+            ),
+            WorkflowEdge(
+                id="e3",
+                source="guard",
+                target="load-raster",
+                source_handle="payload",
+                target_handle="dataset",
+            ),
         ],
     )
 
@@ -787,9 +809,27 @@ def test_control_coalesce_requires_all_possible_dataset_branches_to_match_target
             ),
         ],
         edges=[
-            WorkflowEdge(id="e1", source="raster-source", target="merge", source_handle="dataset", target_handle="primary"),
-            WorkflowEdge(id="e2", source="table-source", target="merge", source_handle="dataset", target_handle="fallback"),
-            WorkflowEdge(id="e3", source="merge", target="load-raster", source_handle="output", target_handle="dataset"),
+            WorkflowEdge(
+                id="e1",
+                source="raster-source",
+                target="merge",
+                source_handle="dataset",
+                target_handle="primary",
+            ),
+            WorkflowEdge(
+                id="e2",
+                source="table-source",
+                target="merge",
+                source_handle="dataset",
+                target_handle="fallback",
+            ),
+            WorkflowEdge(
+                id="e3",
+                source="merge",
+                target="load-raster",
+                source_handle="output",
+                target_handle="dataset",
+            ),
         ],
     )
 
@@ -798,7 +838,9 @@ def test_control_coalesce_requires_all_possible_dataset_branches_to_match_target
         dataset_semantics_resolver=_seed_dataset_semantics,
     )
     assert result.valid is False
-    assert any("table dataset" in error and "table-source.dataset" in error for error in result.errors)
+    assert any(
+        "table dataset" in error and "table-source.dataset" in error for error in result.errors
+    )
 
 
 def test_dataset_contract_requires_task_annotation_and_sample_semantics() -> None:
@@ -818,7 +860,10 @@ def test_dataset_contract_requires_task_annotation_and_sample_semantics() -> Non
 
     reasons = _dataset_contract_mismatch_reasons(semantics, contract)
 
-    assert any("task types image_classification does not satisfy semantic_segmentation" in reason for reason in reasons)
+    assert any(
+        "task types image_classification does not satisfy semantic_segmentation" in reason
+        for reason in reasons
+    )
     assert any("annotation kinds class_label does not satisfy mask" in reason for reason in reasons)
     assert any("sample kinds image does not satisfy image_tile" in reason for reason in reasons)
 
@@ -849,7 +894,10 @@ def test_edge_contract_rejects_missing_task_semantics_from_upstream_contract() -
 
     reasons = _contract_mismatch_reasons(source_contract, target_contract)
 
-    assert "task types are not declared by the upstream contract; expected semantic_segmentation" in reasons
+    assert (
+        "task types are not declared by the upstream contract; expected semantic_segmentation"
+        in reasons
+    )
 
 
 def test_classification_sample_semantics_flow_into_custom_api_training() -> None:
@@ -968,16 +1016,76 @@ def test_classification_sample_semantics_flow_into_custom_api_training() -> None
             ),
         ],
         edges=[
-            WorkflowEdge(id="e1", source="image-source", target="load-images", source_handle="dataset", target_handle="dataset"),
-            WorkflowEdge(id="e2", source="load-images", target="patchify", source_handle="images", target_handle="images"),
-            WorkflowEdge(id="e3", source="label-source", target="load-features", source_handle="dataset", target_handle="dataset"),
-            WorkflowEdge(id="e4", source="patchify", target="annotate", source_handle="tiles", target_handle="tiles"),
-            WorkflowEdge(id="e5", source="load-features", target="annotate", source_handle="features", target_handle="features"),
-            WorkflowEdge(id="e6", source="patchify", target="build-samples", source_handle="tiles", target_handle="tiles"),
-            WorkflowEdge(id="e7", source="annotate", target="build-samples", source_handle="annotations", target_handle="labels"),
-            WorkflowEdge(id="e8", source="build-samples", target="split-samples", source_handle="samples", target_handle="samples"),
-            WorkflowEdge(id="e9", source="split-samples", target="train", source_handle="trainSamples", target_handle="trainSamples"),
-            WorkflowEdge(id="e10", source="split-samples", target="train", source_handle="valSamples", target_handle="validationSamples"),
+            WorkflowEdge(
+                id="e1",
+                source="image-source",
+                target="load-images",
+                source_handle="dataset",
+                target_handle="dataset",
+            ),
+            WorkflowEdge(
+                id="e2",
+                source="load-images",
+                target="patchify",
+                source_handle="images",
+                target_handle="images",
+            ),
+            WorkflowEdge(
+                id="e3",
+                source="label-source",
+                target="load-features",
+                source_handle="dataset",
+                target_handle="dataset",
+            ),
+            WorkflowEdge(
+                id="e4",
+                source="patchify",
+                target="annotate",
+                source_handle="tiles",
+                target_handle="tiles",
+            ),
+            WorkflowEdge(
+                id="e5",
+                source="load-features",
+                target="annotate",
+                source_handle="features",
+                target_handle="features",
+            ),
+            WorkflowEdge(
+                id="e6",
+                source="patchify",
+                target="build-samples",
+                source_handle="tiles",
+                target_handle="tiles",
+            ),
+            WorkflowEdge(
+                id="e7",
+                source="annotate",
+                target="build-samples",
+                source_handle="annotations",
+                target_handle="labels",
+            ),
+            WorkflowEdge(
+                id="e8",
+                source="build-samples",
+                target="split-samples",
+                source_handle="samples",
+                target_handle="samples",
+            ),
+            WorkflowEdge(
+                id="e9",
+                source="split-samples",
+                target="train",
+                source_handle="trainSamples",
+                target_handle="trainSamples",
+            ),
+            WorkflowEdge(
+                id="e10",
+                source="split-samples",
+                target="train",
+                source_handle="valSamples",
+                target_handle="validationSamples",
+            ),
         ],
     )
 
@@ -1080,14 +1188,62 @@ def test_custom_api_training_rejects_mismatched_sample_task_semantics() -> None:
             ),
         ],
         edges=[
-            WorkflowEdge(id="e1", source="image-source", target="load-images", source_handle="dataset", target_handle="dataset"),
-            WorkflowEdge(id="e2", source="load-images", target="patchify", source_handle="images", target_handle="images"),
-            WorkflowEdge(id="e3", source="label-source", target="load-features", source_handle="dataset", target_handle="dataset"),
-            WorkflowEdge(id="e4", source="patchify", target="annotate", source_handle="tiles", target_handle="tiles"),
-            WorkflowEdge(id="e5", source="load-features", target="annotate", source_handle="features", target_handle="features"),
-            WorkflowEdge(id="e6", source="patchify", target="build-samples", source_handle="tiles", target_handle="tiles"),
-            WorkflowEdge(id="e7", source="annotate", target="build-samples", source_handle="annotations", target_handle="labels"),
-            WorkflowEdge(id="e8", source="build-samples", target="train", source_handle="samples", target_handle="trainSamples"),
+            WorkflowEdge(
+                id="e1",
+                source="image-source",
+                target="load-images",
+                source_handle="dataset",
+                target_handle="dataset",
+            ),
+            WorkflowEdge(
+                id="e2",
+                source="load-images",
+                target="patchify",
+                source_handle="images",
+                target_handle="images",
+            ),
+            WorkflowEdge(
+                id="e3",
+                source="label-source",
+                target="load-features",
+                source_handle="dataset",
+                target_handle="dataset",
+            ),
+            WorkflowEdge(
+                id="e4",
+                source="patchify",
+                target="annotate",
+                source_handle="tiles",
+                target_handle="tiles",
+            ),
+            WorkflowEdge(
+                id="e5",
+                source="load-features",
+                target="annotate",
+                source_handle="features",
+                target_handle="features",
+            ),
+            WorkflowEdge(
+                id="e6",
+                source="patchify",
+                target="build-samples",
+                source_handle="tiles",
+                target_handle="tiles",
+            ),
+            WorkflowEdge(
+                id="e7",
+                source="annotate",
+                target="build-samples",
+                source_handle="annotations",
+                target_handle="labels",
+            ),
+            WorkflowEdge(
+                id="e8",
+                source="build-samples",
+                target="train",
+                source_handle="samples",
+                target_handle="trainSamples",
+            ),
         ],
     )
 
@@ -1330,7 +1486,11 @@ def test_for_each_node_with_reserved_loop_ports_passes() -> None:
                 position={"x": 260, "y": 0},
                 params={},
                 input_bindings={"items": "items:items"},
-                input_defs=[WorkflowNodePort(key="items", label="Items", data_types=["value_list"], required=True)],
+                input_defs=[
+                    WorkflowNodePort(
+                        key="items", label="Items", data_types=["value_list"], required=True
+                    )
+                ],
                 input_contracts=[
                     WorkflowPortContract(
                         port_key="items",
@@ -1467,8 +1627,7 @@ def test_templates_with_resolved_seed_bindings_validate_semantically() -> None:
             dataset_semantics_resolver=_seed_dataset_semantics,
         )
         assert result.valid is True, (
-            f"Template {template.id} failed semantic validation with seed bindings: "
-            f"{result.errors}"
+            f"Template {template.id} failed semantic validation with seed bindings: {result.errors}"
         )
 
 

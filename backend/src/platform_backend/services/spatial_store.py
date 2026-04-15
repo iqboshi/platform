@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -172,9 +171,7 @@ def _overlay_source_info(
     version: DatasetVersion,
 ) -> tuple[str, str, str, list[float] | None, str | None]:
     metadata = version.metadata_json if isinstance(version.metadata_json, dict) else {}
-    original_file_name = str(
-        metadata.get("original_file_name", version.original_file_name)
-    ).strip()
+    original_file_name = str(metadata.get("original_file_name", version.original_file_name)).strip()
     content_type = str(metadata.get("content_type", version.content_type)).strip()
     suffix = Path(original_file_name).suffix.lower()
 
@@ -193,8 +190,7 @@ def _overlay_source_info(
         return "vector", original_file_name, content_type, version.bbox, version.preview_url
 
     raise ValueError(
-        "Only GeoTIFF raster and GeoJSON vector dataset versions "
-        "can be used as overlays."
+        "Only GeoTIFF raster and GeoJSON vector dataset versions can be used as overlays."
     )
 
 
