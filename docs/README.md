@@ -1,45 +1,19 @@
----
-source_of_truth: manual
-last_verified_at: 2026-04-16
-owned_by: platform-team
-derived_from:
-  - docs/api/README.md
-  - docs/architecture/overview.md
-  - docs/architecture/documentation-governance.md
-  - docs/architecture/custom-api-node-contract.md
-  - docs/generated/README.md
-  - docs/releases/v6.md
-  - apps/web/src/config/workspace-modules.json
----
+# 项目笔记
 
-# Documentation Index
+这个目录只保留一些和项目实现有关的简单说明。接口和页面逻辑以代码为准，避免维护过多重复文档。
 
-- `docs/api`: generated API contract entry points and export instructions.
-- `docs/architecture`: current architecture facts and documentation governance rules.
-- `docs/generated`: artifacts generated from code-owned registries.
-- `docs/releases`: human-authored release snapshots tied to pushed version tags.
+## 页面模块
 
-## Generated Sync Points
+- 总览页：作为进入平台后的首页，展示当前数据和协作状态。
+- 数据集页：整理公开数据集、版本和上传入口。
+- 产品展示页：展示处理后的遥感产品和模型结果。
+- 空间工作台：用于地图图层查看、点位选择和空间结果预览。
+- 工作流页：把数据输入、处理节点和输出结果组织成可视化流程。
+- 模型页：展示模型版本、指标和基础运行信息。
 
-- `docs/generated/module-catalog.md` is exported from `apps/web/src/config/workspace-modules.json`.
-- The workspace module registry now drives navigation, overview cards, and generated module documentation together.
-- `docs/architecture/workflow-node-extension-standard.md` defines the mandatory contract for adding workflow nodes, starter handoffs, preview reuse, and cross-page output actions.
-- `docs/architecture/custom-api-node-contract.md` defines the shared versioned HTTP envelope for `provider_http_api` workflow nodes.
-- `docs/releases/v6.md` is the current release snapshot for the upcoming GitHub push target.
+## 后续想法
 
-## Commands
-
-```powershell
-python .\scripts\create_workflow_node_scaffold.py --node-type custom.example_node --label "Example Node"
-npm run workflow:nodes:validate
-npm run docs:modules
-npm run docs:validate
-```
-
-## Rules
-
-- API behavior must be derived from code or generated contracts, not hand-maintained prose.
-- Architecture documents should describe stable boundaries, ownership, and flow constraints.
-- Every Markdown document in `docs/` must declare metadata and a source of truth.
-- Workflow node additions must follow `docs/architecture/workflow-node-extension-standard.md`; do not add node-specific page exceptions without updating the shared contract.
-- Before any GitHub push or release tag, verify that manual docs still match the current implementation and update stale docs first.
+- 接入真实遥感数据服务。
+- 增加更完整的工作流运行记录。
+- 优化空间工作台的图层管理体验。
+- 给模型结果增加更多可解释性展示。

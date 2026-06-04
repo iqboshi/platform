@@ -1,8 +1,3 @@
-# MinIO Notes
+# MinIO
 
-Use MinIO as the development S3-compatible store for:
-
-- raw uploads
-- dataset versions
-- model weights
-- workflow run artifacts
+本地开发时可以用 MinIO 模拟对象存储，用来保存上传文件、模型文件和工作流产物。

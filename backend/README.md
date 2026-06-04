@@ -1,16 +1,21 @@
-# platform-backend
+# 后端说明
 
-FastAPI backend scaffold for dataset ingestion, workflow orchestration, model
-registry, and tile-preview boundaries.
+后端使用 FastAPI 编写，主要负责用户、数据集、工作流、空间图层和产品展示相关接口。
 
-## Entry Points
-
-- `platform_backend.main:app` - API server
-- `platform_backend.tiler.app:app` - standalone tile-preview service
-- `platform_backend.workers.celery_app:celery_app` - worker application
-
-## Install
+本地安装：
 
 ```powershell
 python -m pip install -e .\backend[dev]
+```
+
+启动服务：
+
+```powershell
+uvicorn platform_backend.main:app --app-dir .\backend\src --reload
+```
+
+健康检查：
+
+```text
+GET /healthz
 ```

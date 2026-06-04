@@ -42,12 +42,3 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     get_settings.cache_clear()
     get_engine.cache_clear()
-
-
-@pytest.fixture()
-def admin_token(client: TestClient) -> str:
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"email": "admin@platform.local", "password": "Admin123!"},
-    )
-    return response.json()["access_token"]

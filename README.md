@@ -1,58 +1,57 @@
-# Platform
+# 遥感数据处理与工作流平台
 
-Platform is a remote sensing and data-processing workspace centered on reusable
-assets, workflow orchestration, spatial visualization, model execution, and
-workspace governance.
+这是一个面向遥感数据管理、空间分析和流程编排的个人 Web 平台项目。
+项目主要用于展示我对前端工程、FastAPI 接口设计、地图可视化和工作流页面交互的实现。
 
-## Live Preview
+在线预览：
 
-- Preview: [https://iqboshi.github.io/platform/](https://iqboshi.github.io/platform/)
-- The hosted preview is a static portfolio build with built-in demo data, automatic sign-in, workflow examples, spatial layers, and downloadable sample assets.
-- The full local stack uses the FastAPI backend, workspace services, and the same React interface.
+[https://iqboshi.github.io/platform/](https://iqboshi.github.io/platform/)
 
-## Release Snapshot
+预览版本使用内置示例数据，可以直接浏览平台页面，不需要本地启动后端服务。
 
-- Current release target: `v6`
-- Cross-page handoff is now contract-driven for datasets, ROIs, model versions, and GEE credentials.
-- Workflow node extension rules are documented in `docs/architecture/workflow-node-extension-standard.md`.
-- Structured workflow composition now includes nested subgraphs, boundary-node-derived interfaces, and explicit control-flow primitives instead of ad hoc page coupling.
-- External HTTP API workflow nodes now share a versioned contract documented in `docs/architecture/custom-api-node-contract.md`.
-- Workspace module documentation is generated from `apps/web/src/config/workspace-modules.json`.
-- Workflow node scaffolding and contract validation are now built into local scripts and CI.
-- Personal assets, workflows, spatial overlays, and workspace settings are documented as separate, composable surfaces.
+## 主要功能
 
-## Highlights
+- 平台总览：展示数据集、工作流、工单和空间资源等概览信息。
+- 公开数据集：管理和查看遥感数据集、版本和相关说明。
+- 产品展示：展示模型或处理流程产出的样例产品。
+- 空间工作台：基于地图查看图层、样例点位和空间分析结果。
+- 工作流：用画布形式组织数据输入、处理步骤和输出结果。
+- 模型页面：展示模型版本、指标和基础运行信息。
+- 账户与审批：包含登录、注册、用户审批和个人信息维护等页面。
 
-- Reusable asset hub for datasets, workflow outputs, models, products, and shared capabilities
-- Workflow canvas with starter bindings and structured preview actions
-- Spatial studio that can consume overlay-ready workflow outputs directly
-- GitHub Pages preview build with a static demo backend for resume and portfolio review
-- Workspace overview, announcements, approvals, and notifications wired to live state
-- Backend API, workflow runtime, and shared frontend types aligned through generated and code-owned docs
+## 技术栈
 
-## Repository Layout
+- 前端：React、TypeScript、Vite、Ant Design、OpenLayers、React Flow、Three.js
+- 后端：Python、FastAPI、SQLAlchemy、SQLite
+- 部署：GitHub Actions、GitHub Pages
+
+## 项目结构
 
 ```text
 platform/
-  apps/web          # React + Vite + Ant Design UI
-  backend           # FastAPI API, domain logic, worker, and tiler entrypoints
-  packages          # Shared frontend types and utilities
-  config            # Env templates, logging, and deployment defaults
-  infra             # Compose and infrastructure bootstrap manifests
-  docs              # Architecture, generated docs, API snapshots, and release notes
-  scripts           # Local automation helpers
-  tests             # End-to-end and scenario documentation
+  apps/web      前端页面和交互逻辑
+  backend       FastAPI 后端接口
+  packages      前端共享类型
+  config        本地环境配置模板
+  infra         本地服务编排文件
+  docs          项目笔记
 ```
 
-## Quick Start
+## 本地运行
 
-### 1. Install frontend dependencies
+安装前端依赖：
 
 ```powershell
 npm install
 ```
 
-### 2. Prepare the Python environment
+启动前端：
+
+```powershell
+npm run dev --workspace @platform/web
+```
+
+准备后端环境：
 
 ```powershell
 python -m venv .venv
@@ -61,57 +60,21 @@ python -m pip install --upgrade pip
 python -m pip install -e .\backend[dev]
 ```
 
-### 3. Copy the environment template
-
-```powershell
-Copy-Item .\config\env\.env.example .\.env
-```
-
-### 4. Start the backend
+启动后端：
 
 ```powershell
 uvicorn platform_backend.main:app --app-dir .\backend\src --reload
 ```
 
-### 5. Start the frontend
-
-```powershell
-npm run dev --workspace @platform/web
-```
-
-## Documentation
-
-- `docs/README.md`: docs index and governance entry
-- `docs/architecture/overview.md`: stable boundaries and runtime flows
-- `docs/architecture/workflow-node-extension-standard.md`: required workflow node integration rules
-- `docs/architecture/custom-api-node-contract.md`: versioned request and response contract for `provider_http_api` workflow nodes
-- `docs/generated/module-catalog.md`: generated module registry snapshot
-- `docs/api/openapi.json`: generated API contract snapshot
-
-## Validation Commands
+## 常用检查
 
 ```powershell
 npm run lint --workspace @platform/web
-npm run test --workspace @platform/web
 npm run build --workspace @platform/web
-python .\scripts\validate_workflow_nodes.py
-python .\scripts\validate_docs.py
 .venv\Scripts\python.exe -m pytest .\backend\tests
 ```
 
-## Workflow Node Authoring
+## 说明
 
-```powershell
-python .\scripts\create_workflow_node_scaffold.py --node-type custom.example_node --label "Example Node"
-python .\scripts\validate_workflow_nodes.py
-```
-
-The scaffold generator writes a starter pack to `tmp/workflow-node-scaffolds/`.
-Use it before editing the real catalog, runtime, mock catalog, and tests.
-
-## Git Workflow
-
-- Remote: [iqboshi/platform](https://github.com/iqboshi/platform.git)
-- Default branch: `main`
-- Release tags: `v5.0`, `v5.1`, `v5.2`, `v5.3`, `v5.4`, `v6`
-- Merge policy: PR or protected-branch push only after validation passes
+GitHub Pages 上的预览版本是静态 Demo，主要用于展示界面和核心交互。
+完整本地版本可以连接 FastAPI 后端，适合继续扩展数据上传、工作流执行和空间数据服务等功能。

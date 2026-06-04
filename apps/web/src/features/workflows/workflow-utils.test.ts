@@ -5,8 +5,9 @@ import { platformMock } from '@/mocks/platform';
 import { buildWorkflowStats } from './workflow-utils';
 
 describe('buildWorkflowStats', () => {
-  it('summarizes workflow structure from the current graph', () => {
+  it('counts nodes, edges, and categories in the demo workflow', () => {
     const stats = buildWorkflowStats(platformMock.workflowCatalog, platformMock.workflowVersion);
+
     expect(stats).toEqual({
       nodeCount: 11,
       edgeCount: 13,
