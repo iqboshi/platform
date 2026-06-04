@@ -1616,6 +1616,18 @@ def test_all_builtin_templates_map_to_exactly_one_runtime() -> None:
         )
 
 
+def test_gee_runtime_supports_nee_boundary_graphs() -> None:
+    assert gee_runtime.is_supported_gee_graph(
+        {"nodes": [{"id": "nee-map", "type": "gee.nee_map_export"}], "edges": []}
+    )
+    assert gee_runtime.is_supported_gee_graph(
+        {
+            "nodes": [{"id": "nee-series", "type": "gee.nee_point_timeseries_export"}],
+            "edges": [],
+        }
+    )
+
+
 def test_templates_with_resolved_seed_bindings_validate_semantically() -> None:
     for template in BUILTIN_WORKFLOW_TEMPLATES:
         graph = _graph_with_template_sample_bindings(template.id)

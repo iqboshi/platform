@@ -670,6 +670,279 @@ def _source_nodes() -> list[WorkflowCatalogItem]:
             ],
         ),
         WorkflowCatalogItem(
+            type="gee.nee_map_export",
+            label="GEE NEE Map Export",
+            category="inference",
+            description=(
+                "Estimate farmland NEE over an ROI in Google Earth Engine and export the "
+                "result as a raster dataset version."
+            ),
+            runtime_kind="export",
+            supported_tasks=["geospatial_collection", "sample_dataset", "custom_api_prediction"],
+            tags=["gee", "nee", "raster", "boundary", "provider_gee", "export"],
+            outputs=[_port("dataset", "Dataset Version", "dataset_version")],
+            params=[
+                _param(
+                    "roiMode",
+                    "ROI Mode",
+                    "select",
+                    default_value="bbox",
+                    required=True,
+                    options=[("bbox", "BBox"), ("saved_roi", "Saved ROI")],
+                ),
+                _param(
+                    "bbox",
+                    "BBox",
+                    "text",
+                    description="Format: minLon,minLat,maxLon,maxLat in EPSG:4326.",
+                    placeholder="116.10,39.70,116.65,40.10",
+                ),
+                _param("roiId", "Saved ROI", "spatialRoi"),
+                _param(
+                    "satellite",
+                    "Satellite",
+                    "select",
+                    default_value="S2",
+                    required=True,
+                    options=[
+                        ("L4", "Landsat 4 TM"),
+                        ("L5", "Landsat 5 TM"),
+                        ("L7", "Landsat 7 ETM+"),
+                        ("L8", "Landsat 8 OLI/TIRS"),
+                        ("L9", "Landsat 9 OLI-2/TIRS-2"),
+                        ("S2", "Sentinel-2 MSI"),
+                        ("HLSL30", "HLS Landsat OLI"),
+                        ("HLSS30", "HLS Sentinel-2 MSI"),
+                    ],
+                ),
+                _param(
+                    "startDate", "Start Date", "text", default_value="2026-01-01", required=True
+                ),
+                _param("endDate", "End Date", "text", default_value="2026-02-01", required=True),
+                _param(
+                    "trainingPreset",
+                    "Training Preset",
+                    "select",
+                    default_value="auto",
+                    required=True,
+                    options=[
+                        ("auto", "Auto"),
+                        ("CHINA", "China"),
+                        ("CORN", "Corn"),
+                        ("WHEAT", "Wheat"),
+                    ],
+                ),
+                _param(
+                    "scaleMeters",
+                    "Scale Meters",
+                    "number",
+                    default_value=30,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "credentialMode",
+                    "Credential Mode",
+                    "select",
+                    default_value="platform_default",
+                    required=True,
+                    options=[("platform_default", "Platform Default"), ("personal", "Personal")],
+                ),
+                _param("personalCredentialId", "Personal Credential", "geeCredential"),
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="NEE Map",
+                ),
+                _param(
+                    "croplandMaskAssetId",
+                    "Cropland Mask Asset ID",
+                    "text",
+                    default_value="users/potapovpeter/Global_cropland_2019/Global_cropland_2019_NE",
+                    required=True,
+                ),
+                _param(
+                    "chinaTrainingAssetId",
+                    "China Training Asset ID",
+                    "text",
+                    default_value="projects/ee-maywu1/assets/CHINA2024_processed_uppercase_header",
+                    required=True,
+                ),
+                _param(
+                    "cornTrainingAssetId",
+                    "Corn Training Asset ID",
+                    "text",
+                    default_value="projects/ee-maywu1/assets/maize_GEE",
+                    required=True,
+                ),
+                _param(
+                    "wheatTrainingAssetId",
+                    "Wheat Training Asset ID",
+                    "text",
+                    default_value="projects/ee-maywu1/assets/wheat_GEE",
+                    required=True,
+                ),
+            ],
+            output_contracts=[
+                _contract(
+                    "dataset",
+                    "Raster NEE output persisted as a GeoTIFF dataset version.",
+                    dataset_kinds=["raster"],
+                    file_formats=["geotiff"],
+                )
+            ],
+            example_outputs=[
+                _example(
+                    "NEE raster dataset",
+                    "json",
+                    port_key="dataset",
+                    content='{"kind":"raster","format":"geotiff","bands":["NEE"]}',
+                )
+            ],
+            common_errors=[
+                "bbox or roiId must resolve to a valid ROI before export.",
+                "The selected date window must not exceed one year.",
+                "The configured training asset IDs must be readable by the active GEE credential.",
+            ],
+            starter_bindings=[_starter_binding("spatial_roi", "roiId", priority=100)],
+            output_behaviors=[
+                _output_behavior(
+                    "dataset",
+                    preview_kinds=["dataset_version"],
+                    usages=[
+                        _output_usage("workflow", "dataset_version"),
+                        _output_usage("spatial", "asset_version"),
+                    ],
+                )
+            ],
+        ),
+        WorkflowCatalogItem(
+            type="gee.nee_point_timeseries_export",
+            label="GEE NEE Point Time Series Export",
+            category="inference",
+            description=(
+                "Evaluate a point-based NEE time series in Google Earth Engine and export "
+                "the result as a CSV dataset version."
+            ),
+            runtime_kind="export",
+            supported_tasks=[
+                "geospatial_collection",
+                "tabular_prediction",
+                "tabular_validation",
+            ],
+            tags=["gee", "nee", "timeseries", "table", "boundary", "provider_gee", "export"],
+            outputs=[_port("dataset", "Dataset Version", "dataset_version")],
+            params=[
+                _param("longitude", "Longitude", "number", required=True),
+                _param("latitude", "Latitude", "number", required=True),
+                _param(
+                    "startDate", "Start Date", "text", default_value="2021-09-01", required=True
+                ),
+                _param("endDate", "End Date", "text", default_value="2022-09-01", required=True),
+                _param(
+                    "band",
+                    "Band",
+                    "select",
+                    default_value="NEE",
+                    required=True,
+                    options=[
+                        ("NEE", "NEE"),
+                        ("AVI", "AVI"),
+                        ("BAI", "BAI"),
+                        ("BI", "BI"),
+                        ("DSWI3", "DSWI3"),
+                        ("MBI", "MBI"),
+                        ("MLSWI26", "MLSWI26"),
+                        ("NLI", "NLI"),
+                        ("NSDS", "NSDS"),
+                        ("OCVI", "OCVI"),
+                        ("RCC", "RCC"),
+                    ],
+                ),
+                _param(
+                    "scaleMeters",
+                    "Scale Meters",
+                    "number",
+                    default_value=30,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "bufferMeters",
+                    "Buffer Meters",
+                    "number",
+                    default_value=30,
+                    min=1,
+                    step=1,
+                    required=True,
+                ),
+                _param(
+                    "credentialMode",
+                    "Credential Mode",
+                    "select",
+                    default_value="platform_default",
+                    required=True,
+                    options=[("platform_default", "Platform Default"), ("personal", "Personal")],
+                ),
+                _param("personalCredentialId", "Personal Credential", "geeCredential"),
+                _param(
+                    "outputDatasetName",
+                    "Output Dataset Name",
+                    "text",
+                    default_value="NEE Point Time Series",
+                ),
+                _param(
+                    "croplandMaskAssetId",
+                    "Cropland Mask Asset ID",
+                    "text",
+                    default_value="users/potapovpeter/Global_cropland_2019/Global_cropland_2019_NE",
+                    required=True,
+                ),
+                _param(
+                    "chinaTrainingAssetId",
+                    "China Training Asset ID",
+                    "text",
+                    default_value="projects/ee-maywu1/assets/CHINA2024_processed_uppercase_header",
+                    required=True,
+                ),
+            ],
+            output_contracts=[
+                _contract(
+                    "dataset",
+                    "Point time-series table persisted as a CSV dataset version.",
+                    dataset_kinds=["table"],
+                    file_formats=["csv"],
+                    produced_columns=["date", "band", "value"],
+                )
+            ],
+            example_outputs=[
+                _example(
+                    "NEE point time-series CSV",
+                    "json",
+                    port_key="dataset",
+                    content='{"kind":"table","format":"csv","columns":["date","band","value"]}',
+                )
+            ],
+            common_errors=[
+                "longitude and latitude must define a valid EPSG:4326 point.",
+                (
+                    "The configured China training asset must be readable by the active "
+                    "GEE credential."
+                ),
+                "No Landsat imagery matched the selected point and date range.",
+            ],
+            output_behaviors=[
+                _output_behavior(
+                    "dataset",
+                    preview_kinds=["dataset_version"],
+                    usages=[_output_usage("workflow", "dataset_version")],
+                )
+            ],
+        ),
+        WorkflowCatalogItem(
             type="source.model_version",
             label="Model Version",
             category="source",

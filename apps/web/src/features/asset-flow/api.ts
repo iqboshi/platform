@@ -9,9 +9,10 @@ import type {
   LineageEdge,
 } from '@platform/types';
 
-type ApiRecord = Record<string, unknown>;
+import { apiBaseUrl, isPortfolioDemo } from '@/config/env';
+import { clonePlatformMock, platformMock } from '@/mocks/platform';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8010/api/v1';
+type ApiRecord = Record<string, unknown>;
 
 function getString(input: ApiRecord, key: string): string {
   const value = input[key];
@@ -313,6 +314,13 @@ export async function loadAssetFlowOverview(
   token: string,
   scope: Extract<AssetScope, 'mine' | 'all'> = 'mine',
 ): Promise<AssetFlowOverview> {
+  if (isPortfolioDemo) {
+    return clonePlatformMock({
+      ...platformMock.assetFlowOverview,
+      scope,
+    });
+  }
+
   const payload = await requestJson<ApiRecord>(withQuery('/asset-flow/overview', { scope }), token);
   const assetVersionsRaw = Array.isArray(payload.assetVersions)
     ? (payload.assetVersions as ApiRecord[])
@@ -341,6 +349,12 @@ export async function loadAssetInputCandidates(
   consumer: AssetConsumer,
   scope: AssetScope = 'visible',
 ): Promise<AssetInputCandidate[]> {
+  if (isPortfolioDemo) {
+    return clonePlatformMock(
+      platformMock.assetInputCandidates.filter((item) => item.consumer === consumer),
+    );
+  }
+
   const payload = await requestJson<ApiRecord[]>(
     withQuery('/asset-flow/input-candidates', {
       consumer,

@@ -2,20 +2,31 @@ import type { AuthUser, RegisterPayload } from '@platform/types';
 
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
+import { isPortfolioDemo } from '@/config/env';
 import {
   loadCurrentUser,
   login as loginRequest,
   logout as logoutRequest,
   register as registerRequest,
 } from '@/lib/api';
+import { portfolioDemoUser } from '@/mocks/platform';
 import { AuthContext, TOKEN_STORAGE_KEY, type AuthContextValue, type AuthStatus } from './auth-context';
 
+const DEMO_TOKEN = 'portfolio-demo-token';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [status, setStatus] = useState<AuthStatus>('loading');
-  const [token, setToken] = useState<string | null>(null);
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [status, setStatus] = useState<AuthStatus>(isPortfolioDemo ? 'authenticated' : 'loading');
+  const [token, setToken] = useState<string | null>(isPortfolioDemo ? DEMO_TOKEN : null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(
+    isPortfolioDemo ? portfolioDemoUser : null,
+  );
 
   useEffect(() => {
+    if (isPortfolioDemo) {
+      window.localStorage.setItem(TOKEN_STORAGE_KEY, DEMO_TOKEN);
+      return;
+    }
+
     const storedToken = window.localStorage.getItem(TOKEN_STORAGE_KEY);
     if (!storedToken) {
       setStatus('guest');
@@ -37,6 +48,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (credentials: { email: string; password: string }): Promise<AuthUser> => {
+    if (isPortfolioDemo) {
+      window.localStorage.setItem(TOKEN_STORAGE_KEY, DEMO_TOKEN);
+      setToken(DEMO_TOKEN);
+      setCurrentUser(portfolioDemoUser);
+      setStatus('authenticated');
+      return portfolioDemoUser;
+    }
+
     const response = await loginRequest(credentials);
     window.localStorage.setItem(TOKEN_STORAGE_KEY, response.accessToken);
     setToken(response.accessToken);
@@ -46,10 +65,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(async (payload: RegisterPayload): Promise<void> => {
+    if (isPortfolioDemo) {
+      return;
+    }
+
     await registerRequest(payload);
   }, []);
 
   const logout = useCallback(async (): Promise<void> => {
+    if (isPortfolioDemo) {
+      window.localStorage.setItem(TOKEN_STORAGE_KEY, DEMO_TOKEN);
+      setToken(DEMO_TOKEN);
+      setCurrentUser(portfolioDemoUser);
+      setStatus('authenticated');
+      return;
+    }
+
     if (token) {
       try {
         await logoutRequest(token);
@@ -64,6 +95,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   const refreshCurrentUser = useCallback(async (): Promise<AuthUser | null> => {
+    if (isPortfolioDemo) {
+      setToken(DEMO_TOKEN);
+      setCurrentUser(portfolioDemoUser);
+      setStatus('authenticated');
+      return portfolioDemoUser;
+    }
+
     if (!token) {
       setCurrentUser(null);
       setStatus('guest');

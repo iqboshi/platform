@@ -80,6 +80,8 @@ import { useNavigate } from 'react-router-dom';
 
 import { isApiError } from '@/auth/errors';
 import { createHandoffPath } from '@/features/asset-flow/handoff';
+import { WorkflowPointPickerModal } from '@/components/WorkflowPointPickerModal';
+import { WorkflowPreviewVisual } from '@/components/WorkflowPreviewVisuals';
 import {
   canConnectPorts,
   catalogMatchesFilters,
@@ -502,11 +504,21 @@ function buildPreviewPayload(preview: WorkflowNodePreviewValue): unknown {
 function NodePreviewCard({
   portKey,
   preview,
+  datasets,
+  datasetVersions,
+  authToken,
   onActionClick,
+  showRawPayload = true,
+  compact = false,
 }: {
   portKey: string;
   preview: WorkflowNodePreviewValue;
+  datasets: DatasetSummary[];
+  datasetVersions: DatasetVersionSummary[];
+  authToken?: string | null;
   onActionClick?: (action: NonNullable<WorkflowNodePreviewValue['nextActions']>[number]) => void;
+  showRawPayload?: boolean;
+  compact?: boolean;
 }) {
   const { locale } = useI18n();
   const previewKindLabel =
@@ -522,6 +534,13 @@ function NodePreviewCard({
       {previewSummary ? (
         <Text type="secondary">{previewSummary}</Text>
       ) : null}
+      <WorkflowPreviewVisual
+        preview={preview}
+        datasets={datasets}
+        datasetVersions={datasetVersions}
+        authToken={authToken}
+        compact={compact}
+      />
       {preview.nextActions?.length ? (
         <Space wrap size={[8, 8]}>
           {preview.nextActions.map((action) => (
@@ -531,9 +550,11 @@ function NodePreviewCard({
           ))}
         </Space>
       ) : null}
-      <pre className="json-block workflow-node-test-json">
-        {JSON.stringify(buildPreviewPayload(preview), null, 2)}
-      </pre>
+      {showRawPayload ? (
+        <pre className="json-block workflow-node-test-json">
+          {JSON.stringify(buildPreviewPayload(preview), null, 2)}
+        </pre>
+      ) : null}
     </div>
   );
 }
@@ -1742,6 +1763,7 @@ function CanvasInner({
   const [nodeTestLoading, setNodeTestLoading] = useState(false);
   const [nodeTestResults, setNodeTestResults] = useState<Record<string, NodeTestResultState>>({});
   const [nodeTestModalOpen, setNodeTestModalOpen] = useState(false);
+  const [pointPickerOpen, setPointPickerOpen] = useState(false);
   const [subgraphEditorOpen, setSubgraphEditorOpen] = useState(false);
   const [nodeTestProgressOpen, setNodeTestProgressOpen] = useState(false);
   const [nodeTestProgressPercent, setNodeTestProgressPercent] = useState(0);
@@ -1914,6 +1936,32 @@ function CanvasInner({
     selectedNodeTest && selectedNodeTest.graphSignature !== currentGraphSignature,
   );
   const selectedNodeType = selectedNode?.data.type;
+  const selectedNodeSupportsPointPicker =
+    selectedNode?.data.type === 'gee.nee_point_timeseries_export';
+  const selectedNodeCurrentPoint = useMemo(() => {
+    if (!selectedNodeSupportsPointPicker || !selectedNode) {
+      return null;
+    }
+    const longitude = Number(selectedNode.data.params.longitude);
+    const latitude = Number(selectedNode.data.params.latitude);
+    if (
+      !Number.isFinite(longitude) ||
+      !Number.isFinite(latitude) ||
+      Math.abs(longitude) > 180 ||
+      Math.abs(latitude) > 90
+    ) {
+      return null;
+    }
+    return {
+      longitude,
+      latitude,
+    };
+  }, [selectedNode, selectedNodeSupportsPointPicker]);
+  useEffect(() => {
+    if (!selectedNodeSupportsPointPicker) {
+      setPointPickerOpen(false);
+    }
+  }, [selectedNodeSupportsPointPicker]);
   const selectedNodeIssues = useMemo(
     () =>
       selectedNodeId
@@ -1997,6 +2045,23 @@ function CanvasInner({
       failed: localizeText('Node test failed.'),
     }),
     [localizeText],
+  );
+  const pointPickerCopy = useMemo(
+    () =>
+      locale === 'zh-CN'
+        ? {
+            title: '地图选点',
+            description: '打开地图后单击一次即可回填经纬度。',
+            action: '从地图选点',
+            empty: '尚未设置经纬度',
+          }
+        : {
+            title: 'Map Point Picker',
+            description: 'Open the map and click once to write longitude and latitude back.',
+            action: 'Pick On Map',
+            empty: 'Longitude and latitude are not set yet.',
+          },
+    [locale],
   );
   const stopNodeTestProgressTimer = useCallback(() => {
     if (nodeTestProgressTimerRef.current !== null) {
@@ -2685,7 +2750,7 @@ function CanvasInner({
     );
   };
 
-  const updateSelectedNodeParams = (paramKey: string, value: unknown) => {
+  const applySelectedNodeParamPatch = (patch: Record<string, unknown>) => {
     if (!selectedNodeId) {
       return;
     }
@@ -2697,18 +2762,19 @@ function CanvasInner({
 
       let nextParams: Record<string, unknown> = {
         ...node.data.params,
-        [paramKey]: value,
+        ...patch,
       };
 
-      if (paramKey === 'credentialMode') {
-        if (value === 'platform_default') {
+      if ('credentialMode' in patch) {
+        const credentialMode = patch.credentialMode;
+        if (credentialMode === 'platform_default') {
           nextParams = {
             ...nextParams,
             personalCredentialId: '',
           };
         }
         if (
-          value === 'personal' &&
+          credentialMode === 'personal' &&
           (!nextParams.personalCredentialId || typeof nextParams.personalCredentialId !== 'string')
         ) {
           nextParams = {
@@ -2718,7 +2784,7 @@ function CanvasInner({
         }
       }
 
-      if (paramKey === 'roiMode' && value === 'saved_roi') {
+      if (patch.roiMode === 'saved_roi') {
         nextParams = {
           ...nextParams,
           roiId:
@@ -2739,6 +2805,29 @@ function CanvasInner({
 
     commitGraphState(nextNodes, edgesRef.current, true);
   };
+
+  const updateSelectedNodeParams = (paramKey: string, value: unknown) => {
+    applySelectedNodeParamPatch({ [paramKey]: value });
+  };
+
+  const applySelectedPointToNode = useCallback(
+    (point: { longitude: number; latitude: number }) => {
+      if (!selectedNodeSupportsPointPicker || !canManage) {
+        return;
+      }
+      applySelectedNodeParamPatch({
+        longitude: point.longitude,
+        latitude: point.latitude,
+      });
+      setPointPickerOpen(false);
+      message.success(
+        locale === 'zh-CN'
+          ? '已把地图点位写入当前节点。'
+          : 'The selected map point has been applied to the node.',
+      );
+    },
+    [applySelectedNodeParamPatch, canManage, locale, message, selectedNodeSupportsPointPicker],
+  );
 
   const updateSelectedBoundaryInterface = (
     kind: 'input' | 'output',
@@ -3641,6 +3730,27 @@ function CanvasInner({
                 ) : (
                   <Text type="secondary">{t('workflows.noParameters')}</Text>
                 )}
+                {selectedNodeSupportsPointPicker ? (
+                  <div className="workflow-parameter-field workflow-parameter-field-accent">
+                    <div className="workflow-parameter-head">
+                      <strong>{pointPickerCopy.title}</strong>
+                      <Text type="secondary">{pointPickerCopy.description}</Text>
+                    </div>
+                    <Space wrap size={[8, 8]}>
+                      <Button disabled={!canManage} onClick={() => setPointPickerOpen(true)}>
+                        {pointPickerCopy.action}
+                      </Button>
+                      {selectedNodeCurrentPoint ? (
+                        <Tag color="processing">
+                          {selectedNodeCurrentPoint.longitude.toFixed(6)},{' '}
+                          {selectedNodeCurrentPoint.latitude.toFixed(6)}
+                        </Tag>
+                      ) : (
+                        <Text type="secondary">{pointPickerCopy.empty}</Text>
+                      )}
+                    </Space>
+                  </div>
+                ) : null}
               </div>
             ),
           });
@@ -3701,9 +3811,28 @@ function CanvasInner({
                 ) : null}
 
                 {selectedNodeTest ? (
-                  <Button onClick={() => setNodeTestModalOpen(true)}>
-                    {t('workflows.nodeTestViewDetails')}
-                  </Button>
+                  <>
+                    <Button onClick={() => setNodeTestModalOpen(true)}>
+                      {t('workflows.nodeTestViewDetails')}
+                    </Button>
+                    {Object.entries(selectedNodeTest.outputPreview).length ? (
+                      <div className="workflow-node-test-inline-grid">
+                        {Object.entries(selectedNodeTest.outputPreview).map(([portKey, preview]) => (
+                          <NodePreviewCard
+                            key={`inline-output-${portKey}`}
+                            portKey={portKey}
+                            preview={preview}
+                            datasets={datasets}
+                            datasetVersions={datasetVersions}
+                            authToken={authToken}
+                            onActionClick={handleNodePreviewAction}
+                            showRawPayload={false}
+                            compact
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
                   <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>
                 )}
@@ -4236,6 +4365,16 @@ function CanvasInner({
         )}
       </Drawer>
 
+      <WorkflowPointPickerModal
+        open={pointPickerOpen}
+        token={authToken}
+        locale={locale}
+        spatialRois={spatialRois}
+        initialPoint={selectedNodeCurrentPoint}
+        onCancel={() => setPointPickerOpen(false)}
+        onConfirm={applySelectedPointToNode}
+      />
+
       <Modal
         title={
           selectedNode
@@ -4268,6 +4407,9 @@ function CanvasInner({
                       key={`input-${portKey}`}
                       portKey={portKey}
                       preview={preview}
+                      datasets={datasets}
+                      datasetVersions={datasetVersions}
+                      authToken={authToken}
                       onActionClick={handleNodePreviewAction}
                     />
                   ))
@@ -4283,6 +4425,9 @@ function CanvasInner({
                       key={`output-${portKey}`}
                       portKey={portKey}
                       preview={preview}
+                      datasets={datasets}
+                      datasetVersions={datasetVersions}
+                      authToken={authToken}
                       onActionClick={handleNodePreviewAction}
                     />
                   ))

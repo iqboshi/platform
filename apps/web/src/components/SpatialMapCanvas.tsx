@@ -14,11 +14,13 @@ import { unByKey } from 'ol/Observable';
 import { pointerMove as pointerMoveCondition } from 'ol/events/condition';
 import type { EventsKey } from 'ol/events';
 import type BaseLayer from 'ol/layer/Base';
+import ImageLayer from 'ol/layer/Image';
 import VectorLayer from 'ol/layer/Vector';
 import WebGLTileLayer from 'ol/layer/WebGLTile';
 import View from 'ol/View';
-import { fromLonLat, transformExtent } from 'ol/proj';
+import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
 import GeoTIFFSource from 'ol/source/GeoTIFF';
+import ImageStatic from 'ol/source/ImageStatic';
 import VectorSource from 'ol/source/Vector';
 import { getArea as getGeometryArea } from 'ol/sphere';
 import { Circle as CircleStyle, Fill, Stroke, Style, Text as TextStyle } from 'ol/style';
@@ -53,6 +55,11 @@ export interface SpatialCoordinateLabelPoint {
   latitude: number;
 }
 
+export interface SpatialMapSelectedPoint {
+  longitude: number;
+  latitude: number;
+}
+
 interface SpatialMapCanvasProps {
   token?: string | null;
   locale?: string;
@@ -67,10 +74,13 @@ interface SpatialMapCanvasProps {
   drawMode?: 'rectangle' | 'polygon' | null;
   draftGeometry?: SpatialDraftGeometry;
   focusRequest?: SpatialMapFocusRequest;
+  selectedPoint?: SpatialMapSelectedPoint | null;
+  pointSelectionEnabled?: boolean;
   geometryEditEnabled: boolean;
   onDrawComplete: (draft: SpatialDraftGeometry) => void;
   onDrawCancel?: () => void;
   onSelectRoi: (roiId?: string) => void;
+  onSelectPoint?: (point: SpatialMapSelectedPoint) => void;
   onSelectedRoiGeometryChange: (draft: SpatialDraftGeometry) => void;
   onOverlayError?: (message: string) => void;
   onBaseLayerFallback?: (nextBaseLayer: MapBaseLayerKey, reason: string) => void;
@@ -118,6 +128,13 @@ const hoveredRoiGlowStyle = new Style({
   }),
   fill: new Fill({
     color: 'rgba(74, 163, 255, 0.16)',
+  }),
+});
+const selectedPointStyle = new Style({
+  image: new CircleStyle({
+    radius: 6,
+    fill: new Fill({ color: 'rgba(255, 59, 48, 0.94)' }),
+    stroke: new Stroke({ color: 'rgba(255,255,255,0.98)', width: 2 }),
   }),
 });
 
@@ -247,10 +264,13 @@ export function SpatialMapCanvas({
   drawMode,
   draftGeometry,
   focusRequest,
+  selectedPoint,
+  pointSelectionEnabled = false,
   geometryEditEnabled,
   onDrawComplete,
   onDrawCancel,
   onSelectRoi,
+  onSelectPoint,
   onSelectedRoiGeometryChange,
   onOverlayError,
   onBaseLayerFallback,
@@ -260,7 +280,9 @@ export function SpatialMapCanvas({
   const roiSourceRef = useRef<VectorSource<Feature<Geometry>> | null>(null);
   const draftSourceRef = useRef<VectorSource<Feature<Geometry>> | null>(null);
   const savedCoordinateSourceRef = useRef<VectorSource<Feature<Geometry>> | null>(null);
+  const selectedPointSourceRef = useRef<VectorSource<Feature<Geometry>> | null>(null);
   const savedCoordinateLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
+  const selectedPointLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const roiLayerRef = useRef<VectorLayer<VectorSource<Feature<Geometry>>> | null>(null);
   const selectInteractionRef = useRef<Select | null>(null);
   const hoverInteractionRef = useRef<Select | null>(null);
@@ -275,11 +297,14 @@ export function SpatialMapCanvas({
   const onDrawCompleteRef = useRef(onDrawComplete);
   const onDrawCancelRef = useRef(onDrawCancel);
   const onSelectedRoiGeometryChangeRef = useRef(onSelectedRoiGeometryChange);
+  const onSelectPointRef = useRef(onSelectPoint);
   const onOverlayErrorRef = useRef(onOverlayError);
   const onBaseLayerFallbackRef = useRef(onBaseLayerFallback);
   const fallbackTriedKeysRef = useRef<MapBaseLayerKey[]>([]);
   const selectedOverlayIdsRef = useRef<string[]>(selectedOverlayIds);
   const drawingInProgressRef = useRef(false);
+  const drawModeRef = useRef(drawMode);
+  const pointSelectionEnabledRef = useRef(pointSelectionEnabled);
   const [baseLayerWarning, setBaseLayerWarning] = useState<string>();
   const [drawingInProgress, setDrawingInProgress] = useState(false);
   const [drawMetrics, setDrawMetrics] = useState<DrawMetrics | null>(null);
@@ -301,6 +326,10 @@ export function SpatialMapCanvas({
   }, [onSelectedRoiGeometryChange]);
 
   useEffect(() => {
+    onSelectPointRef.current = onSelectPoint;
+  }, [onSelectPoint]);
+
+  useEffect(() => {
     onOverlayErrorRef.current = onOverlayError;
   }, [onOverlayError]);
 
@@ -313,9 +342,25 @@ export function SpatialMapCanvas({
   }, [selectedOverlayIds]);
 
   useEffect(() => {
+    drawModeRef.current = drawMode;
+  }, [drawMode]);
+
+  useEffect(() => {
+    pointSelectionEnabledRef.current = pointSelectionEnabled;
+  }, [pointSelectionEnabled]);
+
+  useEffect(() => {
     selectedRoiIdRef.current = selectedRoiId;
     roiSourceRef.current?.changed();
   }, [selectedRoiId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+    map.getTargetElement().style.cursor = pointSelectionEnabled ? 'crosshair' : '';
+  }, [pointSelectionEnabled]);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -329,6 +374,7 @@ export function SpatialMapCanvas({
     const roiSource = new VectorSource<Feature<Geometry>>();
     const draftSource = new VectorSource<Feature<Geometry>>();
     const savedCoordinateSource = new VectorSource<Feature<Geometry>>();
+    const selectedPointSource = new VectorSource<Feature<Geometry>>();
     const baseLayer = createBaseTileLayer(baseLayerKey);
     const baseSource = baseLayer.getSource();
     let firstTileLoaded = false;
@@ -408,9 +454,14 @@ export function SpatialMapCanvas({
       },
       zIndex: 60,
     });
+    const selectedPointLayer = new VectorLayer({
+      source: selectedPointSource,
+      style: selectedPointStyle,
+      zIndex: 70,
+    });
     const map = new OlMap({
       target: containerRef.current,
-      layers: [baseLayer, roiLayer, draftLayer, savedCoordinateLayer],
+      layers: [baseLayer, roiLayer, draftLayer, savedCoordinateLayer, selectedPointLayer],
       view: new View({
         center: [12958000, 4859500],
         zoom: 5,
@@ -440,8 +491,33 @@ export function SpatialMapCanvas({
       onSelectRoiRef.current(typeof roiId === 'string' ? roiId : undefined);
     });
     hoverInteraction.on('select', (event) => {
-      map.getTargetElement().style.cursor = event.selected.length ? 'pointer' : '';
+      map.getTargetElement().style.cursor = event.selected.length
+        ? 'pointer'
+        : pointSelectionEnabledRef.current
+          ? 'crosshair'
+          : '';
     });
+
+    eventKeys.push(
+      map.on('singleclick', (event) => {
+        if (
+          !pointSelectionEnabledRef.current ||
+          drawModeRef.current ||
+          drawingInProgressRef.current
+        ) {
+          return;
+        }
+        const [longitude, latitude] = toLonLat(event.coordinate);
+        onSelectPointRef.current?.({
+          longitude: Number(longitude.toFixed(6)),
+          latitude: Number(latitude.toFixed(6)),
+        });
+      }),
+    );
+
+    if (pointSelectionEnabledRef.current) {
+      map.getTargetElement().style.cursor = 'crosshair';
+    }
 
     map.addInteraction(selectInteraction);
     map.addInteraction(hoverInteraction);
@@ -449,7 +525,9 @@ export function SpatialMapCanvas({
     roiSourceRef.current = roiSource;
     draftSourceRef.current = draftSource;
     savedCoordinateSourceRef.current = savedCoordinateSource;
+    selectedPointSourceRef.current = selectedPointSource;
     savedCoordinateLayerRef.current = savedCoordinateLayer;
+    selectedPointLayerRef.current = selectedPointLayer;
     roiLayerRef.current = roiLayer;
     selectInteractionRef.current = selectInteraction;
     hoverInteractionRef.current = hoverInteraction;
@@ -485,6 +563,8 @@ export function SpatialMapCanvas({
         map.removeInteraction(drawSnapInteractionRef.current);
         drawSnapInteractionRef.current = null;
       }
+      selectedPointSourceRef.current = null;
+      selectedPointLayerRef.current = null;
       map.setTarget(undefined);
       mapRef.current = null;
     };
@@ -562,6 +642,31 @@ export function SpatialMapCanvas({
     }
     layer.setVisible(showSavedCoordinateLabels);
   }, [showSavedCoordinateLabels]);
+
+  useEffect(() => {
+    const selectedPointSource = selectedPointSourceRef.current;
+    if (!selectedPointSource) {
+      return;
+    }
+
+    selectedPointSource.clear();
+    if (!selectedPoint) {
+      return;
+    }
+    if (
+      !Number.isFinite(selectedPoint.longitude) ||
+      !Number.isFinite(selectedPoint.latitude) ||
+      Math.abs(selectedPoint.longitude) > 180 ||
+      Math.abs(selectedPoint.latitude) > 90
+    ) {
+      return;
+    }
+
+    const feature = new Feature({
+      geometry: new Point(fromLonLat([selectedPoint.longitude, selectedPoint.latitude])),
+    }) as Feature<Geometry>;
+    selectedPointSource.addFeature(feature);
+  }, [selectedPoint]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -917,6 +1022,22 @@ export function SpatialMapCanvas({
             style: vectorOverlayStyle,
             opacity,
             zIndex: 12,
+          });
+          map.addLayer(layer);
+          overlayLayersRef.current.set(overlay.id, { id: overlay.id, layer });
+          return;
+        }
+
+        if (overlay.previewUrl && overlay.bbox) {
+          const projectedExtent = transformExtent(overlay.bbox, 'EPSG:4326', 'EPSG:3857');
+          const layer = new ImageLayer({
+            source: new ImageStatic({
+              url: overlay.previewUrl,
+              imageExtent: projectedExtent,
+              crossOrigin: 'anonymous',
+            }),
+            opacity,
+            zIndex: 10,
           });
           map.addLayer(layer);
           overlayLayersRef.current.set(overlay.id, { id: overlay.id, layer });

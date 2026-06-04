@@ -3,6 +3,10 @@ import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+const appBasePath =
+  process.env.VITE_APP_BASE_PATH ??
+  (process.env.VITE_PORTFOLIO_DEMO === 'true' ? '/platform/' : '/');
+
 function manualChunks(id: string): string | undefined {
   if (!id.includes('node_modules')) {
     return undefined;
@@ -51,6 +55,7 @@ function manualChunks(id: string): string | undefined {
 }
 
 export default defineConfig({
+  base: appBasePath,
   plugins: [react()],
   resolve: {
     alias: {

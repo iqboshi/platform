@@ -53,6 +53,9 @@ import type {
   WorkflowVersionSummary,
 } from '@platform/types';
 
+import { apiBaseUrl, isPortfolioDemo, resolvePublicAssetUrl } from '@/config/env';
+import { clonePlatformMock, platformMock, portfolioDemoUser } from '@/mocks/platform';
+
 export interface PlatformDataSnapshot {
   workspace: WorkspaceSummary;
   datasets: DatasetSummary[];
@@ -94,8 +97,6 @@ export class ApiError extends Error {
   }
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8010/api/v1';
-
 type ApiRecord = Record<string, unknown>;
 
 interface RequestOptions {
@@ -103,6 +104,8 @@ interface RequestOptions {
   body?: Record<string, unknown> | FormData;
   token?: string;
 }
+
+const PORTFOLIO_DEMO_TOKEN = 'portfolio-demo-token';
 
 function createFallbackDashboardConfig(): DashboardConfig {
   return {
@@ -208,6 +211,1018 @@ function emptyFeedbackSummary(): FeedbackTicketSummaryCounts {
   };
 }
 
+type PortfolioDemoResult =
+  | { handled: true; payload: unknown }
+  | { handled: false };
+
+function createPortfolioRasterPreviewUrl(label = 'NEE spatial estimate'): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#0f766e"/><stop offset="0.45" stop-color="#84cc16"/><stop offset="1" stop-color="#f59e0b"/></linearGradient><filter id="soft"><feGaussianBlur stdDeviation="18"/></filter></defs><rect width="960" height="640" fill="#e8f4f0"/><g opacity="0.82" filter="url(#soft)"><ellipse cx="280" cy="210" rx="240" ry="120" fill="#22c55e"/><ellipse cx="620" cy="310" rx="270" ry="150" fill="#fbbf24"/><ellipse cx="450" cy="455" rx="250" ry="110" fill="#14b8a6"/></g><path d="M120 110 C260 170 330 120 470 185 C610 250 700 210 842 272" fill="none" stroke="#ffffff" stroke-width="18" opacity="0.55"/><path d="M90 500 C240 430 340 525 520 470 C690 418 760 510 900 455" fill="none" stroke="#ffffff" stroke-width="16" opacity="0.5"/><rect x="42" y="42" width="360" height="82" rx="18" fill="#073b36" opacity="0.82"/><text x="72" y="92" fill="#ffffff" font-family="Arial, sans-serif" font-size="28" font-weight="700">${label}</text></svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+const portfolioRasterPreviewUrl = createPortfolioRasterPreviewUrl();
+
+function cloneDemo<T>(value: T): T {
+  return clonePlatformMock(value);
+}
+
+function parseDemoUrl(path: string): URL {
+  return new URL(path, 'https://portfolio.demo');
+}
+
+function getRequestBodyRecord(options: RequestOptions): ApiRecord {
+  if (!options.body || options.body instanceof FormData) {
+    return {};
+  }
+  return options.body;
+}
+
+function getFormDataString(options: RequestOptions, key: string): string | undefined {
+  if (!(options.body instanceof FormData)) {
+    return undefined;
+  }
+  const value = options.body.get(key);
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function getBodyString(options: RequestOptions, ...keys: string[]): string | undefined {
+  const body = getRequestBodyRecord(options);
+  for (const key of keys) {
+    const value = body[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  for (const key of keys) {
+    const value = getFormDataString(options, key);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function getBodyNumber(options: RequestOptions, key: string): number | undefined {
+  const body = getRequestBodyRecord(options);
+  const value = body[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getBodyStringArray(options: RequestOptions, key: string): string[] | undefined {
+  const body = getRequestBodyRecord(options);
+  const value = body[key];
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+    return value;
+  }
+  const formValue = getFormDataString(options, key);
+  if (!formValue) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(formValue) as unknown;
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')
+      ? parsed
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function getBodyRecordValue(options: RequestOptions, key: string): Record<string, unknown> | undefined {
+  const body = getRequestBodyRecord(options);
+  const value = body[key];
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  const formValue = getFormDataString(options, key);
+  if (!formValue) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(formValue) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function matchesVisibility(
+  item: { visibility?: DatasetVisibility | 'private' | 'public' | 'workspace'; ownerUserId?: string },
+  scope?: string | null,
+  visibility?: string | null,
+): boolean {
+  if (visibility && item.visibility !== visibility) {
+    return false;
+  }
+  if (scope === 'all') {
+    return true;
+  }
+  if (scope === 'mine') {
+    return item.ownerUserId === portfolioDemoUser.id;
+  }
+  if (!item.visibility) {
+    return true;
+  }
+  return item.visibility !== 'private' || item.ownerUserId === portfolioDemoUser.id;
+}
+
+function withDemoDatasetPreview(version: DatasetVersionSummary): DatasetVersionSummary {
+  if (version.metadata.content_type === 'image/tiff' || version.metadata.content_type === 'image/geotiff') {
+    return { ...version, previewUrl: portfolioRasterPreviewUrl };
+  }
+  return version;
+}
+
+function withDemoOverlayPreview(overlay: SpatialOverlaySummary): SpatialOverlaySummary {
+  if (overlay.overlayType !== 'raster') {
+    return overlay;
+  }
+  return { ...overlay, previewUrl: portfolioRasterPreviewUrl };
+}
+
+function getDemoDatasets(url: URL): DatasetSummary[] {
+  const scope = url.searchParams.get('scope');
+  const visibility = url.searchParams.get('visibility');
+  return platformMock.datasets.filter((item) => matchesVisibility(item, scope, visibility));
+}
+
+function getDemoDatasetVersions(url: URL): DatasetVersionSummary[] {
+  const scope = url.searchParams.get('scope');
+  const datasetId = url.searchParams.get('dataset_id');
+  return platformMock.datasetVersions
+    .filter((item) => !datasetId || item.datasetId === datasetId)
+    .filter((item) => matchesVisibility(item, scope))
+    .map(withDemoDatasetPreview);
+}
+
+function getDemoProducts(url: URL): ProductAssetSummary[] {
+  const scope = url.searchParams.get('scope');
+  const visibility = url.searchParams.get('visibility');
+  return platformMock.products.filter((item) => matchesVisibility(item, scope, visibility));
+}
+
+function getDemoSpatialRois(url: URL): SpatialRoiSummary[] {
+  const scope = url.searchParams.get('scope');
+  return platformMock.spatialRois.filter((item) => matchesVisibility(item, scope));
+}
+
+function getDemoSpatialOverlays(url: URL): SpatialOverlaySummary[] {
+  const scope = url.searchParams.get('scope');
+  return platformMock.spatialOverlays
+    .filter((item) => matchesVisibility(item, scope))
+    .map(withDemoOverlayPreview);
+}
+
+function getDemoModelVersions(url: URL): ModelVersionSummary[] {
+  const scope = url.searchParams.get('scope');
+  return platformMock.modelVersions.filter((item) => matchesVisibility(item, scope));
+}
+
+function getDemoWorkflowVersions(url: URL): WorkflowVersionSummary[] {
+  const scope = url.searchParams.get('scope');
+  return platformMock.workflowVersionSummaries.filter((item) => matchesVisibility(item, scope));
+}
+
+function getDemoGeeCredentials(url: URL): GeeCredentialSummary[] {
+  const scope = url.searchParams.get('scope');
+  return platformMock.geeCredentials.filter((item) => matchesVisibility(item, scope));
+}
+
+function createDemoAuthUserFromPending(
+  pendingUser: PendingUserSummary | undefined,
+  approvalStatus: AuthUser['approvalStatus'],
+  role?: RoleKey,
+): AuthUser {
+  return {
+    id: pendingUser?.id ?? 'user-demo-review',
+    email: pendingUser?.email ?? 'reviewer@example.com',
+    displayName: pendingUser?.displayName ?? 'Demo Reviewer',
+    role: role ?? pendingUser?.role ?? 'MEMBER',
+    approvalStatus,
+    preferredLocale: pendingUser?.preferredLocale ?? 'zh-CN',
+    permissions: ['workspace.view', 'dataset.view', 'workflow.view', 'model.view', 'job.view', 'result.view'],
+  };
+}
+
+function createDemoDatasetVersion(options: RequestOptions): DatasetVersionSummary {
+  const datasetName =
+    getBodyString(options, 'dataset_name', 'datasetName') ?? 'Uploaded Demo Dataset';
+  const kind = (getBodyString(options, 'kind') ?? 'raster') as DatasetKind;
+  return {
+    id: `dsv-demo-${Date.now()}`,
+    datasetId: `dataset-demo-${Date.now()}`,
+    version: 1,
+    status: 'ready',
+    assetPath: 'storage/mock/demo-upload',
+    previewUrl: kind === 'raster' ? portfolioRasterPreviewUrl : undefined,
+    visibility: 'private',
+    ownerUserId: portfolioDemoUser.id,
+    ownerDisplayName: portfolioDemoUser.displayName,
+    metadata: {
+      original_file_name:
+        getBodyString(options, 'file_name', 'original_file_name') ?? `${datasetName}.dat`,
+      content_type: kind === 'table' ? 'text/csv' : 'application/octet-stream',
+      size_bytes: 4096,
+    },
+    createdAt: nowIso(),
+  };
+}
+
+function createDemoProductAsset(options: RequestOptions): ProductAssetSummary {
+  const fallback = platformMock.products[0];
+  const timestamp = nowIso();
+  return {
+    ...fallback,
+    id: `product-demo-${Date.now()}`,
+    name: getBodyString(options, 'name') ?? fallback.name,
+    description: getBodyString(options, 'description') ?? fallback.description,
+    category: getBodyString(options, 'category') ?? fallback.category,
+    tags: getBodyStringArray(options, 'tags_json') ?? fallback.tags,
+    highlights: getBodyStringArray(options, 'highlights_json') ?? fallback.highlights,
+    specifications:
+      (getBodyRecordValue(options, 'specifications_json') as Record<string, string> | undefined) ??
+      fallback.specifications,
+    visibility:
+      (getBodyString(options, 'visibility') as ProductAssetSummary['visibility']) ??
+      fallback.visibility,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createDemoModelVersion(options: RequestOptions): ModelVersionSummary {
+  const timestamp = nowIso();
+  const modelName =
+    getBodyString(options, 'model_name', 'modelName') ?? 'Registered Demo Model';
+  return {
+    id: `modelv-demo-${Date.now()}`,
+    modelId: `model-demo-${Date.now()}`,
+    modelName,
+    algorithmKey: getBodyString(options, 'algorithm_key', 'algorithmKey'),
+    version: getBodyString(options, 'version') ?? '1.0.0',
+    framework: getBodyString(options, 'framework') ?? 'json',
+    taskType: getBodyString(options, 'task_type', 'taskType') ?? 'regression',
+    featureNames: getBodyStringArray(options, 'feature_names_json') ?? [],
+    defaultParameters: getBodyRecordValue(options, 'default_parameters_json') ?? {},
+    artifactFormat: 'json',
+    sourceType: options.body instanceof FormData ? 'uploaded' : 'custom_api',
+    executionMode: options.body instanceof FormData ? 'in_process' : 'external_api',
+    visibility: 'private',
+    ownerUserId: portfolioDemoUser.id,
+    ownerDisplayName: portfolioDemoUser.displayName,
+    metadata: {
+      description: getBodyString(options, 'description') ?? 'Demo model registration.',
+    },
+    createdAt: timestamp,
+  };
+}
+
+function createDemoSpatialRoi(options: RequestOptions, roiId?: string): SpatialRoiSummary {
+  const body = getRequestBodyRecord(options);
+  const existing = roiId ? platformMock.spatialRois.find((item) => item.id === roiId) : undefined;
+  const timestamp = nowIso();
+  return {
+    ...(existing ?? platformMock.spatialRois[0]),
+    id: roiId ?? `roi-demo-${Date.now()}`,
+    workspaceId: getBodyString(options, 'workspace_id', 'workspaceId') ?? platformMock.workspace.id,
+    ownerUserId: portfolioDemoUser.id,
+    ownerDisplayName: portfolioDemoUser.displayName,
+    name: getBodyString(options, 'name') ?? existing?.name ?? 'Demo ROI',
+    description: getBodyString(options, 'description') ?? existing?.description,
+    geometryType:
+      (getBodyString(options, 'geometry_type', 'geometryType') as SpatialRoiSummary['geometryType']) ??
+      existing?.geometryType ??
+      'rectangle',
+    geometry:
+      (body.geometry as Record<string, unknown> | undefined) ??
+      existing?.geometry ??
+      platformMock.spatialRois[0].geometry,
+    style:
+      (body.style as Record<string, unknown> | undefined) ??
+      existing?.style ??
+      platformMock.spatialRois[0].style,
+    tags:
+      (Array.isArray(body.tags) ? body.tags.filter((item): item is string => typeof item === 'string') : undefined) ??
+      existing?.tags ??
+      [],
+    visibility:
+      (getBodyString(options, 'visibility') as SpatialRoiSummary['visibility']) ??
+      existing?.visibility ??
+      'private',
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createDemoSpatialOverlay(options: RequestOptions, overlayId?: string): SpatialOverlaySummary {
+  const existing = overlayId
+    ? platformMock.spatialOverlays.find((item) => item.id === overlayId)
+    : undefined;
+  const datasetVersionId =
+    getBodyString(options, 'dataset_version_id', 'datasetVersionId') ??
+    existing?.datasetVersionId ??
+    'dsv-result-001';
+  const datasetVersion =
+    platformMock.datasetVersions.find((item) => item.id === datasetVersionId) ??
+    platformMock.datasetVersions[0];
+  const dataset =
+    platformMock.datasets.find((item) => item.id === datasetVersion.datasetId) ??
+    platformMock.datasets[0];
+  const timestamp = nowIso();
+  const overlay: SpatialOverlaySummary = {
+    ...(existing ?? platformMock.spatialOverlays[0]),
+    id: overlayId ?? `overlay-demo-${Date.now()}`,
+    workspaceId: getBodyString(options, 'workspace_id', 'workspaceId') ?? platformMock.workspace.id,
+    ownerUserId: portfolioDemoUser.id,
+    ownerDisplayName: portfolioDemoUser.displayName,
+    datasetVersionId,
+    datasetId: dataset.id,
+    datasetName: dataset.name,
+    datasetKind: dataset.kind,
+    datasetVersionNumber: datasetVersion.version,
+    originalFileName:
+      typeof datasetVersion.metadata.original_file_name === 'string'
+        ? datasetVersion.metadata.original_file_name
+        : `${dataset.name}.dat`,
+    contentType:
+      typeof datasetVersion.metadata.content_type === 'string'
+        ? datasetVersion.metadata.content_type
+        : 'application/octet-stream',
+    bbox: datasetVersion.bbox,
+    name: getBodyString(options, 'name') ?? existing?.name ?? `${dataset.name} Overlay`,
+    description: getBodyString(options, 'description') ?? existing?.description,
+    overlayType: dataset.kind === 'vector' ? 'vector' : 'raster',
+    opacity: getBodyNumber(options, 'opacity') ?? existing?.opacity ?? 0.85,
+    style: getRequestBodyRecord(options).style as Record<string, unknown> | undefined,
+    visibility:
+      (getBodyString(options, 'visibility') as SpatialOverlaySummary['visibility']) ??
+      existing?.visibility ??
+      'private',
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+  return withDemoOverlayPreview(overlay);
+}
+
+function createDemoFeedbackTicket(options: RequestOptions, ticketId?: string): FeedbackTicketSummary {
+  const existing = ticketId
+    ? platformMock.feedbackTickets.find((item) => item.id === ticketId)
+    : undefined;
+  const timestamp = nowIso();
+  return {
+    ...(existing ?? platformMock.feedbackTickets[0]),
+    id: ticketId ?? `ticket-demo-${Date.now()}`,
+    workspaceId: getBodyString(options, 'workspace_id', 'workspaceId') ?? platformMock.workspace.id,
+    createdBy: existing?.createdBy ?? portfolioDemoUser.id,
+    createdByDisplayName: existing?.createdByDisplayName ?? portfolioDemoUser.displayName,
+    title: getBodyString(options, 'title') ?? existing?.title ?? 'Demo feedback ticket',
+    category:
+      (getBodyString(options, 'category') as FeedbackTicketCategory | undefined) ??
+      existing?.category ??
+      'question',
+    priority:
+      (getBodyString(options, 'priority') as FeedbackTicketPriority | undefined) ??
+      existing?.priority ??
+      'medium',
+    status:
+      (getBodyString(options, 'status') as FeedbackTicketStatus | undefined) ??
+      existing?.status ??
+      'open',
+    content: getBodyString(options, 'content') ?? existing?.content ?? 'Demo feedback content.',
+    contact: getBodyString(options, 'contact') ?? existing?.contact,
+    adminReply: getBodyString(options, 'admin_reply', 'adminReply') ?? existing?.adminReply,
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createDemoWorkflowRun(): WorkflowRunSummary {
+  const timestamp = nowIso();
+  return {
+    id: `run-demo-${Date.now()}`,
+    workflowVersionId: platformMock.workflowVersion.id,
+    workflowName: 'Portfolio Demo Workflow',
+    status: 'succeeded',
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    submittedBy: portfolioDemoUser.displayName,
+    resultDatasetVersionId: 'dsv-result-001',
+    inputAssetVersionIds: ['roi-demo-farm-a', 'gee-platform-default'],
+    outputAssetVersionIds: ['dsv-result-001', 'dsv-nee-series-v1'],
+    primaryOutputAssetVersionId: 'dsv-result-001',
+    metrics: { duration_seconds: 34, output_count: 2 },
+  };
+}
+
+function createDemoNodeTestResult(options: RequestOptions): WorkflowNodeTestResult {
+  const body = getRequestBodyRecord(options);
+  const nodeId = typeof body.node_id === 'string' ? body.node_id : 'demo-node';
+  const graph = body.graph as { nodes?: ApiRecord[] } | undefined;
+  const node = graph?.nodes?.find((item) => getString(item, 'id') === nodeId);
+  const nodeType = node ? getString(node, 'type') : '';
+  const timestamp = nowIso();
+  const outputPreview: Record<string, WorkflowNodePreviewValue> = {};
+
+  if (nodeType === 'gee.nee_point_timeseries_export') {
+    outputPreview.dataset = {
+      kind: 'dataset_version',
+      title: 'NEE Point Time Series',
+      summary: 'Sampled monthly NEE values exported as CSV.',
+      datasetVersionId: 'dsv-nee-series-v1',
+      datasetId: 'dataset-nee-timeseries-result',
+      datasetName: 'NEE Point Time Series',
+      operation: 'nee_point_timeseries_export',
+      band: 'NEE',
+      rows: [
+        { date: '2021-09-01', band: 'NEE', value: -0.42 },
+        { date: '2021-10-01', band: 'NEE', value: -0.38 },
+        { date: '2021-11-01', band: 'NEE', value: -0.61 },
+        { date: '2021-12-01', band: 'NEE', value: -0.74 },
+        { date: '2022-01-01', band: 'NEE', value: -0.69 },
+        { date: '2022-02-01', band: 'NEE', value: -0.51 },
+      ],
+    };
+  } else if (nodeType.includes('gee') || nodeType.includes('raster') || nodeType.includes('export')) {
+    outputPreview.dataset = {
+      kind: 'dataset_version',
+      title: 'NEE Spatial Estimate',
+      summary: 'Raster result registered as a map-ready dataset version.',
+      datasetVersionId: 'dsv-result-001',
+      datasetId: 'dataset-nee-map-result',
+      datasetName: 'NEE Spatial Estimate',
+      operation: 'nee_map_export',
+      bbox: [116.1, 39.7, 116.65, 40.1],
+      thumbnailUrl: portfolioRasterPreviewUrl,
+      nextActions: [
+        {
+          key: 'open-spatial',
+          label: 'Open in Spatial Studio',
+          handoff: {
+            version: 1,
+            target: 'spatial',
+            inputKind: 'asset_version',
+            source: 'workflow_node_test',
+            assetVersionId: 'dsv-result-001',
+          },
+        },
+      ],
+    };
+  } else if (nodeType.includes('model')) {
+    outputPreview.model = {
+      kind: 'model_version',
+      title: 'Sample Linear Regression',
+      summary: 'Reusable model asset resolved from the current graph.',
+      modelVersionId: 'modelv-linear-v1',
+    };
+  } else {
+    outputPreview.table = {
+      kind: 'table',
+      title: 'Preview Table',
+      columns: ['ndvi', 'evi', 'lst', 'prediction'],
+      rows: [
+        { ndvi: 0.71, evi: 0.42, lst: 299.3, prediction: -1.21 },
+        { ndvi: 0.68, evi: 0.39, lst: 300.2, prediction: -1.12 },
+      ],
+    };
+  }
+
+  return {
+    status: 'succeeded',
+    nodeId,
+    durationMs: 420,
+    inputPreview: {
+      context: {
+        kind: 'value',
+        title: 'Demo execution context',
+        value: { submittedAt: timestamp, mode: 'portfolio-preview' },
+      },
+    },
+    outputPreview,
+    errors: [],
+  };
+}
+
+function createPortfolioDemoUploadSession(options: RequestOptions): { object_key: string; upload_url: string } {
+  const workspaceId = getBodyString(options, 'workspace_id', 'workspaceId') ?? platformMock.workspace.id;
+  return {
+    object_key: `${workspaceId}/demo-upload-${Date.now()}`,
+    upload_url: 'https://portfolio.demo/upload-session',
+  };
+}
+
+function getDemoDatasetBlob(datasetVersionId: string): Blob {
+  const version = platformMock.datasetVersions.find((item) => item.id === datasetVersionId);
+  const contentType =
+    typeof version?.metadata.content_type === 'string'
+      ? version.metadata.content_type
+      : 'application/octet-stream';
+
+  if (datasetVersionId === 'dsv-rgb-vector-labels-v1') {
+    return new Blob(
+      [
+        JSON.stringify({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { class: 'field' },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [
+                  [
+                    [116.18, 39.78],
+                    [116.36, 39.76],
+                    [116.45, 39.92],
+                    [116.28, 40.02],
+                    [116.18, 39.78],
+                  ],
+                ],
+              },
+            },
+            {
+              type: 'Feature',
+              properties: { class: 'water' },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [
+                  [
+                    [116.45, 39.82],
+                    [116.58, 39.82],
+                    [116.58, 39.96],
+                    [116.44, 39.96],
+                    [116.45, 39.82],
+                  ],
+                ],
+              },
+            },
+          ],
+        }),
+      ],
+      { type: 'application/geo+json' },
+    );
+  }
+
+  if (datasetVersionId === 'dsv-nee-series-v1') {
+    return new Blob(
+      [
+        'date,band,value\n2021-09-01,NEE,-0.42\n2021-10-01,NEE,-0.38\n2021-11-01,NEE,-0.61\n2021-12-01,NEE,-0.74\n2022-01-01,NEE,-0.69\n2022-02-01,NEE,-0.51\n',
+      ],
+      { type: 'text/csv' },
+    );
+  }
+
+  if (datasetVersionId.includes('tabular')) {
+    return new Blob(
+      ['ndvi,evi,lst,target_nee\n0.71,0.42,299.3,-1.27\n0.68,0.39,300.2,-1.18\n0.62,0.35,301.1,-0.91\n'],
+      { type: 'text/csv' },
+    );
+  }
+
+  if (contentType === 'image/tiff') {
+    return new Blob(['Portfolio demo raster placeholder. Use previewUrl for browser map display.'], {
+      type: 'text/plain',
+    });
+  }
+
+  return new Blob([JSON.stringify({ datasetVersionId, source: 'portfolio-demo' }, null, 2)], {
+    type: contentType,
+  });
+}
+
+function getDemoDatasetFileName(datasetVersionId: string, fallbackFileName: string): string {
+  const version = platformMock.datasetVersions.find((item) => item.id === datasetVersionId);
+  return typeof version?.metadata.original_file_name === 'string'
+    ? version.metadata.original_file_name
+    : fallbackFileName;
+}
+
+function triggerDownload(blob: Blob, fileName: string): void {
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  anchor.click();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+async function fetchDemoProductAsset(
+  productId: string,
+): Promise<{ product: ProductAssetSummary; response: Response; buffer: ArrayBuffer }> {
+  const product = platformMock.products.find((item) => item.id === productId) ?? platformMock.products[0];
+  const response = await fetch(resolvePublicAssetUrl(product.assetPath));
+  if (!response.ok) {
+    throw new ApiError(`Product asset is not available: ${product.name}`, {
+      status: response.status,
+      code: 'demo_asset_missing',
+    });
+  }
+  const buffer = await response.arrayBuffer();
+  return { product, response, buffer };
+}
+
+function resolvePortfolioDemoJson(path: string, options: RequestOptions = {}): PortfolioDemoResult {
+  if (!isPortfolioDemo) {
+    return { handled: false };
+  }
+
+  const url = parseDemoUrl(path);
+  const endpoint = url.pathname;
+  const method = options.method ?? 'GET';
+  const body = getRequestBodyRecord(options);
+
+  if (endpoint === '/auth/login' && method === 'POST') {
+    return {
+      handled: true,
+      payload: {
+        access_token: PORTFOLIO_DEMO_TOKEN,
+        token_type: 'bearer',
+        user: portfolioDemoUser,
+      },
+    };
+  }
+  if (endpoint === '/auth/captcha' && method === 'GET') {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="140" height="48"><rect width="140" height="48" rx="10" fill="#eef6ff"/><text x="34" y="31" font-family="Arial" font-size="22" font-weight="700" fill="#155e75">1234</text></svg>';
+    return {
+      handled: true,
+      payload: {
+        captcha_key: 'portfolio-demo-captcha',
+        image_data_url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        expires_in_seconds: 300,
+      },
+    };
+  }
+  if (endpoint === '/auth/email-code/send' && method === 'POST') {
+    return {
+      handled: true,
+      payload: { message: 'Verification code accepted for preview mode.', resend_after_seconds: 0 },
+    };
+  }
+  if (endpoint === '/auth/register' && method === 'POST') {
+    return {
+      handled: true,
+      payload: {
+        user_id: `registered-demo-${Date.now()}`,
+        approval_status: 'PENDING',
+        message: 'Registration request recorded in preview mode.',
+      },
+    };
+  }
+  if (endpoint === '/auth/logout' && method === 'POST') {
+    return { handled: true, payload: {} };
+  }
+  if (endpoint === '/auth/me' && method === 'GET') {
+    return { handled: true, payload: portfolioDemoUser };
+  }
+  if (endpoint === '/auth/me' && method === 'PATCH') {
+    return {
+      handled: true,
+      payload: {
+        ...portfolioDemoUser,
+        displayName: getBodyString(options, 'display_name', 'displayName') ?? portfolioDemoUser.displayName,
+        preferredLocale:
+          (getBodyString(options, 'preferred_locale', 'preferredLocale') as LocaleCode | undefined) ??
+          portfolioDemoUser.preferredLocale,
+        email: getBodyString(options, 'email') ?? portfolioDemoUser.email,
+        avatarUrl: getBodyString(options, 'avatar_url', 'avatarUrl') ?? portfolioDemoUser.avatarUrl,
+        jobTitle: getBodyString(options, 'job_title', 'jobTitle') ?? portfolioDemoUser.jobTitle,
+        organization: getBodyString(options, 'organization') ?? portfolioDemoUser.organization,
+        bio: getBodyString(options, 'bio') ?? portfolioDemoUser.bio,
+      },
+    };
+  }
+  if (endpoint === '/auth/me/password' && method === 'POST') {
+    return { handled: true, payload: {} };
+  }
+  if (endpoint === '/auth/pending-users' && method === 'GET') {
+    return { handled: true, payload: platformMock.pendingUsers };
+  }
+  if (endpoint.startsWith('/auth/approve/') && method === 'POST') {
+    const userId = endpoint.split('/').at(-1);
+    const pendingUser = platformMock.pendingUsers.find((item) => item.id === userId);
+    return {
+      handled: true,
+      payload: createDemoAuthUserFromPending(
+        pendingUser,
+        'APPROVED',
+        (getBodyString(options, 'role') as RoleKey | undefined) ?? pendingUser?.role,
+      ),
+    };
+  }
+  if (endpoint.startsWith('/auth/reject/') && method === 'POST') {
+    const userId = endpoint.split('/').at(-1);
+    const pendingUser = platformMock.pendingUsers.find((item) => item.id === userId);
+    return { handled: true, payload: createDemoAuthUserFromPending(pendingUser, 'REJECTED') };
+  }
+  if (endpoint === '/auth/role-upgrade-requests/mine' && method === 'GET') {
+    return { handled: true, payload: platformMock.roleUpgradeRequests };
+  }
+  if (endpoint === '/auth/role-upgrade-requests' && method === 'GET') {
+    return { handled: true, payload: platformMock.roleUpgradeRequests };
+  }
+  if (endpoint === '/auth/role-upgrade-requests' && method === 'POST') {
+    return {
+      handled: true,
+      payload: {
+        id: `role-request-demo-${Date.now()}`,
+        userId: portfolioDemoUser.id,
+        userDisplayName: portfolioDemoUser.displayName,
+        userEmail: portfolioDemoUser.email,
+        currentRole: portfolioDemoUser.role,
+        requestedRole: 'ML_ENGINEER',
+        status: 'pending',
+        reason: getBodyString(options, 'reason') ?? 'Preview mode request.',
+        createdAt: nowIso(),
+      },
+    };
+  }
+  if (endpoint.match(/^\/auth\/role-upgrade-requests\/[^/]+\/(approve|reject)$/) && method === 'POST') {
+    const requestId = endpoint.split('/')[3];
+    const approved = endpoint.endsWith('/approve');
+    const existing = platformMock.roleUpgradeRequests.find((item) => item.id === requestId);
+    return {
+      handled: true,
+      payload: {
+        ...(existing ?? platformMock.roleUpgradeRequests[0]),
+        id: requestId,
+        status: approved ? 'approved' : 'rejected',
+        reviewNote: getBodyString(options, 'review_note', 'reviewNote') ?? '',
+        reviewedAt: nowIso(),
+        reviewedBy: portfolioDemoUser.id,
+        reviewedByDisplayName: portfolioDemoUser.displayName,
+      },
+    };
+  }
+
+  if (endpoint === '/workspaces' && method === 'GET') {
+    return { handled: true, payload: [platformMock.workspace] };
+  }
+  if (endpoint === '/datasets/upload-session' && method === 'POST') {
+    return { handled: true, payload: createPortfolioDemoUploadSession(options) };
+  }
+  if (endpoint === '/datasets/upload' && method === 'POST') {
+    return { handled: true, payload: createDemoDatasetVersion(options) };
+  }
+  if (endpoint === '/datasets' && method === 'GET') {
+    return { handled: true, payload: getDemoDatasets(url) };
+  }
+  if (endpoint.match(/^\/datasets\/[^/]+$/) && method === 'PATCH') {
+    const datasetId = endpoint.split('/').at(-1);
+    const existing = platformMock.datasets.find((item) => item.id === datasetId) ?? platformMock.datasets[0];
+    return {
+      handled: true,
+      payload: {
+        ...existing,
+        name: getBodyString(options, 'name') ?? existing.name,
+        description: getBodyString(options, 'description') ?? existing.description,
+        visibility:
+          (getBodyString(options, 'visibility') as DatasetSummary['visibility']) ??
+          existing.visibility,
+        updatedAt: nowIso(),
+      },
+    };
+  }
+  if (endpoint.match(/^\/datasets\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+  if (endpoint === '/dataset-versions' && method === 'GET') {
+    return { handled: true, payload: getDemoDatasetVersions(url) };
+  }
+
+  if (endpoint === '/products' && method === 'GET') {
+    return { handled: true, payload: getDemoProducts(url) };
+  }
+  if (endpoint === '/products/upload' && method === 'POST') {
+    return { handled: true, payload: createDemoProductAsset(options) };
+  }
+  if (endpoint.match(/^\/products\/[^/]+$/) && method === 'PATCH') {
+    const productId = endpoint.split('/').at(-1);
+    const existing = platformMock.products.find((item) => item.id === productId) ?? platformMock.products[0];
+    return {
+      handled: true,
+      payload: {
+        ...existing,
+        name: getBodyString(options, 'name') ?? existing.name,
+        description: getBodyString(options, 'description') ?? existing.description,
+        category: getBodyString(options, 'category') ?? existing.category,
+        tags: getBodyStringArray(options, 'tags_json') ?? existing.tags,
+        highlights: getBodyStringArray(options, 'highlights_json') ?? existing.highlights,
+        specifications:
+          (getBodyRecordValue(options, 'specifications_json') as Record<string, string> | undefined) ??
+          existing.specifications,
+        visibility:
+          (getBodyString(options, 'visibility') as ProductAssetSummary['visibility']) ??
+          existing.visibility,
+        updatedAt: nowIso(),
+      },
+    };
+  }
+  if (endpoint.match(/^\/products\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+
+  if (endpoint === '/spatial/rois' && method === 'GET') {
+    return { handled: true, payload: getDemoSpatialRois(url) };
+  }
+  if (endpoint === '/spatial/rois' && method === 'POST') {
+    return { handled: true, payload: createDemoSpatialRoi(options) };
+  }
+  if (endpoint.match(/^\/spatial\/rois\/[^/]+$/) && method === 'PATCH') {
+    return { handled: true, payload: createDemoSpatialRoi(options, endpoint.split('/').at(-1)) };
+  }
+  if (endpoint.match(/^\/spatial\/rois\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+  if (endpoint === '/spatial/overlays' && method === 'GET') {
+    return { handled: true, payload: getDemoSpatialOverlays(url) };
+  }
+  if (endpoint === '/spatial/overlays' && method === 'POST') {
+    return { handled: true, payload: createDemoSpatialOverlay(options) };
+  }
+  if (endpoint.match(/^\/spatial\/overlays\/[^/]+$/) && method === 'PATCH') {
+    return { handled: true, payload: createDemoSpatialOverlay(options, endpoint.split('/').at(-1)) };
+  }
+  if (endpoint.match(/^\/spatial\/overlays\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+
+  if (endpoint === '/models/versions' && method === 'GET') {
+    return { handled: true, payload: getDemoModelVersions(url) };
+  }
+  if (endpoint === '/models/upload' && method === 'POST') {
+    return { handled: true, payload: createDemoModelVersion(options) };
+  }
+  if (endpoint === '/models/custom' && method === 'POST') {
+    return { handled: true, payload: createDemoModelVersion(options) };
+  }
+  if (endpoint.match(/^\/models\/versions\/[^/]+$/) && method === 'PATCH') {
+    const modelVersionId = endpoint.split('/').at(-1);
+    const existing =
+      platformMock.modelVersions.find((item) => item.id === modelVersionId) ??
+      platformMock.modelVersions[0];
+    return {
+      handled: true,
+      payload: {
+        ...existing,
+        visibility:
+          (getBodyString(options, 'visibility') as ModelVersionSummary['visibility']) ??
+          existing.visibility,
+      },
+    };
+  }
+  if (endpoint.match(/^\/models\/versions\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+
+  if (endpoint === '/integrations/gee-credentials' && method === 'GET') {
+    return { handled: true, payload: getDemoGeeCredentials(url) };
+  }
+  if (endpoint === '/integrations/gee-credentials' && method === 'POST') {
+    return {
+      handled: true,
+      payload: {
+        id: `gee-demo-${Date.now()}`,
+        workspaceId: getBodyString(options, 'workspace_id', 'workspaceId') ?? platformMock.workspace.id,
+        ownerUserId: portfolioDemoUser.id,
+        ownerDisplayName: portfolioDemoUser.displayName,
+        name: getBodyString(options, 'name') ?? 'Demo GEE Credential',
+        provider: 'gee',
+        description: getBodyString(options, 'description'),
+        projectId: getBodyString(options, 'project_id', 'projectId'),
+        serviceAccountEmail: 'demo@portfolio-preview.iam.gserviceaccount.com',
+        isPlatformDefault: false,
+        createdAt: nowIso(),
+      },
+    };
+  }
+  if (endpoint.match(/^\/integrations\/gee-credentials\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+  if (endpoint.match(/^\/integrations\/gee-credentials\/[^/]+\/set-platform-default$/) && method === 'POST') {
+    const credentialId = endpoint.split('/')[3];
+    const existing =
+      platformMock.geeCredentials.find((item) => item.id === credentialId) ??
+      platformMock.geeCredentials[0];
+    return { handled: true, payload: { ...existing, isPlatformDefault: true } };
+  }
+
+  if (endpoint === '/platform-settings/dashboard' && method === 'GET') {
+    return { handled: true, payload: platformMock.dashboardConfig };
+  }
+  if (endpoint === '/platform-settings/dashboard' && method === 'PUT') {
+    return {
+      handled: true,
+      payload: {
+        feature_sections: Array.isArray(body.feature_sections) ? body.feature_sections : [],
+        announcements: Array.isArray(body.announcements)
+          ? body.announcements
+          : platformMock.dashboardConfig.announcements,
+      },
+    };
+  }
+  if (endpoint === '/platform-settings/email' && method === 'GET') {
+    return { handled: true, payload: platformMock.emailSettings };
+  }
+  if (endpoint === '/platform-settings/email' && method === 'PUT') {
+    return {
+      handled: true,
+      payload: {
+        emailEnabled: Boolean(body.email_enabled),
+        smtpHost: getBodyString(options, 'smtp_host') ?? '',
+        smtpPort: getBodyNumber(options, 'smtp_port') ?? 465,
+        smtpUseSsl: Boolean(body.smtp_use_ssl),
+        smtpUsername: getBodyString(options, 'smtp_username') ?? '',
+        smtpPasswordConfigured: Boolean(getBodyString(options, 'smtp_password')),
+        smtpFromEmail: getBodyString(options, 'smtp_from_email') ?? '',
+        smtpFromName: getBodyString(options, 'smtp_from_name') ?? 'Platform RS Studio',
+        smtpTimeoutSeconds: getBodyNumber(options, 'smtp_timeout_seconds') ?? 20,
+        emailCodeExpireMinutes: getBodyNumber(options, 'email_code_expire_minutes') ?? 10,
+        emailCodeResendSeconds: getBodyNumber(options, 'email_code_resend_seconds') ?? 60,
+        imageCaptchaExpireMinutes: getBodyNumber(options, 'image_captcha_expire_minutes') ?? 5,
+      },
+    };
+  }
+
+  if (endpoint === '/feedback-tickets/summary' && method === 'GET') {
+    return { handled: true, payload: platformMock.feedbackSummary };
+  }
+  if (endpoint === '/feedback-tickets' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit') ?? platformMock.feedbackTickets.length);
+    return { handled: true, payload: platformMock.feedbackTickets.slice(0, limit) };
+  }
+  if (endpoint === '/feedback-tickets' && method === 'POST') {
+    return { handled: true, payload: createDemoFeedbackTicket(options) };
+  }
+  if (endpoint.match(/^\/feedback-tickets\/[^/]+$/) && method === 'GET') {
+    const ticketId = endpoint.split('/').at(-1);
+    return {
+      handled: true,
+      payload:
+        platformMock.feedbackTickets.find((item) => item.id === ticketId) ??
+        platformMock.feedbackTickets[0],
+    };
+  }
+  if (endpoint.match(/^\/feedback-tickets\/[^/]+$/) && method === 'PATCH') {
+    return { handled: true, payload: createDemoFeedbackTicket(options, endpoint.split('/').at(-1)) };
+  }
+
+  if (endpoint === '/workflows/catalog' && method === 'GET') {
+    return { handled: true, payload: platformMock.workflowCatalog };
+  }
+  if (endpoint === '/workflows/templates' && method === 'GET') {
+    return { handled: true, payload: platformMock.workflowTemplates };
+  }
+  if (endpoint === '/workflows/versions/current' && method === 'GET') {
+    return { handled: true, payload: platformMock.workflowVersion };
+  }
+  if (endpoint === '/workflows/versions/current' && method === 'PUT') {
+    return { handled: true, payload: platformMock.workflowVersion };
+  }
+  if (endpoint === '/workflows/versions/import' && method === 'POST') {
+    return { handled: true, payload: platformMock.workflowVersion };
+  }
+  if (endpoint === '/workflows/versions' && method === 'GET') {
+    return { handled: true, payload: getDemoWorkflowVersions(url) };
+  }
+  if (endpoint.match(/^\/workflows\/versions\/[^/]+$/) && method === 'PATCH') {
+    const workflowVersionId = endpoint.split('/').at(-1);
+    const existing =
+      platformMock.workflowVersionSummaries.find((item) => item.id === workflowVersionId) ??
+      platformMock.workflowVersionSummaries[0];
+    return {
+      handled: true,
+      payload: {
+        ...existing,
+        visibility:
+          (getBodyString(options, 'visibility') as WorkflowVersionSummary['visibility']) ??
+          existing.visibility,
+      },
+    };
+  }
+  if (endpoint.match(/^\/workflows\/versions\/[^/]+$/) && method === 'DELETE') {
+    return { handled: true, payload: {} };
+  }
+  if (endpoint === '/workflows/validate' && method === 'POST') {
+    return { handled: true, payload: { valid: true, errors: [], warnings: [], issues: [] } };
+  }
+  if (endpoint === '/workflows/test-node' && method === 'POST') {
+    return { handled: true, payload: createDemoNodeTestResult(options) };
+  }
+  if (endpoint === '/workflow-runs' && method === 'GET') {
+    return { handled: true, payload: platformMock.workflowRuns };
+  }
+  if (endpoint === '/workflow-runs' && method === 'POST') {
+    return { handled: true, payload: createDemoWorkflowRun() };
+  }
+
+  return { handled: false };
+}
+
 function buildHeaders(options: RequestOptions): HeadersInit {
   const isFormData = options.body instanceof FormData;
   return {
@@ -234,6 +1249,11 @@ async function buildApiError(response: Response, path: string): Promise<ApiError
 }
 
 async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const demoResult = resolvePortfolioDemoJson(path, options);
+  if (demoResult.handled) {
+    return cloneDemo(demoResult.payload) as T;
+  }
+
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: options.method ?? 'GET',
     headers: buildHeaders(options),
@@ -253,6 +1273,16 @@ async function requestJson<T>(path: string, options: RequestOptions = {}): Promi
 }
 
 async function requestBlob(path: string, token: string): Promise<Blob> {
+  if (isPortfolioDemo) {
+    const datasetMatch = path.match(/^\/dataset-versions\/([^/]+)\/download$/);
+    if (datasetMatch?.[1]) {
+      return getDemoDatasetBlob(datasetMatch[1]);
+    }
+    return new Blob([JSON.stringify({ token, path, source: 'portfolio-demo' }, null, 2)], {
+      type: 'application/json',
+    });
+  }
+
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
     headers: {
@@ -1679,6 +2709,15 @@ export async function downloadProductAsset(
   productId: string,
   fallbackFileName = `product-${productId}`,
 ): Promise<void> {
+  if (isPortfolioDemo) {
+    const { product, response, buffer } = await fetchDemoProductAsset(productId);
+    const blob = new Blob([buffer], {
+      type: response.headers.get('content-type') ?? product.contentType,
+    });
+    triggerDownload(blob, product.originalFileName || fallbackFileName);
+    return;
+  }
+
   const path = `/products/${productId}/download`;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
@@ -1692,18 +2731,23 @@ export async function downloadProductAsset(
   }
 
   const blob = await response.blob();
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = extractDownloadFileName(response, fallbackFileName);
-  anchor.click();
-  window.URL.revokeObjectURL(objectUrl);
+  triggerDownload(blob, extractDownloadFileName(response, fallbackFileName));
 }
 
 export async function fetchProductAssetArrayBuffer(
   token: string,
   productId: string,
 ): Promise<{ fileName: string; buffer: ArrayBuffer; sizeBytes: number; contentType: string }> {
+  if (isPortfolioDemo) {
+    const { product, response, buffer } = await fetchDemoProductAsset(productId);
+    return {
+      fileName: product.originalFileName,
+      buffer,
+      sizeBytes: buffer.byteLength,
+      contentType: response.headers.get('content-type') ?? product.contentType,
+    };
+  }
+
   const path = `/products/${productId}/download`;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
@@ -1941,6 +2985,17 @@ export async function downloadModelVersion(
   modelVersionId: string,
   fallbackFileName = `model-${modelVersionId}`,
 ): Promise<void> {
+  if (isPortfolioDemo) {
+    const model =
+      platformMock.modelVersions.find((item) => item.id === modelVersionId) ??
+      platformMock.modelVersions[0];
+    const blob = new Blob([JSON.stringify(model, null, 2)], {
+      type: 'application/json',
+    });
+    triggerDownload(blob, `${model.modelName ?? fallbackFileName}.json`);
+    return;
+  }
+
   const path = `/models/versions/${modelVersionId}/download`;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
@@ -1954,12 +3009,7 @@ export async function downloadModelVersion(
   }
 
   const blob = await response.blob();
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = extractDownloadFileName(response, fallbackFileName);
-  anchor.click();
-  window.URL.revokeObjectURL(objectUrl);
+  triggerDownload(blob, extractDownloadFileName(response, fallbackFileName));
 }
 
 export async function deleteModelVersion(token: string, modelVersionId: string): Promise<void> {
@@ -2256,6 +3306,14 @@ export async function downloadDatasetVersion(
   datasetVersionId: string,
   fallbackFileName = `dataset-${datasetVersionId}`,
 ): Promise<void> {
+  if (isPortfolioDemo) {
+    triggerDownload(
+      getDemoDatasetBlob(datasetVersionId),
+      getDemoDatasetFileName(datasetVersionId, fallbackFileName),
+    );
+    return;
+  }
+
   const path = `/dataset-versions/${datasetVersionId}/download`;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
@@ -2269,12 +3327,7 @@ export async function downloadDatasetVersion(
   }
 
   const blob = await response.blob();
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = extractDownloadFileName(response, fallbackFileName);
-  anchor.click();
-  window.URL.revokeObjectURL(objectUrl);
+  triggerDownload(blob, extractDownloadFileName(response, fallbackFileName));
 }
 
 export async function listWorkflowVersions(
@@ -2310,6 +3363,17 @@ export async function downloadWorkflowVersion(
   workflowVersionId: string,
   fallbackFileName = `workflow-${workflowVersionId}.json`,
 ): Promise<void> {
+  if (isPortfolioDemo) {
+    const workflowVersion =
+      platformMock.workflowVersionSummaries.find((item) => item.id === workflowVersionId) ??
+      platformMock.workflowVersionSummaries[0];
+    const blob = new Blob([JSON.stringify(workflowVersion, null, 2)], {
+      type: 'application/json',
+    });
+    triggerDownload(blob, fallbackFileName);
+    return;
+  }
+
   const path = `/workflows/versions/${workflowVersionId}/download`;
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
@@ -2323,12 +3387,7 @@ export async function downloadWorkflowVersion(
   }
 
   const blob = await response.blob();
-  const objectUrl = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = extractDownloadFileName(response, fallbackFileName);
-  anchor.click();
-  window.URL.revokeObjectURL(objectUrl);
+  triggerDownload(blob, extractDownloadFileName(response, fallbackFileName));
 }
 
 export async function deleteWorkflowVersion(

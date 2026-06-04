@@ -4,6 +4,12 @@ Platform is a remote sensing and data-processing workspace centered on reusable
 assets, workflow orchestration, spatial visualization, model execution, and
 workspace governance.
 
+## Live Preview
+
+- Preview: [https://iqboshi.github.io/platform/](https://iqboshi.github.io/platform/)
+- The hosted preview is a static portfolio build with built-in demo data, automatic sign-in, workflow examples, spatial layers, and downloadable sample assets.
+- The full local stack uses the FastAPI backend, workspace services, and the same React interface.
+
 ## Release Snapshot
 
 - Current release target: `v6`
@@ -20,6 +26,7 @@ workspace governance.
 - Reusable asset hub for datasets, workflow outputs, models, products, and shared capabilities
 - Workflow canvas with starter bindings and structured preview actions
 - Spatial studio that can consume overlay-ready workflow outputs directly
+- GitHub Pages preview build with a static demo backend for resume and portfolio review
 - Workspace overview, announcements, approvals, and notifications wired to live state
 - Backend API, workflow runtime, and shared frontend types aligned through generated and code-owned docs
 

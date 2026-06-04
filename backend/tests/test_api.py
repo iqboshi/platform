@@ -1901,6 +1901,137 @@ def test_workflow_node_test_returns_sentinel_preview(
     assert payload["output_preview"]["dataset"]["scene_id"] == "S2A_TEST_SCENE"
 
 
+def test_workflow_node_test_returns_nee_map_export_preview(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    credential = _create_gee_credential(client, engineer_token, workspace_id)
+
+    def fake_preview(params, resolved_credential):
+        assert resolved_credential.name == credential["name"]
+        assert params.satellite == "S2"
+        return {
+            "provider": "google-earth-engine",
+            "operation": "nee_map_export",
+            "satellite": "S2",
+            "training_preset": "CORN",
+            "bbox": list(params.bbox),
+            "scale": params.scale,
+            "image_count": 6,
+            "mean_nee": -1.25,
+            "thumbnail_url": "https://example.com/nee-preview.png",
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.preview_nee_map_export",
+        fake_preview,
+    )
+
+    graph = {
+        "nodes": [
+            {
+                "id": "nee-map",
+                "type": "gee.nee_map_export",
+                "position": {"x": 0, "y": 0},
+                "params": {
+                    "roiMode": "bbox",
+                    "bbox": "116.10,39.70,116.65,40.10",
+                    "satellite": "S2",
+                    "startDate": "2026-01-01",
+                    "endDate": "2026-02-01",
+                    "trainingPreset": "auto",
+                    "scaleMeters": 30,
+                    "credentialMode": "personal",
+                    "personalCredentialId": credential["id"],
+                    "outputDatasetName": "NEE Map",
+                },
+                "inputBindings": {},
+                "outputDefs": [
+                    {"key": "dataset", "label": "Dataset Version", "dataTypes": ["dataset_version"]}
+                ],
+            }
+        ],
+        "edges": [],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "nee-map")
+    assert payload["status"] == "succeeded"
+    assert payload["output_preview"]["dataset"]["kind"] == "dataset_version"
+    assert payload["output_preview"]["dataset"]["operation"] == "nee_map_export"
+    assert payload["output_preview"]["dataset"]["image_count"] == 6
+    assert payload["output_preview"]["dataset"]["thumbnail_url"] == "https://example.com/nee-preview.png"
+
+
+def test_workflow_node_test_returns_nee_point_timeseries_preview(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engineer_token = _login(client, "engineer@platform.local", "Engineer123!")
+    workspace_id = _workspace_id(client, engineer_token)
+    credential = _create_gee_credential(client, engineer_token, workspace_id)
+
+    def fake_preview(params, resolved_credential):
+        assert resolved_credential.name == credential["name"]
+        assert params.band == "NEE"
+        return {
+            "provider": "google-earth-engine",
+            "operation": "nee_point_timeseries_export",
+            "band": "NEE",
+            "longitude": params.longitude,
+            "latitude": params.latitude,
+            "scale": params.scale,
+            "buffer_meters": params.buffer_meters,
+            "row_count": 12,
+            "image_count": 12,
+            "rows": [
+                {"date": "2021-09-01", "band": "NEE", "value": -0.42},
+                {"date": "2021-10-01", "band": "NEE", "value": -0.38},
+            ],
+            "sample_rows": [{"date": "2021-09-01", "band": "NEE", "value": -0.42}],
+        }
+
+    monkeypatch.setattr(
+        "platform_backend.workflows.gee_runtime.preview_nee_point_timeseries",
+        fake_preview,
+    )
+
+    graph = {
+        "nodes": [
+            {
+                "id": "nee-series",
+                "type": "gee.nee_point_timeseries_export",
+                "position": {"x": 0, "y": 0},
+                "params": {
+                    "longitude": 116.3,
+                    "latitude": 39.9,
+                    "startDate": "2021-09-01",
+                    "endDate": "2022-09-01",
+                    "band": "NEE",
+                    "scaleMeters": 30,
+                    "bufferMeters": 30,
+                    "credentialMode": "personal",
+                    "personalCredentialId": credential["id"],
+                    "outputDatasetName": "NEE Point Time Series",
+                },
+                "inputBindings": {},
+                "outputDefs": [
+                    {"key": "dataset", "label": "Dataset Version", "dataTypes": ["dataset_version"]}
+                ],
+            }
+        ],
+        "edges": [],
+    }
+
+    payload = _test_workflow_node(client, engineer_token, graph, "nee-series")
+    assert payload["status"] == "succeeded"
+    assert payload["output_preview"]["dataset"]["kind"] == "dataset_version"
+    assert payload["output_preview"]["dataset"]["operation"] == "nee_point_timeseries_export"
+    assert payload["output_preview"]["dataset"]["row_count"] == 12
+    assert len(payload["output_preview"]["dataset"]["rows"]) == 2
+
+
 def test_workflow_node_test_uses_platform_default_gee_credential(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
