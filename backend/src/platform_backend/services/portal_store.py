@@ -108,9 +108,8 @@ def default_dashboard_config() -> DashboardConfig:
                     "quick actions, and a feedback workbench."
                 ),
                 content_zh=(
-                    "总览页已经从简单的统计看板升级为更适合团队使用的运营门户。"
-                    "你现在可以直接从首页查看平台能力、进入核心页面、阅读更新公告，"
-                    "并提交或跟踪反馈工单。"
+                    "总览页整合平台能力、核心入口、更新公告和反馈工单，"
+                    "方便团队从首页进入日常操作。"
                 ),
                 content_en=(
                     "The overview page has been upgraded from a lightweight status board "
@@ -134,8 +133,8 @@ def default_dashboard_config() -> DashboardConfig:
                     "have been prioritized and made operational."
                 ),
                 content_zh=(
-                    "当前版本重点强化了两类可实际跑通的工作流：CSV 表格预测/验证流程，"
-                    "以及基于 GEE 的 Sentinel 下载流程。后续会继续补齐更多真实节点能力。"
+                    "当前版本强化了两类可运行工作流：CSV 表格预测/验证流程，"
+                    "以及基于 GEE 的 Sentinel 下载流程。"
                 ),
                 content_en=(
                     "This release focuses on real, runnable workflows: CSV-based prediction "

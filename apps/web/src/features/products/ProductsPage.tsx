@@ -39,7 +39,7 @@ const PRODUCT_COPY = {
     kicker: '公开产品展示',
     title: '浏览平台公开的硬件产品资产，并直接在页面中查看 3D 模型。',
     copy:
-      '这里展示的是已经被管理员设为公开的产品资产。产品的文件、简介、分类、亮点和规格都来自资产库本身，展示页不再使用本地演示数据。',
+      '公开产品资产来自资产库，包括文件、简介、分类、亮点和规格信息。',
     libraryTitle: '公开产品库',
     libraryCopy: '点击左侧产品卡片即可加载对应的公开模型，右侧会自动聚焦并进行缓慢旋转。',
     viewerTitle: '3D 查看器',
@@ -110,7 +110,7 @@ const PRODUCT_COPY = {
     downloadModel: 'Download model',
     emptyLibrary: 'No accessible product assets are available yet.',
     emptyLibraryCopy:
-      'Upload a product in personal assets first. If others should see it, let an administrator publish it.',
+      'Upload a product in personal assets first, then publish it when it is ready for shared viewing.',
     viewerEmpty: 'No product model is currently loaded',
     viewerEmptyCopy: 'Pick a public product on the left to load its 3D model here.',
     productDetails: 'Product Details',

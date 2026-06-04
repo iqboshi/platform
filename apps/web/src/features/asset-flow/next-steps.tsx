@@ -40,14 +40,14 @@ const NEXT_STEP_COPY = {
     overlayReady: '已沉淀为空间图层',
     workflowAction: '送入工作流',
     mapAction: '打开到地图',
-    noVersionNote: '当前资产还没有可复用版本，暂时不能继续送入其他功能页。',
+    noVersionNote: '当前资产还没有可复用版本，暂时无法流转到其他功能页。',
     mapUnavailableNote: '当前版本不是可直接上图的空间格式。',
     noResultNote: '当前还没有产出可复用的结果版本。',
-    productReadyNote: '该资产已经可以在产品展示页中继续复用与公开展示。',
+    productReadyNote: '该资产可在产品展示页中复用与公开展示。',
     productPendingNote: '先发布该资产，再进入产品展示页对外展示。',
     modelTrainedNote: '该模型版本已经能在兼容算法的工作流节点中直接选择。',
     modelCustomApiNote: '该模型版本已经能在自定义 API 推理节点中直接选择。',
-    overlayNote: '该图层已经沉淀为空间资产，仍可继续回到地图中预览与叠加。',
+    overlayNote: '该图层已保存为空间资产，可回到地图中预览与叠加。',
   },
   'en-US': {
     noVersionBadge: 'No version yet',
@@ -310,7 +310,7 @@ export function buildGeeCredentialNextSteps(
       : [],
     note:
       locale === 'zh-CN'
-        ? '该凭证可以直接送入兼容的 Sentinel 工作流起点。'
+        ? '该凭证可作为兼容 Sentinel 工作流的起点输入。'
         : 'This credential can be sent directly into compatible Sentinel workflow starters.',
   };
 }

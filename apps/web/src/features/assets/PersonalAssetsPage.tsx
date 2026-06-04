@@ -353,7 +353,7 @@ export function PersonalAssetsPage({
           : {
               kicker: '账户中心',
               title: '管理个人资料、安全设置与账号申请',
-              copy: '这里只保留个人资料、密码与角色申请，不再混入可共享资产。',
+              copy: '管理个人资料、登录密码和角色申请。',
             }
         : isAssetsView
           ? {
@@ -506,7 +506,7 @@ export function PersonalAssetsPage({
           organizationLabel: '所属组织',
           bioLabel: '个人简介',
           profilePreview: '资料预览',
-          profileMetaFallback: '补充职位和组织信息后会在这里展示。',
+          profileMetaFallback: '职位和组织信息会显示在资料卡片中。',
           passwordTitle: '修改密码',
           passwordCopy: '修改密码时需要先输入当前密码。',
           passwordUpdated: '密码已更新。',

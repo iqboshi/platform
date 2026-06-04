@@ -105,7 +105,7 @@ export function WorkspaceSettingsPage({
         ? {
             kicker: '工作空间设置',
             title: '集中管理平台级公告与邮件验证配置',
-            copy: '这个页面只负责工作空间级系统设置，不再借用个人资产页的结构与状态。',
+            copy: '管理工作空间公告、邮件验证码和其他平台级配置。',
           }
         : {
             kicker: 'Workspace Settings',

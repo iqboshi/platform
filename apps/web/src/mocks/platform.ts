@@ -2744,7 +2744,7 @@ const dashboardConfig: DashboardConfig = {
       id: 'announcement-product-showcase',
       titleZh: '产品展示页支持浏览器端 3D 查看',
       titleEn: 'Product Showcase Supports Browser 3D Inspection',
-      summaryZh: '公开产品资产现在可以直接在页面中加载 STEP 模型。',
+      summaryZh: '公开产品资产支持在页面中加载 STEP 模型。',
       summaryEn: 'Published product assets can now load STEP models directly in the browser.',
       contentZh: '产品展示页接入 CAD 模型解析与 3D 查看器，便于在公开链接中展示硬件资产。',
       contentEn:
@@ -2768,7 +2768,7 @@ const feedbackTickets: FeedbackTicketSummary[] = [
     category: 'feature_request',
     priority: 'high',
     status: 'in_progress',
-    content: 'Workflow node tests should show map and chart previews before a full run.',
+    content: 'Workflow outputs need map and chart previews before a full run.',
     contact: 'reviewer@example.com',
     adminReply: 'Spatial and time-series previews have been added to supported GEE outputs.',
     createdAt: '2026-04-11T09:00:00Z',

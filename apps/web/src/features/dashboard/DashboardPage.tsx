@@ -120,7 +120,7 @@ const DASHBOARD_COPY = {
   'zh-CN': {
     heroKicker: '平台总览',
     heroTitle: '用一个首页串起数据、工作流、模型与团队协作。',
-    heroCopy: '这里作为团队进入平台后的总览页，先看当前态势，再继续进入各个功能与协作处理。',
+    heroCopy: '团队可先查看数据、任务和协作状态，再进入具体模块处理。',
     workspaceReady: '工作空间状态',
     workspaceReadyCopy:
       '首页使用实时快照与共享模块注册表构建，但仍保持总览页应有的整体视角。',
@@ -151,7 +151,7 @@ const DASHBOARD_COPY = {
     announcementGapDescription: '建议补充至少一条公告，用于说明最近更新、已上线能力或运营提醒。',
     modulesTitle: '模块入口',
     modulesCopy:
-      '模块卡片统一来自共享注册表，后续新增功能后这里只需要补模块定义，不再单独维护首页入口。',
+      '模块入口来自共享注册表，首页与导航保持同一份配置。',
     moduleFlowTitle: '可直接衔接',
     moduleSectionWorkspace: '工作区',
     moduleSectionPersonal: '个人',
@@ -279,7 +279,7 @@ const DASHBOARD_COPY = {
       'Publish at least one announcement to reflect recent changes, operational notes, or newly released capabilities.',
     modulesTitle: 'Module portal',
     modulesCopy:
-      'These cards come from the shared registry. New capabilities should only need a module definition instead of separate overview maintenance.',
+      'Module cards match the sidebar navigation and keep workspace entry points together.',
     moduleFlowTitle: 'Can hand off to',
     moduleSectionWorkspace: 'Workspace',
     moduleSectionPersonal: 'Personal',
@@ -770,7 +770,7 @@ export function DashboardPage({
         title: activeFeedback.title,
         description:
           locale === 'zh-CN'
-            ? '这里有一条仍在跟进中的反馈或工单，可以直接打开详情继续处理。'
+            ? '有一条反馈或工单仍在跟进中，打开详情后可继续处理。'
             : 'A feedback ticket still needs follow-up. Open it directly from the overview.',
         actionLabel: copy.actionQueueActionTicket,
         onAction: () => void openFeedbackDetail(activeFeedback.id),

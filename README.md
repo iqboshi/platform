@@ -1,13 +1,13 @@
 # 遥感数据处理与工作流平台
 
-这是一个面向遥感数据管理、空间分析和流程编排的个人 Web 平台项目。
-项目主要用于展示我对前端工程、FastAPI 接口设计、地图可视化和工作流页面交互的实现。
+这是一个面向遥感数据管理、空间分析和流程编排的 Web 平台。
+平台包含数据资产、地图可视化、工作流画布、模型产品和账户审批等模块。
 
 在线预览：
 
 [https://iqboshi.github.io/platform/](https://iqboshi.github.io/platform/)
 
-预览版本使用内置示例数据，可以直接浏览平台页面，不需要本地启动后端服务。
+在线预览内置示例数据，打开链接即可浏览主要页面。
 
 ## 主要功能
 
@@ -74,7 +74,7 @@ npm run build --workspace @platform/web
 .venv\Scripts\python.exe -m pytest .\backend\tests
 ```
 
-## 说明
+## 预览与本地版本
 
-GitHub Pages 上的预览版本是静态 Demo，主要用于展示界面和核心交互。
-完整本地版本可以连接 FastAPI 后端，适合继续扩展数据上传、工作流执行和空间数据服务等功能。
+GitHub Pages 版本使用示例数据，适合快速查看界面和交互。
+本地运行时可连接 FastAPI 后端，体验数据上传、工作流执行和空间数据服务等功能。

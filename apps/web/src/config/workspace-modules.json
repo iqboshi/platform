@@ -13,12 +13,12 @@
       "actionZh": "打开数据集",
       "actionEn": "Open datasets",
       "handoffZh": [
-        "结构化数据集可以直接送入工作流作为输入。",
-        "支持空间格式的数据集版本可以继续进入地图与叠加层流程。"
+        "结构化数据集可作为工作流输入。",
+        "支持空间格式的数据集版本可进入地图与叠加层流程。"
       ],
       "handoffEn": [
-        "Structured datasets can flow directly into workflows as inputs.",
-        "Spatial-ready dataset versions can continue into map and overlay flows."
+        "Structured datasets can feed workflows as inputs.",
+        "Spatial-ready dataset versions can enter map and overlay flows."
       ]
     }
   },
@@ -36,12 +36,12 @@
       "actionZh": "打开产品",
       "actionEn": "Open products",
       "handoffZh": [
-        "公开产品可以继续作为对外展示资产复用。",
-        "产品文件与元数据仍然应回流到资产中心统一管理。"
+        "公开产品可作为对外展示资产复用。",
+        "产品文件与元数据统一回到资产中心管理。"
       ],
       "handoffEn": [
         "Published products remain reusable as showcase assets.",
-        "Product files and metadata should still flow back to the asset hub."
+        "Product files and metadata stay managed in the asset hub."
       ]
     }
   },
@@ -59,11 +59,11 @@
       "actionZh": "打开空间工作台",
       "actionEn": "Open spatial studio",
       "handoffZh": [
-        "符合 overlay 输入结构的工作流输出应当可以直接在地图中打开。",
-        "保存的 ROI 可以继续送入工作流作为空间输入。"
+        "符合 overlay 输入结构的工作流输出可在地图中打开。",
+        "保存的 ROI 可作为工作流空间输入。"
       ],
       "handoffEn": [
-        "Workflow outputs that match the overlay contract should open directly on the map.",
+        "Workflow outputs that match the overlay structure can open on the map.",
         "Saved ROIs can feed workflows as spatial inputs."
       ]
     }
@@ -82,12 +82,12 @@
       "actionZh": "打开工作流",
       "actionEn": "Open workflows",
       "handoffZh": [
-        "数据集、ROI、模型和个人凭证都应该能直接送入工作流。",
-        "符合条件的工作流输出应当直接回流到地图或资产中心。"
+        "数据集、ROI、模型和个人凭证可作为工作流输入。",
+        "符合条件的工作流输出可回到地图或资产中心。"
       ],
       "handoffEn": [
-        "Datasets, ROIs, models, and personal credentials should all feed workflows.",
-        "Qualified workflow outputs should hand off directly to maps or the asset hub."
+        "Datasets, ROIs, models, and personal credentials can feed workflows.",
+        "Qualified workflow outputs can hand off to maps or the asset hub."
       ]
     }
   },
@@ -106,12 +106,12 @@
       "actionZh": "打开模型中心",
       "actionEn": "Open models",
       "handoffZh": [
-        "模型版本应能够直接进入工作流推理节点。",
-        "训练输出应回流为可复用的模型资产。"
+        "模型版本可用于工作流推理节点。",
+        "训练输出可沉淀为可复用的模型资产。"
       ],
       "handoffEn": [
-        "Model versions should feed workflow inference nodes directly.",
-        "Training outputs should flow back into reusable model assets."
+        "Model versions can feed workflow inference nodes.",
+        "Training outputs can become reusable model assets."
       ]
     }
   },
@@ -129,12 +129,12 @@
       "actionZh": "打开账号中心",
       "actionEn": "Open account",
       "handoffZh": [
-        "账号资料应与可复用资产保持边界清晰，不再混在同一入口。",
-        "角色申请与安全设置应直接反馈到账户状态与可见权限。"
+        "账号资料与可复用资产分开管理。",
+        "角色申请与安全设置会更新账户状态与可见权限。"
       ],
       "handoffEn": [
-        "Account information should stay clearly separated from reusable assets.",
-        "Access requests and security changes should feed back into account state and permissions."
+        "Account information stays separated from reusable assets.",
+        "Access requests and security changes update account state and permissions."
       ]
     }
   },
@@ -152,12 +152,12 @@
       "actionZh": "打开资产中心",
       "actionEn": "Open asset hub",
       "handoffZh": [
-        "资产中心应明确展示每项资产下一步还能送到哪里。",
-        "工作流、地图和模型产出的资产，以及 GEE 凭证这类共享能力，都应统一回流到这里。"
+        "资产中心展示每项资产的下一步流转入口。",
+        "工作流、地图和模型产出的资产，以及 GEE 凭证这类共享能力，统一汇集到这里。"
       ],
       "handoffEn": [
-        "The asset hub should clearly show what each asset can feed next.",
-        "Assets produced by workflows, maps, and models, plus shared capabilities such as GEE credentials, should flow back here."
+        "The asset hub shows where each asset can go next.",
+        "Assets produced by workflows, maps, and models, plus shared capabilities such as GEE credentials, collect here."
       ]
     }
   },
@@ -171,17 +171,17 @@
     "dashboard": {
       "titleZh": "审批中心",
       "titleEn": "Approvals",
-      "summaryZh": "处理账号审批、角色变更与治理动作。",
+      "summaryZh": "处理账号审批、角色变更与操作记录。",
       "summaryEn": "Review account approvals, role changes, and workspace actions.",
       "actionZh": "打开审批中心",
       "actionEn": "Open approvals",
       "handoffZh": [
-        "审批结果应直接影响总览页可见模块与入口状态。",
-        "治理动作完成后也应回写到总览状态。"
+        "审批结果会影响总览页可见模块与入口状态。",
+        "审批操作完成后会更新总览状态。"
       ],
       "handoffEn": [
-        "Approval outcomes should change visible modules and entry points on the overview.",
-        "Governance actions should also flow back into overview state."
+        "Approval outcomes update visible modules and entry points on the overview.",
+        "Approval actions also update overview state."
       ]
     }
   },
@@ -200,12 +200,12 @@
       "actionZh": "打开工作空间设置",
       "actionEn": "Open settings",
       "handoffZh": [
-        "公告内容应直接进入总览页，不再与功能介绍重复堆叠。",
-        "系统级配置应继续与账号页、资产页保持边界清晰。"
+        "公告内容同步到总览页，便于查看最近更新。",
+        "系统级配置与账号页、资产页分开管理。"
       ],
       "handoffEn": [
-        "Announcement content should feed the overview directly instead of duplicating feature copy.",
-        "System settings should stay clearly separated from account and asset pages."
+        "Announcement content feeds the overview.",
+        "System settings stay separated from account and asset pages."
       ]
     }
   }

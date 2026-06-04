@@ -83,7 +83,7 @@ export function AssetFlowPanel({
             edges: '血缘连接',
             edgesDetail: '输入资产和输出结果之间的可追踪连接。',
             reusableOutputs: '可继续复用的输出',
-            reusableOutputsCopy: '把工作流输出直接送到其他功能页，不再要求先下载再上传。',
+            reusableOutputsCopy: '工作流输出可流转到地图、产品和资产页面。',
             nextSteps: '下一步',
             openInMap: '在地图中打开',
             useInWorkflow: '作为工作流输入',

@@ -242,7 +242,7 @@ export function SpatialStudioPage({
             kicker: '空间工作台',
             title: '绘制感兴趣区域、叠加空间数据并沉淀为可复用资产。',
             body:
-              '这里负责地图侧的空间交互。你可以把 ROI、GeoJSON 图层和 GeoTIFF 影像保存下来，后续在 Sentinel-2 下载等工作流节点里直接复用。',
+              '空间工作台支持绘制 ROI、叠加 GeoJSON 图层和预览 GeoTIFF 影像，保存后的空间资产可用于 Sentinel-2 下载等工作流节点。',
             roiEditor: 'ROI 编辑器',
             roiEditorCopy: '先绘制矩形或多边形，再保存为私有 ROI 资产。',
             newRoi: '新建 ROI',
@@ -341,7 +341,7 @@ export function SpatialStudioPage({
       locale === 'zh-CN'
         ? {
             title: '空间工作台',
-            description: '把编辑器、资产列表和坐标工具收拢到地图下方，地图保持主视图，不再被两侧面板挤压。',
+            description: '编辑器、资产列表和坐标工具位于地图下方，主地图区域保留更大的操作空间。',
             editors: '编辑',
             assets: '资产',
             coordinates: '坐标',

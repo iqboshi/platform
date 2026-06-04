@@ -99,7 +99,7 @@ const MODEL_COPY: Record<'zh-CN' | 'en-US', ModelsCopy> = {
     heroKicker: '模型资产中台',
     heroTitle: '把训练产物、上传模型和外部 API 模型整理成统一可复用的模型资产。',
     heroCopy:
-      '模型页不再只是下载列表。这里应该明确展示模型的来源、可见性、执行方式，以及它能如何继续接入工作流推理节点。',
+      '模型资产记录来源、可见性、执行方式和关联工作流，便于在推理节点中复用。',
     totalModels: '模型总数',
     totalModelsDetail: '当前工作空间中可访问的模型版本。',
     customModels: '外部 API',
@@ -165,7 +165,7 @@ const MODEL_COPY: Record<'zh-CN' | 'en-US', ModelsCopy> = {
     heroKicker: 'Model Asset Center',
     heroTitle: 'Treat trained artifacts, uploaded models, and external APIs as one reusable model layer.',
     heroCopy:
-      'This page should explain how a model can be consumed next, not just dump raw metadata. Model source, visibility, execution mode, and workflow readiness are now surfaced directly.',
+      'Model records show source, visibility, execution mode, and workflow readiness for reuse in inference steps.',
     totalModels: 'Models',
     totalModelsDetail: 'Accessible model versions in the current workspace.',
     customModels: 'External APIs',
