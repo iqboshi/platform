@@ -1215,7 +1215,7 @@ export function SpatialStudioPage({
                         setFocusRequest({
                           requestId: Date.now(),
                           bbox: overlay.bbox,
-                          zoom: 13,
+                          zoom: overlay.style?.researchIndex === true ? 18 : 13,
                         });
                       }
                       setSelectedOverlayIds((current) =>

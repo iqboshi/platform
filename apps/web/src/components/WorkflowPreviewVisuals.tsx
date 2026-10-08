@@ -23,6 +23,7 @@ import VectorSource from 'ol/source/Vector';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useI18n } from '@/i18n/useI18n';
+import { ResearchDemoPreview } from './ResearchDemoPreview';
 import { fetchDatasetVersionBlob, fetchDatasetVersionText } from '@/lib/api';
 import {
   createBaseTileLayer,
@@ -611,6 +612,11 @@ export function WorkflowPreviewVisual({
   compact?: boolean;
 }) {
   const previewRecord = preview as Record<string, unknown>;
+  if (preview.kind === 'value' && previewRecord.value &&
+      typeof previewRecord.value === 'object' &&
+      (previewRecord.value as Record<string, unknown>).researchDemo) {
+    return <ResearchDemoPreview value={previewRecord.value} />;
+  }
   const datasetVersionId = getStringField(previewRecord, 'datasetVersionId', 'dataset_version_id');
   const datasetVersion = datasetVersionId
     ? datasetVersions.find((item) => item.id === datasetVersionId)

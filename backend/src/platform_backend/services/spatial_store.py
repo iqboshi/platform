@@ -222,7 +222,9 @@ def _overlay_summary(
         description=row.description,
         overlay_type=overlay_type,
         opacity=float(row.opacity),
-        style=dict(row.style_json or {}),
+        style={**dict(row.style_json or {}), **(
+            {'researchIndex': True} if version.metadata_json.get('execution') == 'simplified_demo'
+            else {})},
         visibility=row.visibility,
         created_at=row.created_at,
         updated_at=row.updated_at,

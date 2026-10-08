@@ -5617,3 +5617,15 @@ body::after {
     align-items: flex-start;
   }
 }
+.research-demo-preview { display:flex; flex-direction:column; gap:16px; padding:18px; background:#f5f8fa; border:1px solid #dbe6eb; border-radius:14px; }
+.research-demo-header { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.research-image-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.research-image-panel { display:flex; flex-direction:column; gap:8px; }
+.research-image-surface { background:#e5ecef; border-radius:10px; overflow:hidden; padding:8px; text-align:center; }
+.research-image-surface img { display:block; width:100%; height:auto; max-height:420px; margin:auto; }
+.research-stat-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+.research-stat-strip > div { display:flex; flex-direction:column; background:white; border-radius:10px; padding:12px; }
+.research-stat-strip strong { color:#176677; font-size:24px; }
+.research-curve { padding:14px; background:white; border-radius:10px; }
+.research-curve svg { display:block; width:100%; max-height:260px; }
+@media (max-width:700px) { .research-image-grid { grid-template-columns:1fr; } .research-stat-strip { grid-template-columns:repeat(2,1fr); } }

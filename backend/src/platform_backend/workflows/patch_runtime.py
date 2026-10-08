@@ -12,8 +12,9 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from platform_backend.domain_enums import DatasetKind
-from platform_backend.models.entities import ModelVersion
+from platform_backend.models.entities import DatasetVersion, ModelVersion
 from platform_backend.workflows.catalog import catalog_definition
+from platform_backend.workflows.research_catalog import METHODS
 from platform_backend.workflows.subgraph_runtime import (
     CALL_SUBGRAPH_NODE_TYPE,
     FOR_EACH_INDEX_PORT_KEY,
@@ -25,6 +26,7 @@ from platform_backend.workflows.subgraph_runtime import (
 )
 
 ASSET_NODE_TYPES = {
+    *METHODS,
     "source.dataset_version",
     "source.model_version",
     "geo.define_bbox_roi",
@@ -1008,6 +1010,7 @@ def _persist_dataset_artifact(
             kind=kind,
             source_path=source_path,
             content_type=_guess_content_type(source_path),
+            bbox=(metadata or {}).get('bbox'),
             metadata=metadata,
         )
         dataset_version_id = str(getattr(summary, "id", "") or "").strip()
@@ -1505,6 +1508,27 @@ def _execute_asset_node(
     if node_type == "geo.define_bbox_roi":
         return {"roi": {"bbox": list(parse_bbox_roi_params(params))}}
 
+    if node_type in METHODS:
+        from platform_backend.workflows.research_runtime import analyze
+
+        paths = []
+        for key in ['dataset', 'stage2', 'stage3', 'stage4']:
+            if key != 'dataset' and not bindings.get(key):
+                continue
+            value = _resolve_input_value(state.resolved_outputs, bindings, key)
+            if not isinstance(value, DatasetArtifact) or state.db is None:
+                raise ValueError('Research methods require stored raster dataset versions.')
+            version = state.db.get(DatasetVersion, value.dataset_version_id)
+            if version is None:
+                raise LookupError('Research input dataset is missing.')
+            paths.append(version.asset_path)
+        roi = _resolve_optional_input_value(state.resolved_outputs, bindings, 'roi')
+        if roi is not None and (not isinstance(roi, dict) or not roi.get('bbox')):
+            raise ValueError('Research ROI must resolve to a geographic bbox.')
+        artifact, report = analyze(paths, node_type, params,
+            _artifact_output_root(state) / node_id, roi.get('bbox') if roi else None)
+        return {'artifact': artifact, 'report': report}
+
     if node_type == "geo.query_raster_collection":
         parse_query_raster_collection_params(params)
         _resolve_input_value(state.resolved_outputs, bindings, "roi")
@@ -1791,12 +1815,22 @@ def _execute_asset_node(
                     payload={"kind": "artifact_export", "sourceArtifact": str(artifact)},
                 )
             )
+        output_metadata: dict[str, Any] = {"workflow_output_kind": "artifact"}
+        sidecar = artifact_path.parent / 'report.json'
+        if sidecar.exists() and artifact_path.name == 'research-result.tif':
+            report = json.loads(sidecar.read_text(encoding='utf-8'))
+            output_metadata.update({'research_demo': True, 'bbox': report['bbox'],
+                'units': report['unit'], 'execution': 'simplified_demo',
+                'capture_dates': [row['date'] for row in report['rows']],
+                'research_summary': report['rows'], 'research_method': report['method']})
         return {
             "dataset": _persist_dataset_artifact(
                 state=state,
                 source_path=artifact_path,
                 dataset_name=dataset_name,
-                metadata={"workflow_output_kind": "artifact"},
+                metadata=output_metadata,
+                kind=(DatasetKind.RASTER if artifact_path.suffix.lower() in {'.tif', '.tiff'}
+                      else DatasetKind.ARTIFACT),
             )
         }
 

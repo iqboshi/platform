@@ -1028,7 +1028,7 @@ export function SpatialMapCanvas({
           return;
         }
 
-        if (overlay.previewUrl && overlay.bbox) {
+        if (overlay.previewUrl && overlay.bbox && !overlay.contentType?.includes('tiff')) {
           const projectedExtent = transformExtent(overlay.bbox, 'EPSG:4326', 'EPSG:3857');
           const layer = new ImageLayer({
             source: new ImageStatic({
@@ -1054,10 +1054,16 @@ export function SpatialMapCanvas({
         }
 
         const objectUrl = URL.createObjectURL(blob);
+        const researchIndex = overlay.style?.researchIndex === true;
         const layer = new WebGLTileLayer({
           source: new GeoTIFFSource({
-            sources: [{ url: objectUrl }],
+            sources: [{ url: objectUrl, bands: researchIndex ? [1] : undefined }],
+            normalize: !researchIndex,
           }),
+          ...(researchIndex ? { style: { color: ['case', ['>', ['band', 2], 0],
+            ['interpolate', ['linear'], ['band', 1],
+            0, [166, 67, 49, 1], 0.33, [241, 195, 93, 1],
+            0.66, [124, 180, 92, 1], 1, [25, 105, 83, 1]], [0, 0, 0, 0]] } } : {}),
           opacity,
           zIndex: 10,
         });

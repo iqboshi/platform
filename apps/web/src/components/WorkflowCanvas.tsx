@@ -407,6 +407,10 @@ function summarizeNodePreview(preview: WorkflowNodePreviewValue, locale: LocaleC
 }
 
 function buildPreviewPayload(preview: WorkflowNodePreviewValue): unknown {
+  if (preview.kind === 'value' && preview.value && typeof preview.value === 'object' &&
+      (preview.value as Record<string, unknown>).researchDemo) {
+    return { ...(preview.value as Record<string, unknown>), images: '图像已显示在上方' };
+  }
   if (preview.kind === 'table') {
     return {
       columns: Array.isArray(preview.columns) ? preview.columns : [],
@@ -4398,7 +4402,18 @@ function CanvasInner({
               </div>
             ) : null}
 
-            <div className="workflow-node-test-grid">
+            {selectedNode?.data.type.startsWith('research.') && selectedNodeTest.outputPreview.report ? (
+              <>
+                <Space wrap>{Object.entries(selectedNodeTest.inputPreview).map(([key, input]) => {
+                  const id = String(input.datasetVersionId ?? '');
+                  const version = datasetVersions.find(item => item.id === id);
+                  return <Tag key={key}>{String(version?.metadata.capture_date ?? id)}</Tag>;
+                })}</Space>
+                <NodePreviewCard portKey="成果分析" preview={selectedNodeTest.outputPreview.report}
+                  datasets={datasets} datasetVersions={datasetVersions} authToken={authToken}
+                  showRawPayload={false} />
+              </>
+            ) : <div className="workflow-node-test-grid">
               <div className="workflow-node-test-column">
                 <Text strong>{t('workflows.nodeTestInput')}</Text>
                 {Object.entries(selectedNodeTest.inputPreview).length ? (
@@ -4435,7 +4450,7 @@ function CanvasInner({
                   <Text type="secondary">{t('workflows.nodeTestNoPreview')}</Text>
                 )}
               </div>
-            </div>
+            </div>}
           </div>
         ) : (
           <Text type="secondary">{t('workflows.nodeTestEmpty')}</Text>

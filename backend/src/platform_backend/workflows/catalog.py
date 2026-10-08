@@ -31,6 +31,7 @@ from platform_backend.seed_data import (
     SEED_TABULAR_PREDICTION_DATASET_VERSION_ID,
     SEED_VECTOR_DATASET_VERSION_ID,
 )
+from platform_backend.workflows.research_catalog import research_nodes, research_templates
 from platform_backend.workflows.subgraph_runtime import (
     CALL_SUBGRAPH_NODE_TYPE,
     FOR_EACH_INDEX_PORT_KEY,
@@ -2900,6 +2901,7 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         *_sample_nodes(),
         *_control_nodes(),
         *_tabular_nodes(),
+        *research_nodes(),
     ]
 ]
 
@@ -5850,4 +5852,4 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
 
 
 def workflow_templates() -> list[WorkflowTemplateDefinition]:
-    return BUILTIN_WORKFLOW_TEMPLATES
+    return [*BUILTIN_WORKFLOW_TEMPLATES, *research_templates()]
