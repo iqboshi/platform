@@ -47,6 +47,7 @@ import {
   type MapBaseLayerKey,
 } from '@/components/map-base-layers';
 import { useI18n } from '@/i18n/useI18n';
+import { GeeSearchPanel } from './GeeSearchPanel';
 import {
   createSpatialOverlay,
   createSpatialRoi,
@@ -62,7 +63,7 @@ import { datasetKindKey } from '@/lib/i18n-helpers';
 
 const { Paragraph } = Typography;
 
-type SpatialWorkbenchMode = 'editors' | 'assets' | 'coordinates';
+type SpatialWorkbenchMode = 'editors' | 'assets' | 'coordinates' | 'gee';
 type SpatialEditorPane = 'roi' | 'overlay';
 type SpatialAssetPane = 'roi' | 'overlay';
 
@@ -1535,6 +1536,7 @@ export function SpatialStudioPage({
               { label: workbenchCopy.editors, value: 'editors' },
               { label: workbenchCopy.assets, value: 'assets' },
               { label: workbenchCopy.coordinates, value: 'coordinates' },
+              { label: locale === 'zh-CN' ? 'GEE 检索' : 'GEE search', value: 'gee' },
             ]}
             onChange={(value) => setWorkbenchMode(value as SpatialWorkbenchMode)}
           />
@@ -1576,6 +1578,12 @@ export function SpatialStudioPage({
           {workbenchMode === 'coordinates' ? (
             <div className="spatial-workbench-stack">
               {coordinateToolsPanel}
+            </div>
+          ) : null}
+
+          {workbenchMode === 'gee' ? (
+            <div className="spatial-workbench-stack">
+              <GeeSearchPanel rois={rois} selectedRoi={selectedRoi} />
             </div>
           ) : null}
         </div>

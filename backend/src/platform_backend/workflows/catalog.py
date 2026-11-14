@@ -32,6 +32,7 @@ from platform_backend.seed_data import (
     SEED_VECTOR_DATASET_VERSION_ID,
 )
 from platform_backend.workflows.research_catalog import research_nodes, research_templates
+from platform_backend.workflows.tiller_pipeline import tiller_pipeline_nodes, tiller_pipeline_template
 from platform_backend.workflows.subgraph_runtime import (
     CALL_SUBGRAPH_NODE_TYPE,
     FOR_EACH_INDEX_PORT_KEY,
@@ -2902,6 +2903,7 @@ BUILTIN_NODE_CATALOG: list[WorkflowCatalogItem] = [
         *_control_nodes(),
         *_tabular_nodes(),
         *research_nodes(),
+        *tiller_pipeline_nodes(),
     ]
 ]
 
@@ -5852,4 +5854,4 @@ BUILTIN_WORKFLOW_TEMPLATES: list[WorkflowTemplateDefinition] = [
 
 
 def workflow_templates() -> list[WorkflowTemplateDefinition]:
-    return [*BUILTIN_WORKFLOW_TEMPLATES, *research_templates()]
+    return [*BUILTIN_WORKFLOW_TEMPLATES, tiller_pipeline_template(), *research_templates()]

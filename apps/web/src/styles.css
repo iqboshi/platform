@@ -5629,3 +5629,22 @@ body::after {
 .research-curve { padding:14px; background:white; border-radius:10px; }
 .research-curve svg { display:block; width:100%; max-height:260px; }
 @media (max-width:700px) { .research-image-grid { grid-template-columns:1fr; } .research-stat-strip { grid-template-columns:repeat(2,1fr); } }
+
+/* Keep spatial summary compact on desktop-sized narrow windows. */
+@media (min-width: 769px) and (max-width: 1100px) {
+  .spatial-map-stage-head .spatial-summary-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .spatial-map-stage-head .spatial-summary-chip {
+    padding: 10px 12px;
+    gap: 4px;
+    border-radius: 14px;
+  }
+  .spatial-map-stage-head .spatial-summary-value {
+    font-size: 24px;
+  }
+  .spatial-map-stage-head .spatial-summary-detail {
+    display: none;
+  }
+}

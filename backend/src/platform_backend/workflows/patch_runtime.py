@@ -15,6 +15,7 @@ from platform_backend.domain_enums import DatasetKind
 from platform_backend.models.entities import DatasetVersion, ModelVersion
 from platform_backend.workflows.catalog import catalog_definition
 from platform_backend.workflows.research_catalog import METHODS
+from platform_backend.workflows.tiller_pipeline import TILLER_PIPELINE
 from platform_backend.workflows.subgraph_runtime import (
     CALL_SUBGRAPH_NODE_TYPE,
     FOR_EACH_INDEX_PORT_KEY,
@@ -27,6 +28,7 @@ from platform_backend.workflows.subgraph_runtime import (
 
 ASSET_NODE_TYPES = {
     *METHODS,
+    *TILLER_PIPELINE,
     "source.dataset_version",
     "source.model_version",
     "geo.define_bbox_roi",
@@ -1507,6 +1509,43 @@ def _execute_asset_node(
 
     if node_type == "geo.define_bbox_roi":
         return {"roi": {"bbox": list(parse_bbox_roi_params(params))}}
+
+    if node_type in ("research.tiller_3bsscl_mask",):
+        return {"dataset": _resolve_input_value(state.resolved_outputs, bindings, "dataset")}
+
+    if node_type in ("research.tiller_mvdino_features", "research.tiller_vegetation_indices"):
+        dataset = _resolve_input_value(state.resolved_outputs, bindings, "dataset")
+        channels = 64 if node_type == "research.tiller_mvdino_features" else 10
+        return {"features": {"kind": "feature_set", "channels": channels,
+                             "datasetVersionId": getattr(dataset, "dataset_version_id", None)}}
+
+    if node_type == "research.tiller_gidvf_regression":
+        from platform_backend.workflows.research_runtime import analyze
+
+        _resolve_input_value(state.resolved_outputs, bindings, "structure")
+        _resolve_input_value(state.resolved_outputs, bindings, "indices")
+        value = _resolve_input_value(state.resolved_outputs, bindings, "dataset")
+        if not isinstance(value, DatasetArtifact) or state.db is None:
+            raise ValueError("Tiller regression requires a stored raster dataset version.")
+        version = state.db.get(DatasetVersion, value.dataset_version_id)
+        if version is None:
+            raise LookupError("Tiller regression input dataset is missing.")
+        artifact, report = analyze([version.asset_path], "research.structure_tiller", params,
+                                   _artifact_output_root(state) / node_id, None)
+        # 完整模型接入前，结果图沿用结构感知分析；报告按分蘖估测流水线展示。
+        value = report["value"]
+        value.update({
+            "title": "GIDVF 融合与分蘖密度回归",
+            "unit": "分蘖密度（归一化）",
+            "execution": "3B-SSCL 掩膜 → MVDINO 结构特征 + 植被指数 → GIDVF 融合回归",
+            "description": "结果为整田分蘖密度空间分布，按归一化等级着色；保存后可送入空间工作台或施肥处方流程。",
+            "steps": ["3B-SSCL 作物掩膜", "MVDINO 结构特征", "植被指数特征", "GIDVF 融合回归"],
+            "legend": ["弱苗 · 0–0.33", "中等 · 0.33–0.66", "旺苗 · 0.66–1"],
+        })
+        for frame in value.get("images", []):
+            frame["featureLabel"] = "掩膜后冠层覆盖"
+        report["summary"] = "GIDVF 融合与分蘖密度回归 · 分蘖密度（归一化）"
+        return {"artifact": artifact, "report": report}
 
     if node_type in METHODS:
         from platform_backend.workflows.research_runtime import analyze
